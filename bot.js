@@ -7,7 +7,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v26";
+var BOT_VERSION = "v27";
 game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – P = Pause, U = sichere Upgrades, K = alle Upgrades, L = Statistik");
 
 var GOLD_RESERVE = 20000;
@@ -43,6 +43,11 @@ var FILL_SLOTS = {
     amulet:   ["intamulet", "hpamulet"],
     belt:     ["intbelt", "hpbelt"]
 };
+var INV_MIN_FREE = 5;                // unter so vielen freien Plätzen -> aufräumen
+var KEEP_ITEMS = /^(hpot|mpot|scroll|cscroll|intscroll|strscroll|dexscroll|vitscroll)/; // bleibt im Inventar
+var EVENT_ITEMS = /cake|gift|anniv|kiss|slice/i;   // Event-Items bleiben im Inventar
+var FLEE_HP = 0.25;                  // Rückzug unter 25 % HP ...
+var FLEE_ATTACKERS = 2;              // ... wenn mind. 2 Monster auf mich zielen
 var CBURST_MIN_TARGETS = 2;
 var CBURST_MP_PER_TARGET = 80;
 var CBURST_MIN_MP = 0.5;
@@ -289,6 +294,77 @@ function try_cburst() {
     set_message("Cburst x" + targets.length);
     use_skill("cburst", targets);
     return true;
+}
+
+// ---------- Statusanzeige ----------
+var last_status = 0;
+function status_message(prefix) {
+    if (Date.now() - last_status < 3000) return;
+    last_status = Date.now();
+    var st = current_spot && farm_stats[current_spot];
+    var txt = prefix || (current_spot || "");
+    if (meas) {
+        var h = Math.max(1, Date.now() - meas.start - meas.paused_ms) / 3600000;
+        txt += " " + Math.round(meas.xp / h / 1000) + "k/" + Math.round(meas.gold / h / 1000) + "k";
+    } else if (st) txt += " " + Math.round(st.xp_h / 1000) + "k/" + Math.round(st.gold_h / 1000) + "k";
+    set_message(txt);
+}
+
+// ---------- Inventar aufräumen: Schrott verkaufen, Rest in die Bank ----------
+var EQUIP_TYPES = ["helmet", "chest", "pants", "shoes", "gloves", "cape", "weapon", "shield", "quiver", "source", "misc_offhand", "ring", "earring", "amulet", "belt", "orb"];
+function is_junk(it) { // kaufbare Standardausrüstung ohne Level/Attribut
+    var def = G.items[it.name]; if (!def) return false;
+    if (EQUIP_TYPES.indexOf(def.type) < 0) return false;
+    if ((it.level || 0) > 0 || it.stat_type) return false;
+    return is_buyable(it.name);
+}
+function should_keep(it) { return KEEP_ITEMS.test(it.name) || EVENT_ITEMS.test(it.name) || EVENT_ITEMS.test(G.items[it.name] && G.items[it.name].name || ""); }
+async function tidy_inventory() {
+    if (busy || upgrading || paused || character.esize >= INV_MIN_FREE) return;
+    busy = true;
+    try {
+        // 1. verkaufen
+        var junk = [];
+        for (var i = 0; i < character.items.length; i++) if (character.items[i] && is_junk(character.items[i])) junk.push(i);
+        if (junk.length) {
+            set_message("Verkaufen"); await smart_move("potions");
+            for (var j = 0; j < junk.length; j++) { var it = character.items[junk[j]]; if (!it) continue; sell(junk[j], it.q || 1); await sleep(300); }
+            game_log("Inventar: " + junk.length + " Schrott-Items verkauft");
+        }
+        // 2. Rest in die Bank
+        if (character.esize < INV_MIN_FREE + 3) {
+            set_message("Bank"); await smart_move("bank");
+            var n = 0;
+            for (var k = 0; k < character.items.length; k++) {
+                var it2 = character.items[k]; if (!it2 || should_keep(it2)) continue;
+                bank_store(k); n++; await sleep(300);
+            }
+            game_log("Inventar: " + n + " Items in die Bank gelegt (frei: " + character.esize + ")");
+        }
+    } catch (e) { game_log("Inventar-Fehler: " + e); }
+    busy = false;
+}
+
+// ---------- Notfall-Rückzug ----------
+var fleeing = false;
+function attackers_on_me() {
+    var n = 0;
+    for (var id in parent.entities) { var e = parent.entities[id]; if (e && e.type == "monster" && !e.dead && e.target == character.name) n++; }
+    return n;
+}
+async function check_flee() {
+    if (fleeing || paused || upgrading) return;
+    if (character.hp / character.max_hp > FLEE_HP || attackers_on_me() < FLEE_ATTACKERS) return;
+    fleeing = true; busy = true;
+    game_log("Rückzug! HP " + Math.round(character.hp / character.max_hp * 100) + "%, " + attackers_on_me() + " Angreifer");
+    set_message("RÜCKZUG");
+    try {
+        stop("smart");
+        await smart_move("town");
+        while (character.hp < character.max_hp * 0.8 && !character.rip) await sleep(1000);
+        game_log("Erholt, zurück zum Spot");
+    } catch (e) {}
+    fleeing = false; busy = false;
 }
 
 // ---------- Tränke kaufen ----------
@@ -562,11 +638,11 @@ async function upgrade_routine(manual) {
 // ---------- Hauptschleife ----------
 setInterval(function () {
     heal_logic(); loot();
-    if (character.rip) { if (meas) finish_measure(true); respawn(); busy = false; return; }
+    if (character.rip) { if (meas) finish_measure(true); respawn(); busy = false; fleeing = false; return; }
     if (paused) return;
     measure_tick();
 
-    check_weapon(); check_potions();
+    check_weapon(); check_flee(); tidy_inventory(); check_potions();
     if (busy || is_moving(character)) return;
 
     var farm = pick_farm_monster();
@@ -580,7 +656,15 @@ setInterval(function () {
 
     if (!target) {
         target = get_nearest_monster({ type: farm, no_target: true });
-        if (!target) target = get_nearest_monster({ type: farm });
+        if (!target) { // sonst nur Monster, die niemand anderen anvisieren (kein Kill-Klau)
+            var best_d = 1e9;
+            for (var mid in parent.entities) {
+                var m = parent.entities[mid];
+                if (!m || m.type != "monster" || m.dead || m.mtype != farm) continue;
+                if (m.target && m.target != character.name) continue;
+                var d = distance(character, m); if (d < best_d) { best_d = d; target = m; }
+            }
+        }
         if (!target) {
             for (var id in parent.entities) { var e = parent.entities[id]; if (is_valid_target(e) && e.target == character.name) { target = e; break; } }
         }
@@ -589,6 +673,6 @@ setInterval(function () {
 
     if (!is_in_range(target)) move(character.x + (target.x - character.x) / 2, character.y + (target.y - character.y) / 2);
     else if (can_attack(target)) {
-        if (!try_cburst()) { set_message("Angriff " + target.type); attack(target); }
+        if (!try_cburst()) { status_message(); attack(target); }
     }
 }, 1000 / 4);
