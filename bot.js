@@ -8,7 +8,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v38";
+var BOT_VERSION = "v39";
 game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – P = Pause, U = sichere Upgrades, K = alle Upgrades, L = Statistik, G = Gifts tauschen");
 
 var GOLD_RESERVE = 20000;
@@ -359,7 +359,7 @@ function init_panel() {
     var old = doc.getElementById("lp_panel"); if (old) old.remove();
     var st = doc.getElementById("lp_style"); if (st) st.remove();
     st = doc.createElement("style"); st.id = "lp_style";
-    st.textContent = "#lp_panel{position:absolute;left:10px;top:130px;z-index:9999;width:340px;background:#14161c;color:#e6e6e6;font:12px/1.4 'Segoe UI',Arial,sans-serif;border:1px solid #3a3f4b;border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.6);user-select:none;overflow:hidden}"
+    st.textContent = "#lp_panel{position:fixed;left:10px;top:130px;z-index:2147483000;pointer-events:auto;width:340px;background:#14161c;color:#e6e6e6;font:12px/1.4 'Segoe UI',Arial,sans-serif;border:1px solid #3a3f4b;border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.6);user-select:none;overflow:hidden}"
       + "#lp_head{display:flex;align-items:center;gap:8px;padding:6px 10px;background:linear-gradient(#2b3140,#1e222c);cursor:move;border-bottom:1px solid #3a3f4b;touch-action:none}"
       + "#lp_head b{flex:1;font-size:13px;letter-spacing:.3px}#lp_head .lp_state{font-size:11px;padding:1px 7px;border-radius:10px;background:#2e7d32}"
       + "#lp_head .lp_state.pause{background:#c62828}#lp_head .lp_state.busy{background:#ef6c00}"
@@ -379,27 +379,35 @@ function init_panel() {
     try { var p = JSON.parse(localStorage.getItem("lp_panel_pos") || "null"); if (p) { div.style.left = p.x + "px"; div.style.top = p.y + "px"; } } catch (e) {}
     doc.body.appendChild(div);
 
-    // Ziehen an der Titelleiste (Pointer Events, unabhängig vom Inhalt)
-    var head = div.querySelector("#lp_head"), drag = null;
-    head.addEventListener("pointerdown", function (e) {
-        if (e.target.tagName == "BUTTON") return;
-        drag = { dx: e.clientX - div.offsetLeft, dy: e.clientY - div.offsetTop };
-        try { head.setPointerCapture(e.pointerId); } catch (x) {}
-        e.preventDefault();
-    });
-    head.addEventListener("pointermove", function (e) { if (!drag) return; div.style.left = (e.clientX - drag.dx) + "px"; div.style.top = (e.clientY - drag.dy) + "px"; });
-    var end = function () { if (drag) { try { localStorage.setItem("lp_panel_pos", JSON.stringify({ x: div.offsetLeft, y: div.offsetTop })); } catch (e) {} } drag = null; };
-    head.addEventListener("pointerup", end); head.addEventListener("pointercancel", end);
-
+    // Maus-Ereignisse in der Capture-Phase am Fenster abgreifen (vor dem Spiel)
+    var win = parent.window, drag = null, head = div.querySelector("#lp_head");
     var collapsed = false; try { collapsed = localStorage.getItem("lp_panel_collapsed") == "1"; } catch (e) {}
     div.__collapsed = collapsed;
-    div.querySelector("#lp_toggle").addEventListener("click", function () { div.__collapsed = !div.__collapsed; try { localStorage.setItem("lp_panel_collapsed", div.__collapsed ? "1" : "0"); } catch (e) {} last_panel = 0; });
-    div.addEventListener("click", function (e) {
-        var b = e.target; if (b.tagName != "BUTTON" || !b.getAttribute("data-act")) return;
+    var inside = function (e) { return e.target && div.contains(e.target); };
+    var onDown = function (e) {
+        if (!inside(e)) return;
+        if (!parent.__lp_evt_logged) { parent.__lp_evt_logged = true; game_log("Panel: Maus erkannt (" + e.type + ")"); }
+        if (e.target.tagName == "BUTTON") { e.stopPropagation(); return; }
+        if (head.contains(e.target)) { drag = { dx: e.clientX - div.offsetLeft, dy: e.clientY - div.offsetTop }; e.preventDefault(); }
+        e.stopPropagation();
+    };
+    var onMove = function (e) { if (!drag) return; div.style.left = (e.clientX - drag.dx) + "px"; div.style.top = (e.clientY - drag.dy) + "px"; e.preventDefault(); e.stopPropagation(); };
+    var onUp = function (e) { if (!drag) return; try { localStorage.setItem("lp_panel_pos", JSON.stringify({ x: div.offsetLeft, y: div.offsetTop })); } catch (x) {} drag = null; e.stopPropagation(); };
+    var onClick = function (e) {
+        if (!inside(e)) return;
+        e.stopPropagation();
+        var b = e.target; if (b.tagName != "BUTTON") return;
+        if (b.id == "lp_toggle") { div.__collapsed = !div.__collapsed; try { localStorage.setItem("lp_panel_collapsed", div.__collapsed ? "1" : "0"); } catch (x) {} last_panel = 0; return; }
         var act = b.getAttribute("data-act"), mon = b.getAttribute("data-mon");
         if (act == "farm") set_manual_spot(mon); else if (act == "auto") set_auto_spot(); else if (act == "reset") reset_measurements();
         last_panel = 0;
-    });
+    };
+    if (parent.__lp_panel_h) { var H = parent.__lp_panel_h; ["pointerdown", "mousedown"].forEach(function (t) { win.removeEventListener(t, H.down, true); }); ["pointermove", "mousemove"].forEach(function (t) { win.removeEventListener(t, H.move, true); }); ["pointerup", "mouseup"].forEach(function (t) { win.removeEventListener(t, H.up, true); }); win.removeEventListener("click", H.click, true); }
+    ["pointerdown", "mousedown"].forEach(function (t) { win.addEventListener(t, onDown, true); });
+    ["pointermove", "mousemove"].forEach(function (t) { win.addEventListener(t, onMove, true); });
+    ["pointerup", "mouseup"].forEach(function (t) { win.addEventListener(t, onUp, true); });
+    win.addEventListener("click", onClick, true);
+    parent.__lp_panel_h = { down: onDown, move: onMove, up: onUp, click: onClick };
     return div;
 }
 var panel = init_panel();
