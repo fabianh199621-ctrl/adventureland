@@ -1,13 +1,14 @@
 // ===== Adventure Land – Vollautomatik Magier (nichts einstellen) =====
-// P = Pause (stoppt auch Upgrades) | U = alles bis +5 (auch Drop-Items)
-// Automatik: kaufbar +5, Drops +3, Schmuck +2 | GOLD_RESERVE wird nie angetastet
+// P = Pause (stoppt auch Upgrades)
+// U = sichere Upgrades: kaufbare Items +5, Drop-Items +3, INT-Scrolls, Schmuck +2
+// K = alles bis +5, auch Drop-Items (Risiko!)
+// Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v20";
-game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – P = Pause, U = Upgrade");
+var BOT_VERSION = "v21";
+game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – P = Pause, U = sichere Upgrades, K = alle Upgrades");
 
 var GOLD_RESERVE = 20000;
-var UPGRADE_MIN_GOLD = 50000;
 var UPGRADE_TARGET = 5;
 var SAFE_TARGET_DROP = 3;
 var COMPOUND_TARGET = 2;
@@ -68,9 +69,20 @@ function is_valid_target(m) {
     return m.target == character.name;
 }
 
-// ---------- Tasten ----------
-map_key("P", "snippet", "toggle_pause()");
-map_key("U", "snippet", "upgrade_routine(true)");
+// ---------- Tasten (direkt per Tastatur, unabhängig vom Loader) ----------
+function on_key(ev) {
+    var t = ev.target;
+    if (t && (t.tagName == "INPUT" || t.tagName == "TEXTAREA" || t.isContentEditable)) return; // nicht beim Tippen
+    if (ev.ctrlKey || ev.altKey || ev.metaKey) return;
+    var k = (ev.key || "").toUpperCase();
+    if (k == "P") toggle_pause();
+    else if (k == "U") upgrade_routine(false);
+    else if (k == "K") upgrade_routine(true);
+}
+// alten Handler (von vorherigem Run) entfernen, dann neu registrieren
+if (parent.__logicplan_keyhandler) parent.document.removeEventListener("keydown", parent.__logicplan_keyhandler);
+parent.__logicplan_keyhandler = on_key;
+parent.document.addEventListener("keydown", on_key);
 
 function toggle_pause() {
     paused = !paused;
@@ -316,21 +328,23 @@ async function compound_slot(slot) {
 }
 
 // ---------- Upgrade + Attribut + Compound ----------
+// manual=false: sichere Upgrades (U) | manual=true: alles bis +5 (K)
 async function upgrade_routine(manual) {
-    if (upgrading || busy || !has_weapon()) return;
-    if (!manual && (paused || character.gold < UPGRADE_MIN_GOLD)) return;
-    if (manual && paused) { paused = false; game_log("Pause aufgehoben (U gedrückt)"); }
+    if (upgrading) { game_log("Upgrade läuft bereits"); return; }
+    if (busy) { game_log("Gerade beschäftigt (unterwegs) – gleich nochmal drücken"); return; }
+    if (!has_weapon()) { game_log("Keine Waffe – kein Upgrade"); return; }
+    if (paused) { paused = false; game_log("Pause aufgehoben"); }
 
     var stat_scroll = STAT_TYPE + "scroll", stat_price = G.items[stat_scroll].g;
     var empty = Object.keys(FILL_SLOTS).filter(function (s) { return !character.slots[s]; }).length;
     var up_slots = slots_to_upgrade(manual);
     var stat_slots = spendable() >= stat_price ? slots_without_stat() : [];
     var comp_slots = slots_to_compound();
-    if (!empty && !up_slots.length && !stat_slots.length && !comp_slots.length) return;
+    if (!empty && !up_slots.length && !stat_slots.length && !comp_slots.length) { game_log("Nichts zu tun (oder zu wenig freies Gold: " + spendable() + ")"); return; }
     if (character.esize < 2) { game_log("Upgrade: Inventar zu voll"); return; }
 
     upgrading = true; busy = true; set_message("Upgrade");
-    game_log("Routine: " + empty + " leere Slots, " + up_slots.length + " Upgrades, " + stat_slots.length + " Attribut, " + comp_slots.length + " Compound (frei: " + spendable() + " Gold)");
+    game_log((manual ? "ALLE Upgrades (Risiko)" : "Sichere Upgrades") + ": " + empty + " leere Slots, " + up_slots.length + " Upgrades, " + stat_slots.length + " Attribut, " + comp_slots.length + " Compound (frei: " + spendable() + " Gold)");
 
     try {
         if (empty) { await fill_empty_slots(); up_slots = slots_to_upgrade(manual); }
@@ -421,7 +435,7 @@ setInterval(function () {
     if (character.rip) { respawn(); busy = false; return; }
     if (paused) return;
 
-    check_weapon(); check_potions(); upgrade_routine(false);
+    check_weapon(); check_potions();
     if (busy || is_moving(character)) return;
 
     var farm = pick_farm_monster();
