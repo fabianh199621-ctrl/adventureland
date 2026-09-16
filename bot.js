@@ -7,7 +7,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v27";
+var BOT_VERSION = "v28";
 game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – P = Pause, U = sichere Upgrades, K = alle Upgrades, L = Statistik");
 
 var GOLD_RESERVE = 20000;
@@ -44,8 +44,10 @@ var FILL_SLOTS = {
     belt:     ["intbelt", "hpbelt"]
 };
 var INV_MIN_FREE = 5;                // unter so vielen freien Plätzen -> aufräumen
-var KEEP_ITEMS = /^(hpot|mpot|scroll|cscroll|intscroll|strscroll|dexscroll|vitscroll)/; // bleibt im Inventar
+var KEEP_ITEMS = /^(hpot|mpot|scroll|cscroll|intscroll|strscroll|dexscroll|vitscroll|tracker)/; // bleibt im Inventar
 var EVENT_ITEMS = /cake|gift|anniv|kiss|slice/i;   // Event-Items bleiben im Inventar
+var KISS_ENABLED = true;             // 10-Jahre-Event: jede Runde zum Ziel laufen und küssen
+var OPEN_GIFTS = true;               // Anniversary Gifts automatisch öffnen
 var FLEE_HP = 0.25;                  // Rückzug unter 25 % HP ...
 var FLEE_ATTACKERS = 2;              // ... wenn mind. 2 Monster auf mich zielen
 var CBURST_MIN_TARGETS = 2;
@@ -125,6 +127,8 @@ function event_debug() {
     Object.keys(G.skills).forEach(function (k) { if (rx.test(k) || rx.test(G.skills[k].name || "")) out.skills.push([k, G.skills[k].name, G.skills[k].type]); });
     Object.keys(G.items).forEach(function (k) { if (rx.test(k) || rx.test(G.items[k].name || "")) out.items.push([k, G.items[k].name, G.items[k].type]); });
     out.inventory = character.items.filter(function (i) { return i; }).map(function (i) { return i.name + (i.q ? " x" + i.q : ""); });
+    out.parent_funcs = Object.keys(parent).filter(function (k) { return /gift|open|kiss|anniv|cake/i.test(k); });
+    out.kiss_skill = G.skills.ikissyou || null;
     show_json(out);
     game_log("Event-Diagnose angezeigt (Fenster) – bitte Screenshot");
 }
@@ -365,6 +369,71 @@ async function check_flee() {
         game_log("Erholt, zurück zum Spot");
     } catch (e) {}
     fleeing = false; busy = false;
+}
+
+// ---------- 10-Jahre-Event: Kuss-Runde ----------
+var kiss_done_round = null, kissing = false, kiss_fail_round = null;
+function anniv() { return parent.S && parent.S.anniversary; }
+function kiss_round_open() {
+    var a = anniv();
+    if (!KISS_ENABLED || !a || !a.active || !a.live || !a.target || a.available === false) return false;
+    if (a.round == kiss_done_round || a.round == kiss_fail_round) return false;
+    if (a.expires && Date.now() > a.expires - 15000) return false;
+    return true;
+}
+async function kiss_routine() {
+    if (kissing || upgrading || fleeing || !kiss_round_open()) return;
+    var a = anniv(); var round = a.round, name = a.target;
+    kissing = true; busy = true;
+    game_log("Kuss-Runde " + round + ": laufe zu " + name + " (" + a.map + " " + a.x + "," + a.y + ")");
+    set_message("Kuss: " + name);
+    try {
+        stop("smart");
+        await smart_move({ map: a.map, x: a.x, y: a.y });
+        var range = (G.skills.ikissyou && G.skills.ikissyou.range) || 50;
+        var t_end = Math.min(a.expires || Date.now() + 240000, Date.now() + 240000);
+        var ok = false, tries = 0;
+        while (Date.now() < t_end && !paused) {
+            a = anniv();
+            if (!a || a.round != round) break;
+            if (a.available === false) { ok = true; break; }
+            var ent = get_player(name);
+            if (!ent) {
+                // Ziel nicht in Sicht: zur gemeldeten Position nachlaufen
+                if (a.map == character.map && distance(character, { x: a.x, y: a.y }) > 30) { move(a.x, a.y); }
+                await sleep(1000); continue;
+            }
+            if (distance(character, ent) > range - 5) { move(ent.x, ent.y); await sleep(400); continue; }
+            if (!is_on_cooldown("ikissyou")) {
+                tries++;
+                try { await use_skill("ikissyou", ent); } catch (e) { game_log("Kuss-Fehler: " + (e && e.reason || e)); }
+                await sleep(1500);
+                a = anniv();
+                if (a && a.available === false) { ok = true; break; }
+                if (tries >= 5) break;
+            } else await sleep(500);
+        }
+        if (ok) { kiss_done_round = round; game_log("Kuss belohnt (Runde " + round + ")"); }
+        else { kiss_fail_round = round; game_log("Kuss diese Runde nicht geschafft"); }
+    } catch (e) { kiss_fail_round = round; game_log("Kuss-Routine abgebrochen: " + e); }
+    kissing = false; busy = false;
+}
+
+// ---------- Anniversary Gifts öffnen ----------
+var last_gift_try = 0;
+async function open_gifts() {
+    if (!OPEN_GIFTS || busy || upgrading || Date.now() - last_gift_try < 15000) return;
+    var idx = locate_item("anniversarygift");
+    if (idx < 0 || character.esize < 3) return;
+    last_gift_try = Date.now();
+    var before = quantity("anniversarygift");
+    try { await use(idx); } catch (e) {}
+    await sleep(1200);
+    if (quantity("anniversarygift") < before) { game_log("Anniversary Gift geöffnet (" + quantity("anniversarygift") + " übrig)"); return; }
+    try { parent.socket.emit("open", { num: idx }); } catch (e) {}
+    await sleep(1200);
+    if (quantity("anniversarygift") < before) game_log("Anniversary Gift geöffnet (" + quantity("anniversarygift") + " übrig)");
+    else { OPEN_GIFTS = false; game_log("Gift-Öffnen klappt nicht automatisch – bitte D drücken und Screenshot schicken"); }
 }
 
 // ---------- Tränke kaufen ----------
@@ -638,11 +707,11 @@ async function upgrade_routine(manual) {
 // ---------- Hauptschleife ----------
 setInterval(function () {
     heal_logic(); loot();
-    if (character.rip) { if (meas) finish_measure(true); respawn(); busy = false; fleeing = false; return; }
+    if (character.rip) { if (meas) finish_measure(true); respawn(); busy = false; fleeing = false; kissing = false; return; }
     if (paused) return;
     measure_tick();
 
-    check_weapon(); check_flee(); tidy_inventory(); check_potions();
+    check_weapon(); check_flee(); kiss_routine(); open_gifts(); tidy_inventory(); check_potions();
     if (busy || is_moving(character)) return;
 
     var farm = pick_farm_monster();
