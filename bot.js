@@ -8,7 +8,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v42";
+var BOT_VERSION = "v43";
 game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – P = Pause, U = sichere Upgrades, K = alle Upgrades, L = Statistik, G = Gifts tauschen");
 
 var GOLD_RESERVE = 20000;
@@ -29,13 +29,14 @@ var CANDIDATES = ["goo", "crab", "bee", "croc", "armadillo", "squig", "squigtoad
 var EXCLUDE = { iceroamer: true };   // gezielt ausgeschlossen (Einfrieren)
 var hidden_mons = {}; try { hidden_mons = JSON.parse(localStorage.getItem("lp_hidden") || "{}"); } catch (e) {}
 var only_worth = false; try { only_worth = localStorage.getItem("lp_only_worth") == "1"; } catch (e) {}
-var WORTH_MIN = 0.15;                // "nur lohnende": mind. 15 % der besten geschätzten XP/h
+var WORTH_TOP = 5;                   // "nur lohnende": die 5 besten nach geschätzten XP/h
 function save_hidden() { try { localStorage.setItem("lp_hidden", JSON.stringify(hidden_mons)); localStorage.setItem("lp_only_worth", only_worth ? "1" : "0"); } catch (e) {} }
 function hide_mon(m, hide) { if (hide) hidden_mons[m] = true; else delete hidden_mons[m]; save_hidden(); if (hide && (current_spot == m || manual_spot == m)) set_auto_spot(); last_panel = 0; }
 function is_worth(m) {
     if (!only_worth) return true;
-    var best = 0; CANDIDATES.forEach(function (x) { if (is_safe_monster(x) && !hidden_mons[x]) best = Math.max(best, mon_xph_est(G.monsters[x])); });
-    return mon_xph_est(G.monsters[m]) >= best * WORTH_MIN;
+    var top = CANDIDATES.filter(function (x) { return is_safe_monster(x) && !hidden_mons[x]; })
+        .sort(function (a, b) { return mon_xph_est(G.monsters[b]) - mon_xph_est(G.monsters[a]); }).slice(0, WORTH_TOP);
+    return top.indexOf(m) >= 0;
 }
 function visible_mons() { return CANDIDATES.filter(function (m) { return is_safe_monster(m) && !hidden_mons[m] && is_worth(m); }); }
 var EVAL_MS = 3 * 60 * 1000;         // Messdauer je Spot
@@ -505,7 +506,7 @@ function update_panel() {
     h += "<div class='lp_spot'><div><span class='lp_k'>Spot</span> <b>" + esc(current_spot || "-") + "</b>" + (meas_txt ? " <span class='lp_k'>(" + meas_txt + ")</span>" : "") + "</div>"
       + "<div class='lp_big'>" + fmt(cur_xp_h) + " XP/h &nbsp;·&nbsp; " + fmt(cur_gold_h) + " G/h</div>"
       + "<div class='lp_k'>Session " + fmt(sess.xp / sh) + " XP/h · " + fmt(sess.gold / sh) + " G/h · nächstes Level in " + (rate > 0 ? fmt_time((G.levels[character.level] - character.xp) / rate * 3600000) : "-") + "</div></div>";
-    h += "<div class='lp_row'><span class='lp_mode'>Modus: " + (manual_spot ? "fest (" + esc(manual_spot) + ")" : "automatisch") + "</span><button data-act='auto'" + (manual_spot ? "" : " class='on'") + ">Auto</button><button data-act='reset'>Neu messen</button><button data-act='worth'" + (only_worth ? " class='on'" : "") + " title='Monster mit weniger als 15 % der besten geschätzten XP/h ausblenden'>nur lohnende</button></div>";
+    h += "<div class='lp_row'><span class='lp_mode'>Modus: " + (manual_spot ? "fest (" + esc(manual_spot) + ")" : "automatisch") + "</span><button data-act='auto'" + (manual_spot ? "" : " class='on'") + ">Auto</button><button data-act='reset'>Neu messen</button><button data-act='worth'" + (only_worth ? " class='on'" : "") + " title='nur die 5 besten nach geschätzten XP/h'>Top 5</button></div>";
     if (!panel.__collapsed) {
         var cols = [["name", "Monster"], ["danger", "Gefahr"], ["ttk", "s/Kill"], ["xpk", "XP/Kill"], ["xpest", "XP/h*"], ["xph", "XP/h"], ["gph", "G/h"], ["ang", "ANG"]];
         h += "<table class='lp_t'><tr>" + cols.map(function (c) { return "<th data-sort='" + c[0] + "'" + (sort_key == c[0] ? " class='sorted'" : "") + ">" + c[1] + (sort_key == c[0] ? (sort_dir < 0 ? " ▾" : " ▴") : "") + "</th>"; }).join("") + "<th></th></tr>";
