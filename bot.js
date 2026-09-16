@@ -1,6 +1,7 @@
 // ===== Adventure Land – Vollautomatik Magier (nichts einstellen) =====
 // P = Pause (stoppt auch Upgrades) – Start immer im Pause-Modus
 // O = Bot komplett aus/an (Hauptschleife stoppen/starten)
+// N = neueste Version von GitHub laden und neu starten
 // U = sichere Upgrades: kaufbare Items: Reserve +5 im Inventar, getragenes Teil bis +8; Drop-Items +3; INT-Scrolls; Schmuck +2; bessere Ausrüstung kaufen
 // K = wie U, aber Drop-Items bis +5 (Risiko!)
 // L = Farm-Statistik (XP/h, Gold/h je Monster) ins Log
@@ -9,8 +10,8 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v53";
-game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – PAUSIERT. P = Start/Pause, O = Bot aus/an, U = sichere Upgrades, K = alle Upgrades, L = Statistik, G = Gifts tauschen");
+var BOT_VERSION = "v54";
+game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – PAUSIERT. P = Start/Pause, O = Bot aus/an, N = neu laden, U = sichere Upgrades, K = alle Upgrades, L = Statistik, G = Gifts tauschen");
 
 var GOLD_RESERVE = 20000;
 var UPGRADE_TARGET = 8;              // kaufbare Items: Ziel für das getragene Teil
@@ -83,6 +84,9 @@ var CBURST_MIN_MP = 0.5;
 
 var busy = false, paused = true, upgrading = false, pending_upgrade = null; // Start pausiert
 var bot_running = true, main_timer = null;
+var BOT_URL = "https://raw.githubusercontent.com/fabianh199621-ctrl/adventureland/main/bot.js";
+// alte Instanz (vorheriger Lauf/Reload) beenden
+try { if (parent.__lp_main_timer) clearInterval(parent.__lp_main_timer); if (parent.__lp_panel_timer) { clearInterval(parent.__lp_panel_timer); parent.__lp_panel_timer = null; } } catch (e) {}
 var last_weapon_log = 0;
 var blocked_spots = {};
 var farm_stats = load_stats();
@@ -133,6 +137,7 @@ function on_key(ev) {
     var k = (ev.key || "").toUpperCase();
     if (k == "P") toggle_pause();
     else if (k == "O") toggle_bot();
+    else if (k == "N") reload_bot();
     else if (k == "U") upgrade_routine(false);
     else if (k == "K") upgrade_routine(true);
     else if (k == "L") log_stats();
@@ -164,10 +169,23 @@ function event_debug() {
     game_log("Event-Diagnose angezeigt (Fenster) – bitte Screenshot");
 }
 
+function reload_bot() {
+    game_log("Lade neueste Version von GitHub …");
+    fetch(BOT_URL + "?t=" + Date.now(), { cache: "no-store" })
+        .then(function (r) { if (!r.ok) throw "HTTP " + r.status; return r.text(); })
+        .then(function (code) {
+            var v = (code.match(/BOT_VERSION = "(\w+)"/) || [])[1] || "?";
+            if (v == BOT_VERSION) game_log("Bereits aktuell (" + v + ") – starte trotzdem neu");
+            if (main_timer) clearInterval(main_timer); main_timer = null; parent.__lp_main_timer = null;
+            stop("smart"); stop("move");
+            eval(code);
+        })
+        .catch(function (e) { game_log("Neu laden fehlgeschlagen: " + e); });
+}
 function toggle_bot() {
     bot_running = !bot_running;
     if (!bot_running) {
-        if (main_timer) clearInterval(main_timer); main_timer = null;
+        if (main_timer) clearInterval(main_timer); main_timer = null; parent.__lp_main_timer = null;
         stop("smart"); stop("move"); busy = false; upgrading = false; kissing = false; fleeing = false; exchanging = false; pontying = false;
         set_message("BOT AUS"); game_log("Bot AUS (O zum Starten) – nur das Panel läuft weiter");
         try { update_panel(); } catch (e) {}
@@ -1304,7 +1322,7 @@ async function upgrade_routine(manual) {
 // ---------- Hauptschleife ----------
 function start_main() {
   if (main_timer) clearInterval(main_timer);
-  main_timer = setInterval(function () {
+  main_timer = parent.__lp_main_timer = setInterval(function () {
     heal_logic(); loot();
     if (character.rip) { if (meas) finish_measure(true); respawn(); busy = false; fleeing = false; kissing = false; return; }
     session_tick();
