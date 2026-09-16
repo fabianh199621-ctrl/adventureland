@@ -8,7 +8,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v34";
+var BOT_VERSION = "v35";
 game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – P = Pause, U = sichere Upgrades, K = alle Upgrades, L = Statistik, G = Gifts tauschen");
 
 var GOLD_RESERVE = 20000;
@@ -54,7 +54,8 @@ var ELIXIR = "elixirint0";           // wird aktiv gehalten, wenn kaufbar
 var GEAR_MIN_GAIN = 1.2;             // neue Ausrüstung nur, wenn mind. 20 % besser // bleibt im Inventar
 var EVENT_ITEMS = /cake|gift|anniv|kiss|slice/i;   // Event-Items bleiben im Inventar
 var KISS_ENABLED = true;             // 10-Jahre-Event: jede Runde zum Ziel laufen und küssen
-var FLEE_HP = 0.25;                  // Rückzug unter 25 % HP ...
+var KITE_HP = 0.35;                  // unter 35 % HP mit Schwarm: kurz zurückweichen und heilen
+var FLEE_HP = 0.15;                  // unter 15 % HP: in die Stadt
 var FLEE_ATTACKERS = 2;              // ... wenn mind. 2 Monster auf mich zielen
 var CBURST_MIN_TARGETS = 2;
 var CBURST_MP_PER_TARGET = 80;
@@ -299,7 +300,8 @@ function heal_logic() {
     var missing_hp = character.max_hp - character.hp, missing_mp = character.max_mp - character.mp;
     var hpot = best_pot(POTS_HP), mpot = best_pot(POTS_MP);
 
-    if (hp < 0.4 && hpot && missing_hp >= hpot.gives * 0.8) {
+    var swarm = attackers_on_me() >= FLEE_ATTACKERS;
+    if (hp < (swarm ? 0.55 : 0.4) && hpot && missing_hp >= hpot.gives * 0.8) {
         game_log("Heiltrank " + hpot.name + " (HP " + Math.round(hp * 100) + "%)"); equip(hpot.idx);
     } else if (mp < 0.3 && mpot && missing_mp >= mpot.gives * 0.8) {
         game_log("Manatrank " + mpot.name + " (MP " + Math.round(mp * 100) + "%)"); equip(mpot.idx);
@@ -325,7 +327,7 @@ function try_cburst() {
         return false;
     }
     if (is_on_cooldown("cburst")) return false;
-    if (character.mp / character.max_mp < CBURST_MIN_MP) return false;
+    if (character.mp / character.max_mp < CBURST_MIN_MP && attackers_on_me() < FLEE_ATTACKERS) return false;
 
     var range = G.skills.cburst.range || 300;
     var targets = [];
@@ -336,7 +338,7 @@ function try_cburst() {
         targets.push([e.id, CBURST_MP_PER_TARGET]);
     }
     if (targets.length < CBURST_MIN_TARGETS) return false;
-    if (character.mp < targets.length * CBURST_MP_PER_TARGET + 100) return false;
+    if (character.mp < targets.length * CBURST_MP_PER_TARGET + 100) { if (attackers_on_me() < FLEE_ATTACKERS) return false; targets = targets.slice(0, Math.max(1, Math.floor((character.mp - 100) / CBURST_MP_PER_TARGET))); if (targets.length < 2) return false; }
 
     set_message("Cburst x" + targets.length);
     use_skill("cburst", targets);
@@ -472,98 +474,38 @@ function attackers_on_me() {
     return n;
 }
 async function check_flee() {
-    if (fleeing || paused || upgrading) return;
-    if (character.hp / character.max_hp > FLEE_HP || attackers_on_me() < FLEE_ATTACKERS) return;
+    if (fleeing || paused || upgrading || kissing) return;
+    var hp = character.hp / character.max_hp;
+    var n = attackers_on_me();
+    if (n < FLEE_ATTACKERS || hp > KITE_HP) return;
     fleeing = true; busy = true;
-    game_log("Rückzug! HP " + Math.round(character.hp / character.max_hp * 100) + "%, " + attackers_on_me() + " Angreifer");
-    set_message("RÜCKZUG");
     try {
+        if (hp > FLEE_HP) {
+            // Kiten: vom Schwarm wegziehen, heilen, zurück
+            game_log("Zurückweichen: HP " + Math.round(hp * 100) + "%, " + n + " Angreifer");
+            set_message("ZURÜCK");
+            stop("smart");
+            var t0 = Date.now();
+            while (Date.now() - t0 < 20000 && !character.rip) {
+                var cx = 0, cy = 0, k = 0;
+                for (var id in parent.entities) { var e = parent.entities[id]; if (e && e.type == "monster" && !e.dead && e.target == character.name) { cx += e.x; cy += e.y; k++; } }
+                if (!k || character.hp / character.max_hp > 0.7) break;
+                cx /= k; cy /= k;
+                var dx = character.x - cx, dy = character.y - cy, d = Math.hypot(dx, dy) || 1;
+                var tx = character.x + dx / d * 150, ty = character.y + dy / d * 150;
+                if (can_move_to(tx, ty)) move(tx, ty); else move(character.x - dx / d * 150, character.y - dy / d * 150);
+                await sleep(500);
+            }
+            if (character.hp / character.max_hp > FLEE_HP) { fleeing = false; busy = false; return; }
+        }
+        game_log("Rückzug in die Stadt! HP " + Math.round(character.hp / character.max_hp * 100) + "%");
+        set_message("RÜCKZUG");
         stop("smart");
         await smart_move("town");
         while (character.hp < character.max_hp * 0.8 && !character.rip) await sleep(1000);
         game_log("Erholt, zurück zum Spot");
     } catch (e) {}
     fleeing = false; busy = false;
-}
-
-// ---------- 10-Jahre-Event: Kuss-Runde ----------
-var kiss_done_round = null, kissing = false, kiss_fail_round = null;
-function anniv() { return parent.S && parent.S.anniversary; }
-function kiss_round_open() {
-    var a = anniv();
-    if (!KISS_ENABLED || !a || !a.active || !a.live || !a.target || a.available === false) return false;
-    if (a.round == kiss_done_round || a.round == kiss_fail_round) return false;
-    if (a.expires && Date.now() > a.expires - 15000) return false;
-    return true;
-}
-async function kiss_routine() {
-    if (kissing || upgrading || fleeing || !kiss_round_open()) return;
-    var a = anniv(); var round = a.round, name = a.target;
-    kissing = true; busy = true;
-    game_log("Kuss-Runde " + round + ": laufe zu " + name + " (" + a.map + " " + a.x + "," + a.y + ")");
-    set_message("Kuss: " + name);
-    try {
-        stop("smart");
-        await smart_move({ map: a.map, x: a.x, y: a.y });
-        var range = (G.skills.ikissyou && G.skills.ikissyou.range) || 50;
-        var t_end = Math.min(a.expires || Date.now() + 240000, Date.now() + 240000);
-        var ok = false, tries = 0;
-        while (Date.now() < t_end && !paused) {
-            a = anniv();
-            if (!a || a.round != round) break;
-            if (a.available === false) { ok = true; break; }
-            var ent = get_player(name);
-            if (!ent) {
-                // Ziel nicht in Sicht: zur gemeldeten Position nachlaufen
-                if (a.map == character.map && distance(character, { x: a.x, y: a.y }) > 30) { move(a.x, a.y); }
-                await sleep(1000); continue;
-            }
-            if (distance(character, ent) > range - 5) { move(ent.x, ent.y); await sleep(400); continue; }
-            if (!is_on_cooldown("ikissyou")) {
-                tries++;
-                try { await use_skill("ikissyou", ent); } catch (e) { game_log("Kuss-Fehler: " + (e && e.reason || e)); }
-                await sleep(1500);
-                a = anniv();
-                if (a && a.available === false) { ok = true; break; }
-                if (tries >= 5) break;
-            } else await sleep(500);
-        }
-        if (ok) { kiss_done_round = round; game_log("Kuss belohnt (Runde " + round + ")"); }
-        else { kiss_fail_round = round; game_log("Kuss diese Runde nicht geschafft"); }
-    } catch (e) { kiss_fail_round = round; game_log("Kuss-Routine abgebrochen: " + e); }
-    kissing = false; busy = false;
-}
-
-// ---------- Anniversary Gifts bei Xyn eintauschen (Taste G) ----------
-var exchanging = false;
-async function exchange_gifts() {
-    if (exchanging) { game_log("Tausch läuft bereits"); return; }
-    if (busy || upgrading) { game_log("Gerade beschäftigt – gleich nochmal G drücken"); return; }
-    var n = quantity("anniversarygift");
-    if (!n) { game_log("Keine Anniversary Gifts im Inventar"); return; }
-    if (paused) { paused = false; game_log("Pause aufgehoben"); }
-    exchanging = true; busy = true;
-    game_log("Tausche " + n + " Anniversary Gifts bei Xyn");
-    set_message("Zu Xyn");
-    try {
-        stop("smart");
-        await smart_move("exchange");
-        var done = 0, fails = 0;
-        while (quantity("anniversarygift") > 0 && !paused) {
-            if (character.esize < 2) { game_log("Inventar voll – Tausch gestoppt (" + quantity("anniversarygift") + " übrig)"); break; }
-            var idx = locate_item("anniversarygift");
-            var before = quantity("anniversarygift");
-            try { await exchange(idx); } catch (e) {}
-            await sleep(1200);
-            while (character.q && character.q.exchange) await sleep(500);
-            await sleep(300);
-            if (quantity("anniversarygift") < before) { done++; fails = 0; set_message("Tausch " + done + "/" + n); }
-            else if (++fails >= 3) { game_log("Tausch klappt nicht (Xyn nicht erreichbar?)"); break; }
-        }
-        game_log("Fertig: " + done + " Gifts getauscht");
-    } catch (e) { game_log("Tausch-Fehler: " + e); }
-    exchanging = false; busy = false;
-    if (!paused) go_to_farm_spot();
 }
 
 // ---------- Tränke kaufen: beste Stufe, die das Gold hergibt ----------
