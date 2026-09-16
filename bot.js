@@ -8,7 +8,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v41";
+var BOT_VERSION = "v42";
 game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – P = Pause, U = sichere Upgrades, K = alle Upgrades, L = Statistik, G = Gifts tauschen");
 
 var GOLD_RESERVE = 20000;
@@ -27,6 +27,17 @@ var CANDIDATES = ["goo", "crab", "bee", "croc", "armadillo", "squig", "squigtoad
                   "tortoise", "frog", "rat", "minimush", "snake", "osnake", "scorpion", "spider",
                   "arcticbee", "boar", "crabx", "bat", "cgoo"];
 var EXCLUDE = { iceroamer: true };   // gezielt ausgeschlossen (Einfrieren)
+var hidden_mons = {}; try { hidden_mons = JSON.parse(localStorage.getItem("lp_hidden") || "{}"); } catch (e) {}
+var only_worth = false; try { only_worth = localStorage.getItem("lp_only_worth") == "1"; } catch (e) {}
+var WORTH_MIN = 0.15;                // "nur lohnende": mind. 15 % der besten geschätzten XP/h
+function save_hidden() { try { localStorage.setItem("lp_hidden", JSON.stringify(hidden_mons)); localStorage.setItem("lp_only_worth", only_worth ? "1" : "0"); } catch (e) {} }
+function hide_mon(m, hide) { if (hide) hidden_mons[m] = true; else delete hidden_mons[m]; save_hidden(); if (hide && (current_spot == m || manual_spot == m)) set_auto_spot(); last_panel = 0; }
+function is_worth(m) {
+    if (!only_worth) return true;
+    var best = 0; CANDIDATES.forEach(function (x) { if (is_safe_monster(x) && !hidden_mons[x]) best = Math.max(best, mon_xph_est(G.monsters[x])); });
+    return mon_xph_est(G.monsters[m]) >= best * WORTH_MIN;
+}
+function visible_mons() { return CANDIDATES.filter(function (m) { return is_safe_monster(m) && !hidden_mons[m] && is_worth(m); }); }
 var EVAL_MS = 3 * 60 * 1000;         // Messdauer je Spot
 var MEASURE_TOP = 6;                 // nur die 6 vielversprechendsten Spots werden gemessen
 var REEVAL_MS = 6 * 60 * 60 * 1000;  // Messwerte gelten so lange
@@ -177,8 +188,8 @@ function stats_valid(st) {
 // Geschätztes Potenzial aus Spieldaten: XP pro Kill / nötige Schläge
 function estimate(mon) { return mon_xph_est(G.monsters[mon]) / 100; }
 function candidate_list() {
-    var list = CANDIDATES.filter(function (m) {
-        if (blocked_spots[m] || !is_safe_monster(m)) return false;
+    var list = visible_mons().filter(function (m) {
+        if (blocked_spots[m]) return false;
         var st = farm_stats[m];
         if (st && st.unsafe_until && character.level < st.unsafe_until) return false;
         return true;
@@ -400,6 +411,8 @@ function init_panel() {
         if (b.id == "lp_toggle") { div.__collapsed = !div.__collapsed; try { localStorage.setItem("lp_panel_collapsed", div.__collapsed ? "1" : "0"); } catch (x) {} last_panel = 0; return; }
         var act = b.getAttribute("data-act"), mon = b.getAttribute("data-mon");
         if (act == "farm") set_manual_spot(mon); else if (act == "auto") set_auto_spot(); else if (act == "reset") reset_measurements();
+        else if (act == "hide") hide_mon(mon, true); else if (act == "show") hide_mon(mon, false);
+        else if (act == "worth") { only_worth = !only_worth; save_hidden(); }
         last_panel = 0;
     };
     if (parent.__lp_panel_h) { var H = parent.__lp_panel_h; ["pointerdown", "mousedown"].forEach(function (t) { win.removeEventListener(t, H.down, true); }); ["pointermove", "mousemove"].forEach(function (t) { win.removeEventListener(t, H.move, true); }); ["pointerup", "mouseup"].forEach(function (t) { win.removeEventListener(t, H.up, true); }); win.removeEventListener("click", H.click, true); }
@@ -492,11 +505,11 @@ function update_panel() {
     h += "<div class='lp_spot'><div><span class='lp_k'>Spot</span> <b>" + esc(current_spot || "-") + "</b>" + (meas_txt ? " <span class='lp_k'>(" + meas_txt + ")</span>" : "") + "</div>"
       + "<div class='lp_big'>" + fmt(cur_xp_h) + " XP/h &nbsp;·&nbsp; " + fmt(cur_gold_h) + " G/h</div>"
       + "<div class='lp_k'>Session " + fmt(sess.xp / sh) + " XP/h · " + fmt(sess.gold / sh) + " G/h · nächstes Level in " + (rate > 0 ? fmt_time((G.levels[character.level] - character.xp) / rate * 3600000) : "-") + "</div></div>";
-    h += "<div class='lp_row'><span class='lp_mode'>Modus: " + (manual_spot ? "fest (" + esc(manual_spot) + ")" : "automatisch") + "</span><button data-act='auto'" + (manual_spot ? "" : " class='on'") + ">Auto</button><button data-act='reset'>Neu messen</button></div>";
+    h += "<div class='lp_row'><span class='lp_mode'>Modus: " + (manual_spot ? "fest (" + esc(manual_spot) + ")" : "automatisch") + "</span><button data-act='auto'" + (manual_spot ? "" : " class='on'") + ">Auto</button><button data-act='reset'>Neu messen</button><button data-act='worth'" + (only_worth ? " class='on'" : "") + " title='Monster mit weniger als 15 % der besten geschätzten XP/h ausblenden'>nur lohnende</button></div>";
     if (!panel.__collapsed) {
         var cols = [["name", "Monster"], ["danger", "Gefahr"], ["ttk", "s/Kill"], ["xpk", "XP/Kill"], ["xpest", "XP/h*"], ["xph", "XP/h"], ["gph", "G/h"], ["ang", "ANG"]];
         h += "<table class='lp_t'><tr>" + cols.map(function (c) { return "<th data-sort='" + c[0] + "'" + (sort_key == c[0] ? " class='sorted'" : "") + ">" + c[1] + (sort_key == c[0] ? (sort_dir < 0 ? " ▾" : " ▴") : "") + "</th>"; }).join("") + "<th></th></tr>";
-        var mons = CANDIDATES.filter(is_safe_monster);
+        var mons = visible_mons();
         mons.sort(function (x, y) { var a1 = sort_value(x, sort_key), b1 = sort_value(y, sort_key); return (a1 < b1 ? -1 : a1 > b1 ? 1 : 0) * sort_dir; });
         mons.forEach(function (m) {
             var st = farm_stats[m], d = G.monsters[m], oldc = st && !stats_valid(st) ? " class='old'" : "";
@@ -504,8 +517,15 @@ function update_panel() {
             h += "<tr" + (m == current_spot ? " class='cur'" : "") + "><td title='" + esc(mon_tooltip(m)) + "'>" + esc(m) + (st && st.deaths ? " <span style='color:#ef5350'>†" + st.deaths + "</span>" : "") + "</td>"
                + "<td style='color:" + (dg > 0.35 ? "#ef5350" : dg > 0.15 ? "#ffb74d" : "#81c784") + "'>" + (isFinite(dg) ? Math.round(dg * 100) + "%" : "∞") + "</td><td>" + (isFinite(ttk) ? ttk.toFixed(1) : "∞") + "</td><td>" + fmt(d.xp) + "</td><td>" + fmt(mon_xph_est(d)) + "</td>"
                + "<td" + oldc + ">" + (st ? fmt(st.xp_h) : "-") + "</td><td" + oldc + ">" + (st ? fmt(st.gold_h) : "-") + "</td><td" + oldc + ">" + (st && st.attack ? st.attack : "-") + "</td>"
-               + "<td><button data-act='farm' data-mon='" + m + "'" + (m == manual_spot ? " class='on'" : "") + ">Farmen</button></td></tr>";
+               + "<td><button data-act='farm' data-mon='" + m + "'" + (m == manual_spot ? " class='on'" : "") + ">Farmen</button> <button data-act='hide' data-mon='" + m + "' title='ausblenden' style='padding:1px 5px'>✕</button></td></tr>";
         });
+        var hid = Object.keys(hidden_mons).filter(function (m) { return G.monsters[m]; });
+        var auto_hid = only_worth ? CANDIDATES.filter(function (m) { return is_safe_monster(m) && !hidden_mons[m] && !is_worth(m); }) : [];
+        if (hid.length || auto_hid.length) {
+            h += "<tr><td colspan='9' style='text-align:left;color:#9aa3b2;white-space:normal'>Ausgeblendet: "
+               + hid.map(function (m) { return esc(m) + " <button data-act='show' data-mon='" + m + "' style='padding:0 4px'>↩</button>"; }).join(" ")
+               + (auto_hid.length ? " <span style='color:#6b7280'>(Filter: " + auto_hid.map(esc).join(", ") + ")</span>" : "") + "</td></tr>";
+        }
         h += "</table>";
     }
     panel.querySelector("#lp_body").innerHTML = h;
