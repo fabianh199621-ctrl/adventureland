@@ -1,6 +1,6 @@
 // ===== Adventure Land – Vollautomatik Magier (nichts einstellen) =====
 // P = Pause (stoppt auch Upgrades)
-// U = sichere Upgrades: kaufbare Items +8 (mit Nachkauf), Drop-Items +3, INT-Scrolls, Schmuck +2, bessere Ausrüstung kaufen
+// U = sichere Upgrades: kaufbare Items: Reserve +5 im Inventar, getragenes Teil bis +8; Drop-Items +3; INT-Scrolls; Schmuck +2; bessere Ausrüstung kaufen
 // K = wie U, aber Drop-Items bis +5 (Risiko!)
 // L = Farm-Statistik (XP/h, Gold/h je Monster) ins Log
 // D = Event-Daten anzeigen (Diagnose für 10-Jahre-Event)
@@ -8,11 +8,12 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v46";
+var BOT_VERSION = "v47";
 game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – P = Pause, U = sichere Upgrades, K = alle Upgrades, L = Statistik, G = Gifts tauschen");
 
 var GOLD_RESERVE = 20000;
-var UPGRADE_TARGET = 8;              // kaufbare Items (Nachkauf bei Zerstörung)
+var UPGRADE_TARGET = 8;              // kaufbare Items: Ziel für das getragene Teil
+var BACKUP_LEVEL = 5;                // kaufbare Items: Reservekopie auf diesem Level im Inventar
 var SAFE_TARGET_DROP = 3;            // Drop-Items bei U
 var RISKY_TARGET_DROP = 5;           // Drop-Items bei K
 var MAX_REBUYS = 6;
@@ -596,7 +597,7 @@ function is_junk(it) { // kaufbare Standardausrüstung ohne Level/Attribut; unge
     if ((it.level || 0) > 0 || it.stat_type) return false;
     return is_buyable(it.name);
 }
-function should_keep(it) { return (G.items[it.name] && G.items[it.name].compound && (equipped_names()[it.name] || find_inv_indices(it.name, it.level || 0).length >= 3)) || KEEP_ITEMS.test(it.name) || EVENT_ITEMS.test(it.name) || EVENT_ITEMS.test(G.items[it.name] && G.items[it.name].name || ""); }
+function should_keep(it) { return (equipped_names()[it.name] && (it.level || 0) >= BACKUP_LEVEL) || (G.items[it.name] && G.items[it.name].compound && (equipped_names()[it.name] || find_inv_indices(it.name, it.level || 0).length >= 3)) || KEEP_ITEMS.test(it.name) || EVENT_ITEMS.test(it.name) || EVENT_ITEMS.test(G.items[it.name] && G.items[it.name].name || ""); }
 async function tidy_inventory() {
     if (busy || upgrading || paused || character.esize >= INV_MIN_FREE) return;
     busy = true;
@@ -789,7 +790,7 @@ function equipped_slots(kind) {
     return list;
 }
 function slots_to_upgrade(manual) {
-    return equipped_slots("upgrade").filter(function (s) { var it = character.slots[s]; return (it.level || 0) < target_level(it.name, manual); });
+    return equipped_slots("upgrade").filter(function (s) { var it = character.slots[s]; return (it.level || 0) < target_level(it.name, manual) || (is_buyable(it.name) && backup_index(it.name) < 0); });
 }
 function slots_without_stat() {
     return equipped_slots("upgrade").filter(function (s) { return character.slots[s].stat_type != STAT_TYPE; });
@@ -1002,6 +1003,76 @@ async function compound_spares() {
 }
 
 // ---------- Upgrade + Attribut + Compound ----------
+// Ein Inventar-Item (name, level) schrittweise bis target upgraden. Rückgabe: {level, destroyed}
+async function upgrade_inv(name, level, target) {
+    while (level < target) {
+        check_pause();
+        var idx = find_inv_index(name, level);
+        if (idx < 0) return { level: level, destroyed: true };
+        var scroll = "scroll" + item_grade(character.items[idx]);
+        if (spendable() < G.items[scroll].g) { game_log("Reserve erreicht – Upgrade gestoppt"); return { level: level, destroyed: false, stopped: true }; }
+        if (quantity(scroll) < 1) { buy(scroll, 1); await sleep(600); }
+        var sidx = locate_item(scroll);
+        if (sidx < 0) { game_log("keine " + scroll); return { level: level, destroyed: false, stopped: true }; }
+        set_message(name + " +" + level + " -> +" + (level + 1));
+        try { await upgrade(idx, sidx); } catch (e) {}
+        await wait_queue("upgrade");
+        var got = find_inv_index(name, level + 1);
+        if (got >= 0) { level++; game_log(name + " ist jetzt +" + level); }
+        else if (find_inv_index(name, level) >= 0) game_log(name + " Upgrade fehlgeschlagen, Item erhalten");
+        else { game_log("!!! " + name + " +" + level + " ZERSTÖRT !!!"); return { level: level, destroyed: true }; }
+    }
+    return { level: level, destroyed: false };
+}
+function backup_index(name) { // beste Inventar-Kopie >= BACKUP_LEVEL
+    var best = -1, bl = -1;
+    for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && it.name == name && (it.level || 0) >= BACKUP_LEVEL && (it.level || 0) > bl) { best = i; bl = it.level || 0; } }
+    return best;
+}
+async function ensure_backup(name) { // Reservekopie auf +BACKUP_LEVEL herstellen
+    for (var tries = 0; tries < 3; tries++) {
+        if (backup_index(name) >= 0) return true;
+        var base = find_inv_index(name, 0);
+        if (base < 0) { if (!await buy_items(name, 1)) return false; await smart_move("upgrade"); }
+        var r = await upgrade_inv(name, 0, BACKUP_LEVEL);
+        if (r.stopped) return false;
+        if (!r.destroyed) { game_log("Reserve " + name + " +" + BACKUP_LEVEL + " bereit"); return true; }
+    }
+    return false;
+}
+async function process_slot(slot, manual) {
+    var item = character.slots[slot]; if (!item) return;
+    var name = item.name, buyable = is_buyable(name), goal = target_level(name, manual);
+    if ((item.level || 0) >= goal && (!buyable || backup_index(name) >= 0)) return;
+    if (buyable && !await ensure_backup(name)) { game_log(name + ": keine Reserve möglich – übersprungen"); return; }
+    var rebuys = 0;
+    while (rebuys <= MAX_REBUYS) {
+        check_pause();
+        var cur = character.slots[slot]; if (!cur) break;
+        var lvl = cur.level || 0; if (lvl >= goal) break;
+        // Getragenes Teil ins Inventar, aber Reserve davon unterscheiden: Reserve-Index vorher merken
+        unequip(slot); await sleep(600);
+        var r = await upgrade_inv(name, lvl, goal);
+        if (r.destroyed) {
+            rebuys++;
+            if (!buyable) break;
+            var b = backup_index(name);
+            if (b < 0) { game_log(name + ": keine Reserve mehr"); break; }
+            equip(b, slot); await sleep(600);
+            game_log("Reserve " + name + " +" + (character.slots[slot].level || 0) + " angelegt");
+            if (!await ensure_backup(name)) break;
+            continue;
+        }
+        // bestes Exemplar anlegen (das gerade verbesserte), Reserve bleibt im Inventar
+        var best = -1, bl = -1;
+        for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && it.name == name && (it.level || 0) > bl) { best = i; bl = it.level || 0; } }
+        if (best >= 0) { equip(best, slot); await sleep(600); }
+        if (r.stopped) break;
+        if (buyable && backup_index(name) < 0) await ensure_backup(name);
+        break;
+    }
+}
+
 // manual=false: sichere Upgrades (U) | manual=true: alles bis +5 (K)
 async function upgrade_routine(manual) {
     if (upgrading) { game_log("Upgrade läuft bereits"); return; }
@@ -1029,43 +1100,7 @@ async function upgrade_routine(manual) {
 
         if (up_slots.length) {
             await smart_move("upgrade");
-            for (var k = 0; k < up_slots.length; k++) {
-                var slot = up_slots[k], item = character.slots[slot]; if (!item) continue;
-                var name = item.name, goal = target_level(name, manual), rebuys = 0;
-
-                while (spendable() > 2000) {
-                    check_pause();
-                    var cur = character.slots[slot];
-                    if (!cur || (cur.level || 0) >= goal) break;
-                    var lvl = cur.level || 0;
-
-                    unequip(slot); await sleep(600);
-                    var idx = find_inv_index(name, lvl);
-                    if (idx < 0) { game_log("Upgrade: Item nicht gefunden"); break; }
-                    try {
-                        var scroll = "scroll" + item_grade(character.items[idx]);
-                        if (spendable() < G.items[scroll].g) { game_log("Reserve erreicht – Upgrade gestoppt"); equip(idx); break; }
-                        if (quantity(scroll) < 1) { buy(scroll, 1); await sleep(600); }
-                        var sidx = locate_item(scroll);
-                        if (sidx < 0) { game_log("keine " + scroll); equip(idx); break; }
-
-                        set_message(name + " +" + lvl + " -> +" + (lvl + 1));
-                        try { await upgrade(idx, sidx); } catch (e) {}
-                        await wait_queue("upgrade");
-                    } finally {
-                        var after = find_inv_index(name, lvl + 1);
-                        if (after >= 0) { game_log(name + " ist jetzt +" + (lvl + 1)); equip(after); await sleep(600); }
-                        else if (find_inv_index(name, lvl) >= 0) { if (!paused) game_log(name + " Upgrade fehlgeschlagen, Item erhalten"); equip(find_inv_index(name, lvl)); await sleep(600); }
-                        else {
-                            game_log("!!! " + name + " ZERSTÖRT !!!");
-                            if (++rebuys > MAX_REBUYS) { game_log(name + ": zu oft zerstört, abgebrochen"); rebuys = 99; }
-                            else if (slot == "mainhand") { rebuys = 99; }
-                            else if (await buy_and_equip(name)) await smart_move("upgrade"); else rebuys = 99;
-                        }
-                    }
-                    if (rebuys == 99) break;
-                }
-            }
+            for (var k = 0; k < up_slots.length; k++) { check_pause(); await process_slot(up_slots[k], manual); await smart_move("upgrade"); }
         }
 
         stat_slots = spendable() >= stat_price ? slots_without_stat() : [];
