@@ -8,7 +8,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v40";
+var BOT_VERSION = "v41";
 game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – P = Pause, U = sichere Upgrades, K = alle Upgrades, L = Statistik, G = Gifts tauschen");
 
 var GOLD_RESERVE = 20000;
@@ -32,6 +32,8 @@ var MEASURE_TOP = 6;                 // nur die 6 vielversprechendsten Spots wer
 var REEVAL_MS = 6 * 60 * 60 * 1000;  // Messwerte gelten so lange
 var ATTACK_DRIFT = 0.15;             // ... oder bis sich ANG um 15 % geändert hat
 var XP_WEIGHT = 1, GOLD_WEIGHT = 1;  // Gewichtung XP/h vs. Gold/h
+var MAX_DANGER = 0.5;                // Monster gilt als sicher, wenn ein Kill <= 50 % meiner HP kostet
+var MAX_TTK = 40;                    // ... und in <= 40 s tot ist
 var HITS_TO_DIE_MIN = 12;            // Monster darf mich nicht in < 8 Schlägen töten
 var HITS_TO_KILL_MAX = 25;           // ich muss es in <= 25 Schlägen töten können
 var FILL_SLOTS = {
@@ -164,7 +166,7 @@ function is_safe_monster(mon) {
     if (!d || EXCLUDE[mon]) return false;
     if (d.cooperative || d.boss || d.special || d.abilities) return false; // Sonderfähigkeiten (Einfrieren etc.) meiden
     if (d.attack * HITS_TO_DIE_MIN > character.max_hp) return false;
-    if (d.hp > character.attack * HITS_TO_KILL_MAX) return false;
+    if (mon_danger(d) > MAX_DANGER || mon_ttk(d) > MAX_TTK) return false;
     return true;
 }
 function stats_valid(st) {
@@ -173,11 +175,7 @@ function stats_valid(st) {
     return true;
 }
 // Geschätztes Potenzial aus Spieldaten: XP pro Kill / nötige Schläge
-function estimate(mon) {
-    var d = G.monsters[mon];
-    var hits = Math.max(1, Math.ceil(d.hp / Math.max(1, character.attack)));
-    return (d.xp || 0) / hits + (d.gold || 0) / hits * 0.5;
-}
+function estimate(mon) { return mon_xph_est(G.monsters[mon]) / 100; }
 function candidate_list() {
     var list = CANDIDATES.filter(function (m) {
         if (blocked_spots[m] || !is_safe_monster(m)) return false;
@@ -371,7 +369,7 @@ function init_panel() {
       + ".lp_row{display:flex;gap:6px;align-items:center;margin:4px 0}.lp_row .lp_mode{color:#8ab4f8;flex:1}"
       + "#lp_body button{font:11px 'Segoe UI',Arial;padding:1px 7px;cursor:pointer;background:#2f3440;color:#eee;border:1px solid #555;border-radius:3px}#lp_body button:hover{background:#3d4453}#lp_body button.on{background:#2e7d32;border-color:#4caf50}"
       + "table.lp_t{width:100%;border-collapse:collapse;font-size:11.5px;margin-top:4px}table.lp_t th{color:#9aa3b2;font-weight:normal;text-align:right;padding:2px 4px;border-bottom:1px solid #3a3f4b;cursor:pointer}table.lp_t th:hover{color:#fff}table.lp_t th.sorted{color:#8ab4f8}table.lp_t th:first-child,table.lp_t td:first-child{text-align:left}"
-      + "table.lp_t td{padding:2px 4px;text-align:right;white-space:nowrap}table.lp_t tr:nth-child(even) td{background:#181b22}table.lp_t tr.cur td{background:#20302a;color:#c8f0d0}table.lp_t td.old{color:#8a8f99}";
+      + "table.lp_t td{padding:2px 4px;text-align:right;white-space:nowrap}table.lp_t td[title]{cursor:help;text-decoration:underline dotted #666}table.lp_t tr:nth-child(even) td{background:#181b22}table.lp_t tr.cur td{background:#20302a;color:#c8f0d0}table.lp_t td.old{color:#8a8f99}";
     doc.head.appendChild(st);
 
     var div = doc.createElement("div"); div.id = "lp_panel";
@@ -413,10 +411,38 @@ function init_panel() {
     return div;
 }
 var panel = init_panel();
-// Monster-Stärke: sqrt(DPS x effektive HP); effektive HP berücksichtigt Resistenz (Magier) bzw. Rüstung
-function mon_dps(d) { return (d.attack || 0) * (d.frequency || 1); }
-function mon_ehp(d) { var red = character.ctype == "mage" ? (d.resistance || 0) : (d.armor || 0); return (d.hp || 0) * (1 + red / 100); }
-function mon_strength(d) { return Math.sqrt(mon_dps(d) * mon_ehp(d)) / 10; }
+// ---------- Kampf-Modell: Monster gegen meine Werte ----------
+function dmg_mult(defense) { return Math.max(0.05, Math.min(1.32, 1 - 0.001 * defense)); } // Näherung der Spielformel
+function my_dps_vs(d) {
+    var magical = character.ctype == "mage" || character.ctype == "priest";
+    var def = magical ? (d.resistance || 0) - (character.rpiercing || 0) : (d.armor || 0) - (character.apiercing || 0);
+    var hit = magical ? 1 : 1 - (d.evasion || 0) / 100;
+    return character.attack * (character.frequency || 1) * dmg_mult(def) * hit;
+}
+function mon_dps(d) { return (d.attack || 0) * (d.frequency || 1) * (1 + (d.crit || 0) / 100); }
+function mon_dps_on_me(d) {
+    var def = d.damage_type == "magical" ? (character.resistance || 0) - (d.rpiercing || 0) : (character.armor || 0) - (d.apiercing || 0);
+    return mon_dps(d) * dmg_mult(def);
+}
+function mon_ttk(d) { // Sekunden pro Kill inkl. Lebensraub
+    var dps = my_dps_vs(d); if (dps <= 0) return Infinity;
+    var heal = mon_dps(d) * (d.lifesteal || 0) / 100;
+    var net = dps - heal; if (net <= 0) return Infinity;
+    return (d.hp || 0) / net;
+}
+function mon_danger(d) { // Anteil meiner HP, den ein Kill kostet
+    var ttk = mon_ttk(d); if (!isFinite(ttk)) return Infinity;
+    var incoming = mon_dps_on_me(d) + my_dps_vs(d) * (d.reflection || 0) / 100;
+    return incoming * ttk / character.max_hp;
+}
+function mon_xph_est(d) { var ttk = mon_ttk(d); return isFinite(ttk) ? (d.xp || 0) / (ttk + 2) * 3600 * 0.8 : 0; } // +2 s Laufen/Looten, 80 % Auslastung
+function mon_strength(d) { return Math.sqrt(mon_dps(d) * (d.hp || 0) * (1 + (d.resistance || 0) / 100)) / 10; }
+function mon_tooltip(m) {
+    var d = G.monsters[m];
+    return ["HP " + d.hp, "Angriff " + d.attack + " x" + (d.frequency || 1) + "/s (" + (d.damage_type || "physical") + ")", "Rüstung " + (d.armor || 0), "Resistenz " + (d.resistance || 0),
+            "Ausweichen " + (d.evasion || 0) + "%", "Reflexion " + (d.reflection || 0) + "%", "Lebensraub " + (d.lifesteal || 0) + "%", "Krit " + (d.crit || 0) + "%",
+            "Durchdringung A/R " + (d.apiercing || 0) + "/" + (d.rpiercing || 0), "Tempo " + (d.speed || 0) + " (ich " + character.speed + ")", "XP " + d.xp, "Respawn " + (d.respawn || "?") + " s"].join("\n");
+}
 var sort_key = "xph", sort_dir = -1;
 try { var sv = JSON.parse(localStorage.getItem("lp_sort") || "null"); if (sv) { sort_key = sv.k; sort_dir = sv.d; } } catch (e) {}
 function set_sort(k) { if (sort_key == k) sort_dir = -sort_dir; else { sort_key = k; sort_dir = (k == "name" ? 1 : -1); } try { localStorage.setItem("lp_sort", JSON.stringify({ k: sort_key, d: sort_dir })); } catch (e) {} last_panel = 0; }
@@ -424,9 +450,9 @@ function sort_value(m, k) {
     var d = G.monsters[m], st = farm_stats[m];
     switch (k) {
         case "name": return m;
-        case "str": return mon_strength(d);
-        case "hp": return d.hp || 0;
-        case "dps": return mon_dps(d);
+        case "danger": return mon_danger(d);
+        case "ttk": return mon_ttk(d);
+        case "xpest": return mon_xph_est(d);
         case "xpk": return d.xp || 0;
         case "xph": return st ? st.xp_h : estimate(m) * 100;
         case "gph": return st ? st.gold_h : 0;
@@ -468,14 +494,15 @@ function update_panel() {
       + "<div class='lp_k'>Session " + fmt(sess.xp / sh) + " XP/h · " + fmt(sess.gold / sh) + " G/h · nächstes Level in " + (rate > 0 ? fmt_time((G.levels[character.level] - character.xp) / rate * 3600000) : "-") + "</div></div>";
     h += "<div class='lp_row'><span class='lp_mode'>Modus: " + (manual_spot ? "fest (" + esc(manual_spot) + ")" : "automatisch") + "</span><button data-act='auto'" + (manual_spot ? "" : " class='on'") + ">Auto</button><button data-act='reset'>Neu messen</button></div>";
     if (!panel.__collapsed) {
-        var cols = [["name", "Monster"], ["str", "Stärke"], ["hp", "HP"], ["dps", "DPS"], ["xpk", "XP/Kill"], ["xph", "XP/h"], ["gph", "G/h"], ["ang", "ANG"]];
+        var cols = [["name", "Monster"], ["danger", "Gefahr"], ["ttk", "s/Kill"], ["xpk", "XP/Kill"], ["xpest", "XP/h*"], ["xph", "XP/h"], ["gph", "G/h"], ["ang", "ANG"]];
         h += "<table class='lp_t'><tr>" + cols.map(function (c) { return "<th data-sort='" + c[0] + "'" + (sort_key == c[0] ? " class='sorted'" : "") + ">" + c[1] + (sort_key == c[0] ? (sort_dir < 0 ? " ▾" : " ▴") : "") + "</th>"; }).join("") + "<th></th></tr>";
         var mons = CANDIDATES.filter(is_safe_monster);
         mons.sort(function (x, y) { var a1 = sort_value(x, sort_key), b1 = sort_value(y, sort_key); return (a1 < b1 ? -1 : a1 > b1 ? 1 : 0) * sort_dir; });
         mons.forEach(function (m) {
             var st = farm_stats[m], d = G.monsters[m], oldc = st && !stats_valid(st) ? " class='old'" : "";
-            h += "<tr" + (m == current_spot ? " class='cur'" : "") + "><td>" + esc(m) + (st && st.deaths ? " <span style='color:#ef5350'>†" + st.deaths + "</span>" : "") + "</td>"
-               + "<td>" + mon_strength(d).toFixed(1) + "</td><td>" + fmt(d.hp) + "</td><td>" + Math.round(mon_dps(d)) + "</td><td>" + fmt(d.xp) + "</td>"
+            var dg = mon_danger(d), ttk = mon_ttk(d);
+            h += "<tr" + (m == current_spot ? " class='cur'" : "") + "><td title='" + esc(mon_tooltip(m)) + "'>" + esc(m) + (st && st.deaths ? " <span style='color:#ef5350'>†" + st.deaths + "</span>" : "") + "</td>"
+               + "<td style='color:" + (dg > 0.35 ? "#ef5350" : dg > 0.15 ? "#ffb74d" : "#81c784") + "'>" + (isFinite(dg) ? Math.round(dg * 100) + "%" : "∞") + "</td><td>" + (isFinite(ttk) ? ttk.toFixed(1) : "∞") + "</td><td>" + fmt(d.xp) + "</td><td>" + fmt(mon_xph_est(d)) + "</td>"
                + "<td" + oldc + ">" + (st ? fmt(st.xp_h) : "-") + "</td><td" + oldc + ">" + (st ? fmt(st.gold_h) : "-") + "</td><td" + oldc + ">" + (st && st.attack ? st.attack : "-") + "</td>"
                + "<td><button data-act='farm' data-mon='" + m + "'" + (m == manual_spot ? " class='on'" : "") + ">Farmen</button></td></tr>";
         });
