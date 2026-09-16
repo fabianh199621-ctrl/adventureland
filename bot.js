@@ -8,7 +8,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v29";
+var BOT_VERSION = "v30";
 game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – P = Pause, U = sichere Upgrades, K = alle Upgrades, L = Statistik, G = Gifts tauschen");
 
 var GOLD_RESERVE = 20000;
@@ -301,6 +301,60 @@ function try_cburst() {
     return true;
 }
 
+// ---------- Eigenes Fenster im Spiel (verschiebbar) ----------
+var sess = { start: Date.now(), xp: 0, gold: 0, last_xp: character.xp, last_level: character.level, last_gold: character.gold };
+function session_tick() {
+    if (character.level > sess.last_level) sess.xp += (G.levels[sess.last_level] - sess.last_xp) + character.xp;
+    else sess.xp += Math.max(0, character.xp - sess.last_xp);
+    sess.last_xp = character.xp; sess.last_level = character.level;
+    var dg = character.gold - sess.last_gold; if (dg > 0) sess.gold += dg; sess.last_gold = character.gold;
+}
+function init_panel() {
+    var doc = parent.document;
+    var old = doc.getElementById("lp_panel"); if (old) old.remove();
+    var div = doc.createElement("div"); div.id = "lp_panel";
+    div.style.cssText = "position:absolute;left:10px;top:130px;z-index:9999;background:rgba(0,0,0,0.78);color:#e8e8e8;font:12px/1.35 monospace;padding:6px 9px;border:1px solid #777;border-radius:3px;min-width:230px;cursor:move;user-select:none;white-space:pre;";
+    try { var p = JSON.parse(localStorage.getItem("lp_panel_pos") || "null"); if (p) { div.style.left = p.x + "px"; div.style.top = p.y + "px"; } } catch (e) {}
+    doc.body.appendChild(div);
+    if (parent.__lp_panel_h) { doc.removeEventListener("mousemove", parent.__lp_panel_h.mm); doc.removeEventListener("mouseup", parent.__lp_panel_h.mu); }
+    var drag = null;
+    div.addEventListener("mousedown", function (e) { drag = { dx: e.clientX - div.offsetLeft, dy: e.clientY - div.offsetTop }; e.preventDefault(); });
+    var mm = function (e) { if (!drag) return; div.style.left = (e.clientX - drag.dx) + "px"; div.style.top = (e.clientY - drag.dy) + "px"; };
+    var mu = function () { if (drag) { try { localStorage.setItem("lp_panel_pos", JSON.stringify({ x: div.offsetLeft, y: div.offsetTop })); } catch (e) {} } drag = null; };
+    doc.addEventListener("mousemove", mm); doc.addEventListener("mouseup", mu);
+    parent.__lp_panel_h = { mm: mm, mu: mu };
+    return div;
+}
+var panel = init_panel();
+function fmt(n) { n = Math.round(n || 0); return n >= 1000000 ? (n / 1000000).toFixed(2) + "M" : n >= 1000 ? (n / 1000).toFixed(1) + "k" : String(n); }
+function fmt_time(ms) { if (!isFinite(ms) || ms < 0) return "-"; var m = Math.round(ms / 60000); return m >= 60 ? Math.floor(m / 60) + "h " + (m % 60) + "m" : m + "m"; }
+function update_panel() {
+    if (!panel || !panel.parentNode) panel = init_panel();
+    var lines = [];
+    var hp = Math.round(character.hp / character.max_hp * 100), mp = Math.round(character.mp / character.max_mp * 100);
+    lines.push("LogicPlan " + BOT_VERSION + (paused ? "  [PAUSE]" : upgrading ? "  [UPGRADE]" : kissing ? "  [KUSS]" : fleeing ? "  [RÜCKZUG]" : ""));
+    lines.push("Lv " + character.level + "  HP " + hp + "%  MP " + mp + "%  Gold " + fmt(character.gold));
+    lines.push("Tränke HP " + quantity("hpot0") + " / MP " + quantity("mpot0") + "  frei " + character.esize);
+    var sh = Math.max(1 / 60, (Date.now() - sess.start) / 3600000);
+    var cur_xp_h = 0, cur_gold_h = 0;
+    if (meas) { var mh = Math.max(1 / 60, (Date.now() - meas.start - meas.paused_ms) / 3600000); cur_xp_h = meas.xp / mh; cur_gold_h = meas.gold / mh; }
+    else if (current_spot && farm_stats[current_spot]) { cur_xp_h = farm_stats[current_spot].xp_h; cur_gold_h = farm_stats[current_spot].gold_h; }
+    lines.push("Spot " + (current_spot || "-") + (meas ? " (Messung)" : "") + ": " + fmt(cur_xp_h) + " XP/h  " + fmt(cur_gold_h) + " G/h");
+    lines.push("Session " + fmt_time(sh * 3600000) + ": " + fmt(sess.xp / sh) + " XP/h  " + fmt(sess.gold / sh) + " G/h");
+    var rate = cur_xp_h || sess.xp / sh;
+    lines.push("Nächstes Level in " + (rate > 0 ? fmt_time((G.levels[character.level] - character.xp) / rate * 3600000) : "-"));
+    var a = anniv();
+    if (a && a.active) lines.push("Kuss: " + (a.available === false ? "erledigt" : (a.live && a.target ? "JETZT " + a.target : "nächste in " + fmt_time(a.next - Date.now()))));
+    var keys = Object.keys(farm_stats);
+    if (keys.length) {
+        lines.push("--- Spots (XP/h | G/h) ---");
+        keys.sort(function (x, y) { return (farm_stats[y].xp_h || 0) - (farm_stats[x].xp_h || 0); });
+        keys.slice(0, 8).forEach(function (m) { var st = farm_stats[m]; lines.push((m == current_spot ? "> " : "  ") + (m + "          ").slice(0, 10) + " " + fmt(st.xp_h) + " | " + fmt(st.gold_h) + (st.deaths ? " †" + st.deaths : "") + (stats_valid(st) ? "" : " (alt)")); });
+    }
+    panel.textContent = lines.join("\n");
+}
+var last_panel = 0;
+
 // ---------- Statusanzeige ----------
 var last_status = 0;
 function status_message(prefix) {
@@ -316,14 +370,14 @@ function status_message(prefix) {
 }
 
 // ---------- Inventar aufräumen: Schrott verkaufen, Rest in die Bank ----------
-var EQUIP_TYPES = ["helmet", "chest", "pants", "shoes", "gloves", "cape", "weapon", "shield", "quiver", "source", "misc_offhand", "ring", "earring", "amulet", "belt", "orb"];
+var EQUIP_TYPES = ["helmet", "chest", "pants", "shoes", "gloves", "cape", "weapon", "shield", "quiver", "source", "misc_offhand"]; // Schmuck nie verkaufen (Compound)
 function is_junk(it) { // kaufbare Standardausrüstung ohne Level/Attribut
     var def = G.items[it.name]; if (!def) return false;
     if (EQUIP_TYPES.indexOf(def.type) < 0) return false;
     if ((it.level || 0) > 0 || it.stat_type) return false;
     return is_buyable(it.name);
 }
-function should_keep(it) { return KEEP_ITEMS.test(it.name) || EVENT_ITEMS.test(it.name) || EVENT_ITEMS.test(G.items[it.name] && G.items[it.name].name || ""); }
+function should_keep(it) { return (G.items[it.name] && G.items[it.name].compound) || KEEP_ITEMS.test(it.name) || EVENT_ITEMS.test(it.name) || EVENT_ITEMS.test(G.items[it.name] && G.items[it.name].name || ""); }
 async function tidy_inventory() {
     if (busy || upgrading || paused || character.esize >= INV_MIN_FREE) return;
     busy = true;
@@ -491,9 +545,17 @@ function slots_to_upgrade(manual) {
 function slots_without_stat() {
     return equipped_slots("upgrade").filter(function (s) { return character.slots[s].stat_type != STAT_TYPE; });
 }
-function slots_to_compound() {
-    return equipped_slots("compound").filter(function (s) { var it = character.slots[s]; return (it.level || 0) < COMPOUND_TARGET && is_buyable(it.name); });
+function inv_count(name, level) { return find_inv_indices(name, level).length; }
+function base_equiv(name) { var sum = 0; for (var l = 0; l < COMPOUND_TARGET; l++) sum += inv_count(name, l) * Math.pow(3, l); return sum; }
+// Compound sinnvoll? -> irgendein Level hat (inkl. angelegtem) >= 3 Kopien, oder kaufbar und bezahlbar
+function can_compound(slot) {
+    var it = character.slots[slot]; if (!it || (it.level || 0) >= COMPOUND_TARGET) return false;
+    for (var l = 0; l < COMPOUND_TARGET; l++) if (inv_count(it.name, l) + ((it.level || 0) == l ? 1 : 0) >= 3) return true;
+    if (!is_buyable(it.name)) return false;
+    var need = Math.pow(3, COMPOUND_TARGET) - base_equiv(it.name) - Math.pow(3, it.level || 0);
+    return need <= 0 || spendable() >= need * G.items[it.name].g * 1.3;
 }
+function slots_to_compound() { return equipped_slots("compound").filter(can_compound); }
 function find_inv_index(name, level) {
     for (var i = character.items.length - 1; i >= 0; i--) { var it = character.items[i]; if (it && it.name == name && (it.level || 0) == level) return i; }
     return -1;
@@ -582,19 +644,18 @@ async function fill_empty_slots() {
     }
 }
 
-// ---------- Compound (Schmuck) ----------
+// ---------- Compound (Schmuck): erst Inventar-Kopien nutzen, Rest zukaufen ----------
 async function compound_slot(slot) {
-    var it = character.slots[slot]; if (!it) return;
+    var it = character.slots[slot]; if (!it || !can_compound(slot)) return;
     var name = it.name, lvl = it.level || 0, target = COMPOUND_TARGET;
-    var need_base = Math.pow(3, target) - Math.pow(3, lvl);
-    var cost = need_base * G.items[name].g;
-    if (spendable() < cost * 1.3) { game_log(name + " compound: zu wenig freies Gold (" + cost + ")"); return; }
-    if (character.esize < need_base + 2) { game_log(name + " compound: Inventar zu voll (" + need_base + " Plätze nötig)"); return; }
 
-    game_log(name + " +" + lvl + " -> +" + target + ": kaufe " + need_base + " Stück");
-    if (!await buy_items(name, need_base)) return;
     unequip(slot); await sleep(600);
-
+    var need = Math.pow(3, target) - base_equiv(name);
+    if (need > 0 && is_buyable(name)) {
+        var cost = need * G.items[name].g;
+        if (spendable() >= cost * 1.3 && character.esize >= need + 2) { game_log(name + ": kaufe " + need + " Stück zum Compounden"); await buy_items(name, need); }
+        else game_log(name + ": " + need + " Kopien fehlen, nutze nur vorhandene");
+    }
     try {
         await smart_move("compound");
         for (var l = 0; l < target; l++) {
@@ -609,8 +670,9 @@ async function compound_slot(slot) {
                 set_message(name + " +" + l + " x3");
                 try { await compound(idx[0], idx[1], idx[2], sc); } catch (e) {}
                 await wait_queue("compound");
-                if (find_inv_index(name, l + 1) >= 0) game_log(name + " +" + (l + 1) + " erstellt");
-                else game_log(name + " compound fehlgeschlagen (+" + l + " x3 verloren)");
+                if (find_inv_index(name, l + 1) >= 0 && find_inv_indices(name, l).length == idx.length - 3) game_log(name + " +" + (l + 1) + " erstellt");
+                else if (find_inv_indices(name, l).length == idx.length - 3) game_log(name + " compound fehlgeschlagen (+" + l + " x3 verloren)");
+                else game_log(name + " +" + (l + 1) + " erstellt");
             }
         }
     } finally {
@@ -724,6 +786,8 @@ async function upgrade_routine(manual) {
 setInterval(function () {
     heal_logic(); loot();
     if (character.rip) { if (meas) finish_measure(true); respawn(); busy = false; fleeing = false; kissing = false; return; }
+    session_tick();
+    if (Date.now() - last_panel > 2000) { last_panel = Date.now(); try { update_panel(); } catch (e) {} }
     if (paused) return;
     measure_tick();
 
