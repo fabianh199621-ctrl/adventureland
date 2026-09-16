@@ -8,7 +8,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v37";
+var BOT_VERSION = "v38";
 game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – P = Pause, U = sichere Upgrades, K = alle Upgrades, L = Statistik, G = Gifts tauschen");
 
 var GOLD_RESERVE = 20000;
@@ -357,64 +357,98 @@ function session_tick() {
 function init_panel() {
     var doc = parent.document;
     var old = doc.getElementById("lp_panel"); if (old) old.remove();
+    var st = doc.getElementById("lp_style"); if (st) st.remove();
+    st = doc.createElement("style"); st.id = "lp_style";
+    st.textContent = "#lp_panel{position:absolute;left:10px;top:130px;z-index:9999;width:340px;background:#14161c;color:#e6e6e6;font:12px/1.4 'Segoe UI',Arial,sans-serif;border:1px solid #3a3f4b;border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.6);user-select:none;overflow:hidden}"
+      + "#lp_head{display:flex;align-items:center;gap:8px;padding:6px 10px;background:linear-gradient(#2b3140,#1e222c);cursor:move;border-bottom:1px solid #3a3f4b;touch-action:none}"
+      + "#lp_head b{flex:1;font-size:13px;letter-spacing:.3px}#lp_head .lp_state{font-size:11px;padding:1px 7px;border-radius:10px;background:#2e7d32}"
+      + "#lp_head .lp_state.pause{background:#c62828}#lp_head .lp_state.busy{background:#ef6c00}"
+      + "#lp_head button{font:11px 'Segoe UI',Arial;padding:0 6px;cursor:pointer;background:#3a3f4b;color:#eee;border:1px solid #555;border-radius:3px}"
+      + "#lp_body{padding:8px 10px}"
+      + ".lp_grid{display:grid;grid-template-columns:1fr 1fr;gap:3px 12px;margin-bottom:6px}.lp_grid div{white-space:nowrap}.lp_k{color:#9aa3b2}"
+      + ".lp_bar{display:inline-block;width:80px;height:8px;background:#2a2e38;border-radius:4px;vertical-align:middle;margin-left:6px;overflow:hidden}.lp_bar i{display:block;height:100%}"
+      + ".lp_spot{background:#1c2029;border:1px solid #2f3440;border-radius:4px;padding:6px 8px;margin:4px 0 6px}.lp_spot .lp_big{font-size:15px;font-weight:600}"
+      + ".lp_row{display:flex;gap:6px;align-items:center;margin:4px 0}.lp_row .lp_mode{color:#8ab4f8;flex:1}"
+      + "#lp_body button{font:11px 'Segoe UI',Arial;padding:1px 7px;cursor:pointer;background:#2f3440;color:#eee;border:1px solid #555;border-radius:3px}#lp_body button:hover{background:#3d4453}#lp_body button.on{background:#2e7d32;border-color:#4caf50}"
+      + "table.lp_t{width:100%;border-collapse:collapse;font-size:11.5px;margin-top:4px}table.lp_t th{color:#9aa3b2;font-weight:normal;text-align:right;padding:2px 4px;border-bottom:1px solid #3a3f4b}table.lp_t th:first-child,table.lp_t td:first-child{text-align:left}"
+      + "table.lp_t td{padding:2px 4px;text-align:right;white-space:nowrap}table.lp_t tr:nth-child(even) td{background:#181b22}table.lp_t tr.cur td{background:#20302a;color:#c8f0d0}table.lp_t td.old{color:#8a8f99}";
+    doc.head.appendChild(st);
+
     var div = doc.createElement("div"); div.id = "lp_panel";
-    div.style.cssText = "position:absolute;left:10px;top:130px;z-index:9999;background:rgba(0,0,0,0.78);color:#e8e8e8;font:12px/1.35 monospace;padding:6px 9px;border:1px solid #777;border-radius:3px;min-width:230px;cursor:move;user-select:none;white-space:pre;";
-    div.innerHTML = "";
+    div.innerHTML = "<div id='lp_head'><b>LogicPlan " + BOT_VERSION + "</b><span class='lp_state' id='lp_state'>läuft</span><button id='lp_toggle' title='Tabelle ein-/ausklappen'>▾</button></div><div id='lp_body'></div>";
     try { var p = JSON.parse(localStorage.getItem("lp_panel_pos") || "null"); if (p) { div.style.left = p.x + "px"; div.style.top = p.y + "px"; } } catch (e) {}
     doc.body.appendChild(div);
-    if (parent.__lp_panel_h) { doc.removeEventListener("mousemove", parent.__lp_panel_h.mm); doc.removeEventListener("mouseup", parent.__lp_panel_h.mu); }
-    var drag = null;
-    div.addEventListener("mousedown", function (e) { if (e.target.tagName == "BUTTON") return; drag = { dx: e.clientX - div.offsetLeft, dy: e.clientY - div.offsetTop }; e.preventDefault(); });
+
+    // Ziehen an der Titelleiste (Pointer Events, unabhängig vom Inhalt)
+    var head = div.querySelector("#lp_head"), drag = null;
+    head.addEventListener("pointerdown", function (e) {
+        if (e.target.tagName == "BUTTON") return;
+        drag = { dx: e.clientX - div.offsetLeft, dy: e.clientY - div.offsetTop };
+        try { head.setPointerCapture(e.pointerId); } catch (x) {}
+        e.preventDefault();
+    });
+    head.addEventListener("pointermove", function (e) { if (!drag) return; div.style.left = (e.clientX - drag.dx) + "px"; div.style.top = (e.clientY - drag.dy) + "px"; });
+    var end = function () { if (drag) { try { localStorage.setItem("lp_panel_pos", JSON.stringify({ x: div.offsetLeft, y: div.offsetTop })); } catch (e) {} } drag = null; };
+    head.addEventListener("pointerup", end); head.addEventListener("pointercancel", end);
+
+    var collapsed = false; try { collapsed = localStorage.getItem("lp_panel_collapsed") == "1"; } catch (e) {}
+    div.__collapsed = collapsed;
+    div.querySelector("#lp_toggle").addEventListener("click", function () { div.__collapsed = !div.__collapsed; try { localStorage.setItem("lp_panel_collapsed", div.__collapsed ? "1" : "0"); } catch (e) {} last_panel = 0; });
     div.addEventListener("click", function (e) {
-        var b = e.target; if (b.tagName != "BUTTON") return;
+        var b = e.target; if (b.tagName != "BUTTON" || !b.getAttribute("data-act")) return;
         var act = b.getAttribute("data-act"), mon = b.getAttribute("data-mon");
         if (act == "farm") set_manual_spot(mon); else if (act == "auto") set_auto_spot(); else if (act == "reset") reset_measurements();
-        e.stopPropagation(); last_panel = 0;
+        last_panel = 0;
     });
-    var mm = function (e) { if (!drag) return; div.style.left = (e.clientX - drag.dx) + "px"; div.style.top = (e.clientY - drag.dy) + "px"; };
-    var mu = function () { if (drag) { try { localStorage.setItem("lp_panel_pos", JSON.stringify({ x: div.offsetLeft, y: div.offsetTop })); } catch (e) {} } drag = null; };
-    doc.addEventListener("mousemove", mm); doc.addEventListener("mouseup", mu);
-    parent.__lp_panel_h = { mm: mm, mu: mu };
     return div;
 }
 var panel = init_panel();
 function fmt(n) { n = Math.round(n || 0); return n >= 1000000 ? (n / 1000000).toFixed(2) + "M" : n >= 1000 ? (n / 1000).toFixed(1) + "k" : String(n); }
 function fmt_time(ms) { if (!isFinite(ms) || ms < 0) return "-"; var m = Math.round(ms / 60000); return m >= 60 ? Math.floor(m / 60) + "h " + (m % 60) + "m" : m + "m"; }
+function esc(t) { return String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;"); }
+function bar(pct, color) { return "<span class='lp_bar'><i style='width:" + Math.max(0, Math.min(100, pct)) + "%;background:" + color + "'></i></span>"; }
 function update_panel() {
     if (!panel || !panel.parentNode) panel = init_panel();
-    var lines = [];
     var hp = Math.round(character.hp / character.max_hp * 100), mp = Math.round(character.mp / character.max_mp * 100);
-    lines.push("LogicPlan " + BOT_VERSION + (paused ? "  [PAUSE]" : upgrading ? "  [UPGRADE]" : kissing ? "  [KUSS]" : fleeing ? "  [RÜCKZUG]" : ""));
-    lines.push("Lv " + character.level + "  HP " + hp + "%  MP " + mp + "%  Gold " + fmt(character.gold));
-    lines.push("Tränke HP " + pots_total(POTS_HP) + " / MP " + pots_total(POTS_MP) + "  Elixier " + (character.slots.elixir ? "an" : "aus") + "  frei " + character.esize);
+    var state = panel.querySelector("#lp_state");
+    var st_txt = paused ? "PAUSE" : upgrading ? "Upgrade" : kissing ? "Kuss" : fleeing ? "Rückzug" : exchanging ? "Tausch" : busy ? "unterwegs" : "farmt";
+    state.textContent = st_txt; state.className = "lp_state" + (paused ? " pause" : (upgrading || kissing || fleeing || exchanging || busy) ? " busy" : "");
+    panel.querySelector("#lp_toggle").textContent = panel.__collapsed ? "▸" : "▾";
+
     var sh = Math.max(1 / 60, (Date.now() - sess.start) / 3600000);
     var cur_xp_h = 0, cur_gold_h = 0;
     if (meas) { var mh = Math.max(1 / 60, (Date.now() - meas.start - meas.paused_ms) / 3600000); cur_xp_h = meas.xp / mh; cur_gold_h = meas.gold / mh; }
     else if (current_spot && farm_stats[current_spot]) { cur_xp_h = farm_stats[current_spot].xp_h; cur_gold_h = farm_stats[current_spot].gold_h; }
     var meas_txt = "";
-    if (meas && !meas.manual) { var rem = EVAL_MS - (Date.now() - meas.start - meas.paused_ms - (meas.pause_start ? Date.now() - meas.pause_start : 0)); meas_txt = " (Messung, noch " + Math.max(0, Math.ceil(rem / 60000)) + " min)"; }
-    else if (meas && meas.manual) meas_txt = " (fest, seit " + fmt_time(Date.now() - meas.start) + ")";
-    lines.push("Spot " + (current_spot || "-") + meas_txt + ": " + fmt(cur_xp_h) + " XP/h  " + fmt(cur_gold_h) + " G/h");
-    lines.push("Session " + fmt_time(sh * 3600000) + ": " + fmt(sess.xp / sh) + " XP/h  " + fmt(sess.gold / sh) + " G/h");
+    if (meas && !meas.manual) { var rem = EVAL_MS - (Date.now() - meas.start - meas.paused_ms - (meas.pause_start ? Date.now() - meas.pause_start : 0)); meas_txt = "Messung, noch " + Math.max(0, Math.ceil(rem / 60000)) + " min"; }
+    else if (meas && meas.manual) meas_txt = "fest seit " + fmt_time(Date.now() - meas.start);
     var rate = cur_xp_h || sess.xp / sh;
-    lines.push("Nächstes Level in " + (rate > 0 ? fmt_time((G.levels[character.level] - character.xp) / rate * 3600000) : "-"));
     var a = anniv();
-    if (a && a.active) lines.push("Kuss: " + (a.available === false ? "erledigt" : (a.live && a.target ? "JETZT " + a.target : "nächste in " + fmt_time(a.next - Date.now()))));
-    var esc = function (t) { return String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;"); };
-    var html = lines.map(esc).join("\n");
-    var BS = "font:11px monospace;padding:0 5px;margin-left:4px;cursor:pointer;background:#333;color:#eee;border:1px solid #888;border-radius:2px;";
-    html += "\n<span style='color:#9cf'>Modus: " + (manual_spot ? "fest (" + manual_spot + ")" : "automatisch") + "</span>"
-          + " <button data-act='auto' style='" + BS + "'>Auto</button><button data-act='reset' style='" + BS + "'>Neu messen</button>";
-    html += "\n--- Monster für Lv " + character.level + " / ANG " + character.attack + " (Lv | XP/h | G/h | ANG) ---";
-    var mons = CANDIDATES.filter(is_safe_monster);
-    mons.sort(function (x, y) { var a = farm_stats[x], b = farm_stats[y]; return ((b && b.xp_h) || estimate(y) * 100) - ((a && a.xp_h) || estimate(x) * 100); });
-    mons.forEach(function (m) {
-        var st = farm_stats[m];
-        var row = (m == current_spot ? "&gt; " : "  ") + esc((m + "          ").slice(0, 10)) + " L" + ((G.monsters[m].level || "?") + "  ").slice(0, 3) + (st ? fmt(st.xp_h) + " | " + fmt(st.gold_h) + " | " + (st.attack || "?") + (st.deaths ? " †" + st.deaths : "") + (stats_valid(st) ? "" : " (alt)") : "  -  |  -  |  -  ");
-        row += "<button data-act='farm' data-mon='" + m + "' style='" + BS + (m == manual_spot ? "background:#264;" : "") + "'>Farmen</button>";
-        html += "\n" + row;
-    });
-    panel.innerHTML = html;
+    var kiss_txt = a && a.active ? (a.available === false ? "erledigt" : (a.live && a.target ? "JETZT: " + esc(a.target) : "nächste in " + fmt_time(a.next - Date.now()))) : "-";
+
+    var h = "<div class='lp_grid'>"
+      + "<div><span class='lp_k'>Level</span> " + character.level + "</div><div><span class='lp_k'>Gold</span> " + fmt(character.gold) + "</div>"
+      + "<div><span class='lp_k'>HP</span> " + hp + "%" + bar(hp, hp < 35 ? "#e53935" : "#43a047") + "</div><div><span class='lp_k'>MP</span> " + mp + "%" + bar(mp, "#1e88e5") + "</div>"
+      + "<div><span class='lp_k'>Tränke</span> " + pots_total(POTS_HP) + " / " + pots_total(POTS_MP) + "</div><div><span class='lp_k'>Elixier</span> " + (character.slots.elixir ? "an" : "aus") + " · <span class='lp_k'>frei</span> " + character.esize + "</div>"
+      + "<div><span class='lp_k'>Session</span> " + fmt_time(sh * 3600000) + "</div><div><span class='lp_k'>Kuss</span> " + kiss_txt + "</div>"
+      + "</div>";
+    h += "<div class='lp_spot'><div><span class='lp_k'>Spot</span> <b>" + esc(current_spot || "-") + "</b>" + (meas_txt ? " <span class='lp_k'>(" + meas_txt + ")</span>" : "") + "</div>"
+      + "<div class='lp_big'>" + fmt(cur_xp_h) + " XP/h &nbsp;·&nbsp; " + fmt(cur_gold_h) + " G/h</div>"
+      + "<div class='lp_k'>Session " + fmt(sess.xp / sh) + " XP/h · " + fmt(sess.gold / sh) + " G/h · nächstes Level in " + (rate > 0 ? fmt_time((G.levels[character.level] - character.xp) / rate * 3600000) : "-") + "</div></div>";
+    h += "<div class='lp_row'><span class='lp_mode'>Modus: " + (manual_spot ? "fest (" + esc(manual_spot) + ")" : "automatisch") + "</span><button data-act='auto'" + (manual_spot ? "" : " class='on'") + ">Auto</button><button data-act='reset'>Neu messen</button></div>";
+    if (!panel.__collapsed) {
+        h += "<table class='lp_t'><tr><th>Monster</th><th>HP</th><th>ATK</th><th>XP/h</th><th>G/h</th><th>ANG</th><th></th></tr>";
+        var mons = CANDIDATES.filter(is_safe_monster);
+        mons.sort(function (x, y) { var a1 = farm_stats[x], b1 = farm_stats[y]; return ((b1 && b1.xp_h) || estimate(y) * 100) - ((a1 && a1.xp_h) || estimate(x) * 100); });
+        mons.forEach(function (m) {
+            var st = farm_stats[m], d = G.monsters[m], oldc = st && !stats_valid(st) ? " class='old'" : "";
+            h += "<tr" + (m == current_spot ? " class='cur'" : "") + "><td>" + esc(m) + (st && st.deaths ? " <span style='color:#ef5350'>†" + st.deaths + "</span>" : "") + "</td><td>" + fmt(d.hp) + "</td><td>" + d.attack + "</td>"
+               + "<td" + oldc + ">" + (st ? fmt(st.xp_h) : "-") + "</td><td" + oldc + ">" + (st ? fmt(st.gold_h) : "-") + "</td><td" + oldc + ">" + (st && st.attack ? st.attack : "-") + "</td>"
+               + "<td><button data-act='farm' data-mon='" + m + "'" + (m == manual_spot ? " class='on'" : "") + ">Farmen</button></td></tr>";
+        });
+        h += "</table>";
+    }
+    panel.querySelector("#lp_body").innerHTML = h;
 }
 var last_panel = 0;
 
