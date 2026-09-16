@@ -1,6 +1,5 @@
 // ===== Adventure Land – Vollautomatik Magier (nichts einstellen) =====
 // P = Pause (stoppt auch Upgrades) – Start immer im Pause-Modus
-// O = Bot komplett aus/an (Hauptschleife stoppen/starten)
 // N = neueste Version von GitHub laden und neu starten
 // U = sichere Upgrades: kaufbare Items: Reserve +5 im Inventar, getragenes Teil bis +8; Drop-Items +3; INT-Scrolls; Schmuck +2; bessere Ausrüstung kaufen
 // K = wie U, aber Drop-Items bis +5 (Risiko!)
@@ -10,8 +9,8 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v54";
-game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – PAUSIERT. P = Start/Pause, O = Bot aus/an, N = neu laden, U = sichere Upgrades, K = alle Upgrades, L = Statistik, G = Gifts tauschen");
+var BOT_VERSION = "v55";
+game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – PAUSIERT. P = Start/Pause, N = neu laden, U = sichere Upgrades, K = alle Upgrades, L = Statistik, G = Gifts tauschen");
 
 var GOLD_RESERVE = 20000;
 var UPGRADE_TARGET = 8;              // kaufbare Items: Ziel für das getragene Teil
@@ -136,7 +135,6 @@ function on_key(ev) {
     if (ev.ctrlKey || ev.altKey || ev.metaKey) return;
     var k = (ev.key || "").toUpperCase();
     if (k == "P") toggle_pause();
-    else if (k == "O") toggle_bot();
     else if (k == "N") reload_bot();
     else if (k == "U") upgrade_routine(false);
     else if (k == "K") upgrade_routine(true);
@@ -197,7 +195,6 @@ function toggle_bot() {
     }
 }
 function toggle_pause() {
-    if (!bot_running) { game_log("Bot ist AUS – erst O drücken"); return; }
     paused = !paused;
     if (paused) {
         stop("move"); stop("smart"); busy = false;
