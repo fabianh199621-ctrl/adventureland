@@ -8,7 +8,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v48";
+var BOT_VERSION = "v49";
 game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – P = Pause, U = sichere Upgrades, K = alle Upgrades, L = Statistik, G = Gifts tauschen");
 
 var GOLD_RESERVE = 20000;
@@ -17,7 +17,8 @@ var BACKUP_LEVEL = 5;                // kaufbare Items: Reservekopie auf diesem 
 var SAFE_TARGET_DROP = 3;            // Drop-Items bei U
 var RISKY_TARGET_DROP = 5;           // Drop-Items bei K
 var MAX_REBUYS = 6;
-var COMPOUND_TARGET = 2;             // getragener Schmuck
+var COMPOUND_TARGET = 3;             // getragener Schmuck
+var PONTY_INTERVAL = 30 * 60 * 1000; // Ponty (gebrauchte Items) regelmäßig prüfen
 var COMPOUND_SPARE_MAX = 3;          // ungetragener Schmuck im Inventar wird bis hierhin compoundet
 var STAT_TYPE = "int";
 var FALLBACK_WEAPONS = ["staff", "stick"];
@@ -528,7 +529,7 @@ function update_panel() {
     if (!panel || !panel.parentNode) panel = init_panel();
     var hp = Math.round(character.hp / character.max_hp * 100), mp = Math.round(character.mp / character.max_mp * 100);
     var state = panel.querySelector("#lp_state");
-    var st_txt = paused ? "PAUSE" : upgrading ? "Upgrade" : kissing ? "Kuss" : fleeing ? "Rückzug" : exchanging ? "Tausch" : busy ? "unterwegs" : "farmt";
+    var st_txt = paused ? "PAUSE" : upgrading ? "Upgrade" : kissing ? "Kuss" : fleeing ? "Rückzug" : exchanging ? "Tausch" : pontying ? "Ponty" : busy ? "unterwegs" : "farmt";
     state.textContent = st_txt; state.className = "lp_state" + (paused ? " pause" : (upgrading || kissing || fleeing || exchanging || busy) ? " busy" : "");
     panel.querySelector("#lp_toggle").textContent = panel.__collapsed ? "▸" : "▾";
 
@@ -902,6 +903,51 @@ async function check_weapon() {
     }
 }
 
+// ---------- Ponty: gebrauchte Items prüfen und kaufen ----------
+var last_ponty = 0, ponty_logged = false, pontying = false;
+function ponty_offer() { // Angebot abfragen (Socket), Promise mit Liste
+    return new Promise(function (resolve) {
+        var done = false;
+        var h = function (data) { if (done) return; done = true; try { parent.socket.off("secondhands", h); } catch (e) {} resolve(data || []); };
+        try { parent.socket.on("secondhands", h); parent.socket.emit("secondhands"); } catch (e) { resolve([]); }
+        setTimeout(function () { if (!done) { done = true; try { parent.socket.off("secondhands", h); } catch (e) {} resolve([]); } }, 4000);
+    });
+}
+function item_score(it) { return gear_score(G.items[it.name]) * (1 + 0.1 * (it.level || 0)); }
+function slot_for_item(def) { for (var sl in SLOT_TYPES) if (fits_slot(def, sl)) return sl; return null; }
+async function check_ponty(force) {
+    if (pontying || upgrading || kissing || fleeing || exchanging) return;
+    if (!force && (busy || Date.now() - last_ponty < PONTY_INTERVAL)) return;
+    var npc = G.npcs.secondhands ? "secondhands" : null;
+    if (!npc) { last_ponty = Date.now(); return; }
+    pontying = true; busy = true; last_ponty = Date.now();
+    try {
+        set_message("Ponty");
+        if (!await go_to_npc(npc)) throw "Ponty nicht gefunden";
+        var offer = await ponty_offer();
+        if (!ponty_logged) { ponty_logged = true; game_log("Ponty-Angebot: " + (offer.length ? offer.map(function (o) { return o.name + (o.level ? "+" + o.level : "") + (o.price ? "@" + fmt(o.price) : ""); }).join(", ") : "leer/unbekannt")); }
+        var bought = 0;
+        for (var i = 0; i < offer.length; i++) {
+            var o = offer[i], def = G.items[o.name]; if (!def) continue;
+            var slot = slot_for_item(def); if (!slot) continue;
+            var price = o.price || Math.round(def.g * Math.pow(2, o.level || 0) * 3);
+            if (price > spendable() * 0.5 || character.esize < 2) continue;
+            var cur = character.slots[slot], cur_s = cur ? item_score(cur) : 0;
+            if (item_score(o) < cur_s * GEAR_MIN_GAIN) continue;
+            game_log("Ponty: kaufe " + o.name + "+" + (o.level || 0) + " für " + slot + " (" + fmt(price) + " Gold)");
+            var before = character.esize;
+            try { parent.socket.emit("sbuy", { rid: o.rid }); } catch (e) {}
+            await sleep(1500);
+            if (character.esize < before) {
+                var idx = find_inv_index(o.name, o.level || 0);
+                if (idx >= 0) { equip(idx, slot); await sleep(600); bought++; }
+            } else game_log("Ponty: Kauf nicht bestätigt (" + o.name + ")");
+        }
+        if (bought) game_log("Ponty: " + bought + " Item(s) gekauft und angelegt");
+    } catch (e) { game_log("Ponty-Fehler: " + e); }
+    pontying = false; busy = false;
+}
+
 // ---------- Bessere kaufbare Ausrüstung ----------
 var SLOT_TYPES = { helmet: "helmet", chest: "chest", pants: "pants", shoes: "shoes", gloves: "gloves", cape: "cape", mainhand: "weapon", offhand: "offhand", ring1: "ring", ring2: "ring", earring1: "earring", earring2: "earring", amulet: "amulet", belt: "belt", orb: "orb" };
 function gear_score(def) {
@@ -1118,6 +1164,7 @@ async function upgrade_routine(manual) {
     try {
         if (empty) await fill_empty_slots();
         await buy_better_gear();
+        await check_ponty(true);
         up_slots = slots_to_upgrade(manual);
 
         if (up_slots.length) {
@@ -1174,7 +1221,7 @@ setInterval(function () {
     if (paused) return;
     measure_tick();
 
-    check_weapon(); check_flee(); check_elixir(); kiss_routine(); tidy_inventory(); check_potions(); check_stuck();
+    check_weapon(); check_flee(); check_elixir(); kiss_routine(); tidy_inventory(); check_potions(); check_stuck(); check_ponty(false);
     if (busy || is_moving(character)) return;
 
     var farm = pick_farm_monster();
