@@ -3,10 +3,11 @@
 // U = sichere Upgrades: kaufbare Items +5, Drop-Items +3, INT-Scrolls, Schmuck +2
 // K = alles bis +5, auch Drop-Items (Risiko!)
 // L = Farm-Statistik (XP/h, Gold/h je Monster) ins Log
+// D = Event-Daten anzeigen (Diagnose für 10-Jahre-Event)
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v24";
+var BOT_VERSION = "v25";
 game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – P = Pause, U = sichere Upgrades, K = alle Upgrades, L = Statistik");
 
 var GOLD_RESERVE = 20000;
@@ -85,6 +86,7 @@ function on_key(ev) {
     else if (k == "U") upgrade_routine(false);
     else if (k == "K") upgrade_routine(true);
     else if (k == "L") log_stats();
+    else if (k == "D") event_debug();
 }
 // alte Snippet-Belegungen aus früheren Versionen entfernen
 try { unmap_key("P"); unmap_key("U"); unmap_key("K"); unmap_key("L"); } catch (e) {}
@@ -92,6 +94,22 @@ try { unmap_key("P"); unmap_key("U"); unmap_key("K"); unmap_key("L"); } catch (e
 if (parent.__logicplan_keyhandler) parent.document.removeEventListener("keydown", parent.__logicplan_keyhandler);
 parent.__logicplan_keyhandler = on_key;
 parent.document.addEventListener("keydown", on_key);
+
+// Diagnose: Event-Daten (Serverstatus, Emotes, Items) als Fenster anzeigen
+function event_debug() {
+    var S = parent.S || {};
+    var out = { S_keys: Object.keys(S), S_small: {}, emotes: [], skills: [], items: [], my_emotes: character.emx || null };
+    Object.keys(S).forEach(function (k) {
+        try { var j = JSON.stringify(S[k]); if (j && j.length < 400) out.S_small[k] = S[k]; else out.S_small[k] = "(gross: " + (j ? j.length : "?") + ")"; } catch (e) {}
+    });
+    var rx = /kiss|kuss|anniv|cake|gift|birthday|visit/i;
+    if (G.emotes) Object.keys(G.emotes).forEach(function (k) { if (rx.test(k) || rx.test(JSON.stringify(G.emotes[k]))) out.emotes.push([k, G.emotes[k]]); });
+    Object.keys(G.skills).forEach(function (k) { if (rx.test(k) || rx.test(G.skills[k].name || "")) out.skills.push([k, G.skills[k].name, G.skills[k].type]); });
+    Object.keys(G.items).forEach(function (k) { if (rx.test(k) || rx.test(G.items[k].name || "")) out.items.push([k, G.items[k].name, G.items[k].type]); });
+    out.inventory = character.items.filter(function (i) { return i; }).map(function (i) { return i.name + (i.q ? " x" + i.q : ""); });
+    show_json(out);
+    game_log("Event-Diagnose angezeigt (Fenster) – bitte Screenshot");
+}
 
 function toggle_pause() {
     paused = !paused;
