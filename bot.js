@@ -4,11 +4,12 @@
 // K = alles bis +5, auch Drop-Items (Risiko!)
 // L = Farm-Statistik (XP/h, Gold/h je Monster) ins Log
 // D = Event-Daten anzeigen (Diagnose für 10-Jahre-Event)
+// G = Anniversary Gifts bei Xyn eintauschen (manuell)
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v28";
-game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – P = Pause, U = sichere Upgrades, K = alle Upgrades, L = Statistik");
+var BOT_VERSION = "v29";
+game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – P = Pause, U = sichere Upgrades, K = alle Upgrades, L = Statistik, G = Gifts tauschen");
 
 var GOLD_RESERVE = 20000;
 var UPGRADE_TARGET = 5;
@@ -47,7 +48,6 @@ var INV_MIN_FREE = 5;                // unter so vielen freien Plätzen -> aufr�
 var KEEP_ITEMS = /^(hpot|mpot|scroll|cscroll|intscroll|strscroll|dexscroll|vitscroll|tracker)/; // bleibt im Inventar
 var EVENT_ITEMS = /cake|gift|anniv|kiss|slice/i;   // Event-Items bleiben im Inventar
 var KISS_ENABLED = true;             // 10-Jahre-Event: jede Runde zum Ziel laufen und küssen
-var OPEN_GIFTS = true;               // Anniversary Gifts automatisch öffnen
 var FLEE_HP = 0.25;                  // Rückzug unter 25 % HP ...
 var FLEE_ATTACKERS = 2;              // ... wenn mind. 2 Monster auf mich zielen
 var CBURST_MIN_TARGETS = 2;
@@ -107,6 +107,7 @@ function on_key(ev) {
     else if (k == "K") upgrade_routine(true);
     else if (k == "L") log_stats();
     else if (k == "D") event_debug();
+    else if (k == "G") exchange_gifts();
 }
 // alte Snippet-Belegungen aus früheren Versionen entfernen
 try { unmap_key("P"); unmap_key("U"); unmap_key("K"); unmap_key("L"); } catch (e) {}
@@ -419,21 +420,36 @@ async function kiss_routine() {
     kissing = false; busy = false;
 }
 
-// ---------- Anniversary Gifts öffnen ----------
-var last_gift_try = 0;
-async function open_gifts() {
-    if (!OPEN_GIFTS || busy || upgrading || Date.now() - last_gift_try < 15000) return;
-    var idx = locate_item("anniversarygift");
-    if (idx < 0 || character.esize < 3) return;
-    last_gift_try = Date.now();
-    var before = quantity("anniversarygift");
-    try { await use(idx); } catch (e) {}
-    await sleep(1200);
-    if (quantity("anniversarygift") < before) { game_log("Anniversary Gift geöffnet (" + quantity("anniversarygift") + " übrig)"); return; }
-    try { parent.socket.emit("open", { num: idx }); } catch (e) {}
-    await sleep(1200);
-    if (quantity("anniversarygift") < before) game_log("Anniversary Gift geöffnet (" + quantity("anniversarygift") + " übrig)");
-    else { OPEN_GIFTS = false; game_log("Gift-Öffnen klappt nicht automatisch – bitte D drücken und Screenshot schicken"); }
+// ---------- Anniversary Gifts bei Xyn eintauschen (Taste G) ----------
+var exchanging = false;
+async function exchange_gifts() {
+    if (exchanging) { game_log("Tausch läuft bereits"); return; }
+    if (busy || upgrading) { game_log("Gerade beschäftigt – gleich nochmal G drücken"); return; }
+    var n = quantity("anniversarygift");
+    if (!n) { game_log("Keine Anniversary Gifts im Inventar"); return; }
+    if (paused) { paused = false; game_log("Pause aufgehoben"); }
+    exchanging = true; busy = true;
+    game_log("Tausche " + n + " Anniversary Gifts bei Xyn");
+    set_message("Zu Xyn");
+    try {
+        stop("smart");
+        await smart_move("exchange");
+        var done = 0, fails = 0;
+        while (quantity("anniversarygift") > 0 && !paused) {
+            if (character.esize < 2) { game_log("Inventar voll – Tausch gestoppt (" + quantity("anniversarygift") + " übrig)"); break; }
+            var idx = locate_item("anniversarygift");
+            var before = quantity("anniversarygift");
+            try { await exchange(idx); } catch (e) {}
+            await sleep(1200);
+            while (character.q && character.q.exchange) await sleep(500);
+            await sleep(300);
+            if (quantity("anniversarygift") < before) { done++; fails = 0; set_message("Tausch " + done + "/" + n); }
+            else if (++fails >= 3) { game_log("Tausch klappt nicht (Xyn nicht erreichbar?)"); break; }
+        }
+        game_log("Fertig: " + done + " Gifts getauscht");
+    } catch (e) { game_log("Tausch-Fehler: " + e); }
+    exchanging = false; busy = false;
+    if (!paused) go_to_farm_spot();
 }
 
 // ---------- Tränke kaufen ----------
@@ -711,7 +727,7 @@ setInterval(function () {
     if (paused) return;
     measure_tick();
 
-    check_weapon(); check_flee(); kiss_routine(); open_gifts(); tidy_inventory(); check_potions();
+    check_weapon(); check_flee(); kiss_routine(); tidy_inventory(); check_potions();
     if (busy || is_moving(character)) return;
 
     var farm = pick_farm_monster();
