@@ -7,7 +7,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v25";
+var BOT_VERSION = "v26";
 game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – P = Pause, U = sichere Upgrades, K = alle Upgrades, L = Statistik");
 
 var GOLD_RESERVE = 20000;
@@ -52,7 +52,20 @@ var last_weapon_log = 0;
 var blocked_spots = {};
 var farm_stats = load_stats();
 var current_spot = null, need_repick = true;
-var meas = null; // laufende Messung {mon, start, xp, gold, last_xp, last_level, last_gold}
+var meas = null; // laufende Messung
+// Laufende Messung / Spot aus letztem Lauf wiederherstellen
+try {
+    var saved = JSON.parse(localStorage.getItem("lp_state_" + character.name) || "null");
+    if (saved && (Date.now() - saved.t) < 30 * 60 * 1000) {
+        current_spot = saved.spot || null; need_repick = !current_spot;
+        if (saved.meas) { meas = saved.meas; meas.last_xp = character.xp; meas.last_level = character.level; meas.last_gold = character.gold; meas.pause_start = 0; }
+        if (current_spot) game_log("Weiter bei Spot " + current_spot + (meas ? " (Messung läuft weiter)" : ""));
+    }
+} catch (e) {}
+var last_state_save = 0;
+function save_state() {
+    try { localStorage.setItem("lp_state_" + character.name, JSON.stringify({ t: Date.now(), spot: current_spot, meas: meas })); } catch (e) {}
+}
 var cburst_logged = false;
 
 function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
@@ -174,7 +187,7 @@ function choose_spot() {
 }
 function pick_farm_monster() {
     if (!has_weapon()) return NO_WEAPON_MONSTER;
-    if (!current_spot || need_repick) { current_spot = choose_spot(); need_repick = false; }
+    if (!current_spot || need_repick) { current_spot = choose_spot(); need_repick = false; save_state(); }
     return current_spot;
 }
 
@@ -197,6 +210,7 @@ function measure_tick() {
     else if (meas.pause_start) { meas.paused_ms += Date.now() - meas.pause_start; meas.pause_start = 0; }
 
     var active = Date.now() - meas.start - meas.paused_ms - (meas.pause_start ? Date.now() - meas.pause_start : 0);
+    if (Date.now() - last_state_save > 10000) { last_state_save = Date.now(); save_state(); }
     if (active >= EVAL_MS) finish_measure(false);
 }
 function finish_measure(died) {
@@ -208,7 +222,7 @@ function finish_measure(died) {
     if (died) { st.deaths = (st.deaths || 0) + 1; st.unsafe_until = character.level + 3; st.xp_h = 0; }
     farm_stats[meas.mon] = st; save_stats();
     game_log("Spot " + meas.mon + ": " + Math.round(st.xp_h) + " XP/h, " + Math.round(st.gold_h) + " Gold/h" + (died ? " – GESTORBEN, gesperrt bis Level " + st.unsafe_until : ""));
-    meas = null; need_repick = true;
+    meas = null; need_repick = true; save_state();
 }
 function log_stats() {
     var keys = Object.keys(farm_stats);
@@ -229,7 +243,7 @@ function go_to_farm_spot() {
             if (!get_nearest_monster({ type: mon })) {
                 blocked_spots[mon] = true; need_repick = true; meas = null;
                 game_log("Spot " + mon + " erreicht, aber keine Monster – überspringe");
-            } else if (!meas || meas.mon != mon) start_measure(mon);
+            } else if (!meas || meas.mon != mon) { start_measure(mon); save_state(); }
         })
         .catch(function () {
             blocked_spots[mon] = true; need_repick = true; meas = null;
