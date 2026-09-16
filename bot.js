@@ -8,7 +8,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v45";
+var BOT_VERSION = "v46";
 game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – P = Pause, U = sichere Upgrades, K = alle Upgrades, L = Statistik, G = Gifts tauschen");
 
 var GOLD_RESERVE = 20000;
@@ -266,7 +266,15 @@ function measure_tick() {
 
     var active = Date.now() - meas.start - meas.paused_ms - (meas.pause_start ? Date.now() - meas.pause_start : 0);
     if (Date.now() - last_state_save > 10000) { last_state_save = Date.now(); save_state(); }
-    if (active >= EVAL_MS && !meas.manual) finish_measure(false);
+    if (active >= EVAL_MS) {
+        if (!meas.manual) finish_measure(false);
+        else { // fester Spot: Messwert speichern und Zähler neu starten
+            var h = active / 3600000, st = farm_stats[meas.mon] || { deaths: 0 };
+            st.xp_h = meas.xp / h; st.gold_h = meas.gold / h; st.t = Date.now(); st.level = character.level; st.attack = character.attack;
+            farm_stats[meas.mon] = st; save_stats();
+            meas.start = Date.now(); meas.xp = 0; meas.gold = 0; meas.paused_ms = 0; meas.pause_start = 0; save_state();
+        }
+    }
 }
 function finish_measure(died) {
     if (!meas) return;
