@@ -8,7 +8,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v33";
+var BOT_VERSION = "v34";
 game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – P = Pause, U = sichere Upgrades, K = alle Upgrades, L = Statistik, G = Gifts tauschen");
 
 var GOLD_RESERVE = 20000;
@@ -23,7 +23,9 @@ var NO_WEAPON_MONSTER = "goo";
 var MAX_TARGET_HP_FACTOR = 5;
 // Kandidaten für Farmspots – ungeeignete (zu stark) werden automatisch aussortiert
 var CANDIDATES = ["goo", "crab", "bee", "croc", "armadillo", "squig", "squigtoad", "poisio",
-                  "tortoise", "frog", "rat", "minimush", "snake", "osnake", "scorpion", "boar", "crabx"];
+                  "tortoise", "frog", "rat", "minimush", "snake", "osnake", "scorpion", "spider",
+                  "arcticbee", "boar", "crabx", "bat", "cgoo"];
+var EXCLUDE = { iceroamer: true };   // gezielt ausgeschlossen (Einfrieren)
 var EVAL_MS = 3 * 60 * 1000;         // Messdauer je Spot
 var MEASURE_TOP = 6;                 // nur die 6 vielversprechendsten Spots werden gemessen
 var REEVAL_MS = 6 * 60 * 60 * 1000;  // Messwerte gelten so lange
@@ -157,7 +159,7 @@ function save_stats() { try { localStorage.setItem("lp_farm_" + character.name, 
 // Ist das Monster für meine Werte schaffbar?
 function is_safe_monster(mon) {
     var d = G.monsters[mon];
-    if (!d) return false;
+    if (!d || EXCLUDE[mon]) return false;
     if (d.cooperative || d.boss || d.special || d.abilities) return false; // Sonderfähigkeiten (Einfrieren etc.) meiden
     if (d.attack * HITS_TO_DIE_MIN > character.max_hp) return false;
     if (d.hp > character.attack * HITS_TO_KILL_MAX) return false;
@@ -386,7 +388,10 @@ function update_panel() {
     var cur_xp_h = 0, cur_gold_h = 0;
     if (meas) { var mh = Math.max(1 / 60, (Date.now() - meas.start - meas.paused_ms) / 3600000); cur_xp_h = meas.xp / mh; cur_gold_h = meas.gold / mh; }
     else if (current_spot && farm_stats[current_spot]) { cur_xp_h = farm_stats[current_spot].xp_h; cur_gold_h = farm_stats[current_spot].gold_h; }
-    lines.push("Spot " + (current_spot || "-") + (meas ? " (Messung)" : "") + ": " + fmt(cur_xp_h) + " XP/h  " + fmt(cur_gold_h) + " G/h");
+    var meas_txt = "";
+    if (meas && !meas.manual) { var rem = EVAL_MS - (Date.now() - meas.start - meas.paused_ms - (meas.pause_start ? Date.now() - meas.pause_start : 0)); meas_txt = " (Messung, noch " + Math.max(0, Math.ceil(rem / 60000)) + " min)"; }
+    else if (meas && meas.manual) meas_txt = " (fest, seit " + fmt_time(Date.now() - meas.start) + ")";
+    lines.push("Spot " + (current_spot || "-") + meas_txt + ": " + fmt(cur_xp_h) + " XP/h  " + fmt(cur_gold_h) + " G/h");
     lines.push("Session " + fmt_time(sh * 3600000) + ": " + fmt(sess.xp / sh) + " XP/h  " + fmt(sess.gold / sh) + " G/h");
     var rate = cur_xp_h || sess.xp / sh;
     lines.push("Nächstes Level in " + (rate > 0 ? fmt_time((G.levels[character.level] - character.xp) / rate * 3600000) : "-"));
@@ -397,12 +402,12 @@ function update_panel() {
     var BS = "font:11px monospace;padding:0 5px;margin-left:4px;cursor:pointer;background:#333;color:#eee;border:1px solid #888;border-radius:2px;";
     html += "\n<span style='color:#9cf'>Modus: " + (manual_spot ? "fest (" + manual_spot + ")" : "automatisch") + "</span>"
           + " <button data-act='auto' style='" + BS + "'>Auto</button><button data-act='reset' style='" + BS + "'>Neu messen</button>";
-    html += "\n--- Monster für Lv " + character.level + " / ANG " + character.attack + " (XP/h | G/h | ANG) ---";
+    html += "\n--- Monster für Lv " + character.level + " / ANG " + character.attack + " (Lv | XP/h | G/h | ANG) ---";
     var mons = CANDIDATES.filter(is_safe_monster);
     mons.sort(function (x, y) { var a = farm_stats[x], b = farm_stats[y]; return ((b && b.xp_h) || estimate(y) * 100) - ((a && a.xp_h) || estimate(x) * 100); });
     mons.forEach(function (m) {
         var st = farm_stats[m];
-        var row = (m == current_spot ? "&gt; " : "  ") + esc((m + "          ").slice(0, 10)) + " " + (st ? fmt(st.xp_h) + " | " + fmt(st.gold_h) + " | " + (st.attack || "?") + (st.deaths ? " †" + st.deaths : "") + (stats_valid(st) ? "" : " (alt)") : "  -  |  -  |  -  ");
+        var row = (m == current_spot ? "&gt; " : "  ") + esc((m + "          ").slice(0, 10)) + " L" + ((G.monsters[m].level || "?") + "  ").slice(0, 3) + (st ? fmt(st.xp_h) + " | " + fmt(st.gold_h) + " | " + (st.attack || "?") + (st.deaths ? " †" + st.deaths : "") + (stats_valid(st) ? "" : " (alt)") : "  -  |  -  |  -  ");
         row += "<button data-act='farm' data-mon='" + m + "' style='" + BS + (m == manual_spot ? "background:#264;" : "") + "'>Farmen</button>";
         html += "\n" + row;
     });
