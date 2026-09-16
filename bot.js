@@ -8,7 +8,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v35";
+var BOT_VERSION = "v36";
 game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – P = Pause, U = sichere Upgrades, K = alle Upgrades, L = Statistik, G = Gifts tauschen");
 
 var GOLD_RESERVE = 20000;
@@ -506,6 +506,90 @@ async function check_flee() {
         game_log("Erholt, zurück zum Spot");
     } catch (e) {}
     fleeing = false; busy = false;
+}
+
+// ---------- 10-Jahre-Event: Kuss-Runde ----------
+var kiss_done_round = null, kissing = false, kiss_fail_round = null;
+function anniv() { return parent.S && parent.S.anniversary; }
+function kiss_round_open() {
+    var a = anniv();
+    if (!KISS_ENABLED || !a || !a.active || !a.live || !a.target || a.available === false) return false;
+    if (a.round == kiss_done_round || a.round == kiss_fail_round) return false;
+    if (a.expires && Date.now() > a.expires - 15000) return false;
+    return true;
+}
+async function kiss_routine() {
+    if (kissing || upgrading || fleeing || !kiss_round_open()) return;
+    var a = anniv(); var round = a.round, name = a.target;
+    kissing = true; busy = true;
+    game_log("Kuss-Runde " + round + ": laufe zu " + name + " (" + a.map + " " + a.x + "," + a.y + ")");
+    set_message("Kuss: " + name);
+    try {
+        stop("smart");
+        await smart_move({ map: a.map, x: a.x, y: a.y });
+        var range = (G.skills.ikissyou && G.skills.ikissyou.range) || 50;
+        var t_end = Math.min(a.expires || Date.now() + 240000, Date.now() + 240000);
+        var ok = false, tries = 0, clean = 0;
+        var snap = function () { var o = { gift: quantity("anniversarygift"), slices: 0, buffs: Object.keys(character.s || {}).join(",") }; character.items.forEach(function (i) { if (i && /^slice_/.test(i.name)) o.slices += i.q || 1; }); return o; };
+        var before = snap();
+        var rewarded = function () { var n = snap(); return n.gift > before.gift || n.slices > before.slices || n.buffs != before.buffs; };
+        while (Date.now() < t_end && !paused) {
+            a = anniv();
+            if (!a || a.round != round) break;
+            if (a.available === false || rewarded()) { ok = true; break; }
+            var ent = get_player(name);
+            if (!ent) {
+                if (a.map == character.map && distance(character, { x: a.x, y: a.y }) > 30) { move(a.x, a.y); }
+                await sleep(1000); continue;
+            }
+            if (distance(character, ent) > range - 5) { move(ent.x, ent.y); await sleep(400); continue; }
+            if (!is_on_cooldown("ikissyou")) {
+                tries++;
+                var failed = false;
+                try { await use_skill("ikissyou", ent); } catch (e) { failed = true; game_log("Kuss-Fehler: " + (e && e.reason || e)); }
+                await sleep(2000);
+                if (rewarded()) { ok = true; break; }
+                if (!failed && ++clean >= 2) { ok = true; break; } // zweimal ohne Fehler -> als erledigt werten
+                if (tries >= 5) break;
+            } else await sleep(500);
+        }
+        if (ok) game_log("Buffs jetzt: " + Object.keys(character.s || {}).join(",") + " | Gifts " + quantity("anniversarygift"));
+        if (ok) { kiss_done_round = round; game_log("Kuss belohnt (Runde " + round + ")"); }
+        else { kiss_fail_round = round; game_log("Kuss diese Runde nicht geschafft"); }
+    } catch (e) { kiss_fail_round = round; game_log("Kuss-Routine abgebrochen: " + e); }
+    kissing = false; busy = false;
+}
+
+// ---------- Anniversary Gifts bei Xyn eintauschen (Taste G) ----------
+var exchanging = false;
+async function exchange_gifts() {
+    if (exchanging) { game_log("Tausch läuft bereits"); return; }
+    if (busy || upgrading) { game_log("Gerade beschäftigt – gleich nochmal G drücken"); return; }
+    var n = quantity("anniversarygift");
+    if (!n) { game_log("Keine Anniversary Gifts im Inventar"); return; }
+    if (paused) { paused = false; game_log("Pause aufgehoben"); }
+    exchanging = true; busy = true;
+    game_log("Tausche " + n + " Anniversary Gifts bei Xyn");
+    set_message("Zu Xyn");
+    try {
+        stop("smart");
+        await smart_move("exchange");
+        var done = 0, fails = 0;
+        while (quantity("anniversarygift") > 0 && !paused) {
+            if (character.esize < 2) { game_log("Inventar voll – Tausch gestoppt (" + quantity("anniversarygift") + " übrig)"); break; }
+            var idx = locate_item("anniversarygift");
+            var before = quantity("anniversarygift");
+            try { await exchange(idx); } catch (e) {}
+            await sleep(1200);
+            while (character.q && character.q.exchange) await sleep(500);
+            await sleep(300);
+            if (quantity("anniversarygift") < before) { done++; fails = 0; set_message("Tausch " + done + "/" + n); }
+            else if (++fails >= 3) { game_log("Tausch klappt nicht (Xyn nicht erreichbar?)"); break; }
+        }
+        game_log("Fertig: " + done + " Gifts getauscht");
+    } catch (e) { game_log("Tausch-Fehler: " + e); }
+    exchanging = false; busy = false;
+    if (!paused) go_to_farm_spot();
 }
 
 // ---------- Tränke kaufen: beste Stufe, die das Gold hergibt ----------
