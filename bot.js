@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v56";
+var BOT_VERSION = "v57";
 game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – PAUSIERT. P = Start/Pause, N = neu laden, U = sichere Upgrades, K = alle Upgrades, L = Statistik, G = Gifts tauschen");
 
 var GOLD_RESERVE = 20000;
@@ -38,7 +38,7 @@ function hide_mon(m, hide) { if (hide) hidden_mons[m] = true; else delete hidden
 function is_worth(m) {
     if (!only_worth) return true;
     var top = CANDIDATES.filter(function (x) { return is_safe_monster(x) && !hidden_mons[x]; })
-        .sort(function (a, b) { return mon_xph_est(G.monsters[b]) - mon_xph_est(G.monsters[a]); }).slice(0, WORTH_TOP);
+        .sort(function (a, b) { return mon_xph_est(G.monsters[b], b) - mon_xph_est(G.monsters[a], a); }).slice(0, WORTH_TOP);
     return top.indexOf(m) >= 0;
 }
 function visible_mons() { return CANDIDATES.filter(function (m) { return is_safe_monster(m) && !hidden_mons[m] && is_worth(m); }); }
@@ -224,7 +224,7 @@ function stats_valid(st) {
     return true;
 }
 // Geschätztes Potenzial aus Spieldaten: XP pro Kill / nötige Schläge
-function estimate(mon) { return mon_xph_est(G.monsters[mon]) / 100; }
+function estimate(mon) { return mon_xph_est(G.monsters[mon], mon) / 100; }
 function candidate_list() {
     var list = visible_mons().filter(function (m) {
         if (blocked_spots[m]) return false;
@@ -532,13 +532,26 @@ function mon_danger(d) { // Anteil meiner HP, den ein Kill kostet
     var incoming = mon_dps_on_me(d) + my_dps_vs(d) * (d.reflection || 0) / 100;
     return incoming * ttk / character.max_hp;
 }
-function mon_xph_est(d) { var ttk = mon_ttk(d); return isFinite(ttk) ? (d.xp || 0) / (ttk + 2) * 3600 * 0.8 : 0; } // +2 s Laufen/Looten, 80 % Auslastung
+// Anzahl gleichzeitiger Spawns eines Monstertyps (alle Karten)
+var spawn_count_cache = {};
+function spawn_count(mon) {
+    if (spawn_count_cache[mon] != null) return spawn_count_cache[mon];
+    var n = 0;
+    for (var map in G.maps) { var md = G.maps[map]; if (!md || !md.monsters || md.ignore) continue; md.monsters.forEach(function (e) { if (e.type == mon) n += e.count || 1; }); }
+    spawn_count_cache[mon] = n || 1; return spawn_count_cache[mon];
+}
+function mon_xph_est(d, mon) {
+    var ttk = mon_ttk(d); if (!isFinite(ttk)) return 0;
+    var kills_h = 3600 / (ttk + 2) * 0.8;
+    if (mon && d.respawn) kills_h = Math.min(kills_h, spawn_count(mon) * 3600 / d.respawn);
+    return (d.xp || 0) * kills_h;
+}
 function mon_strength(d) { return Math.sqrt(mon_dps(d) * (d.hp || 0) * (1 + (d.resistance || 0) / 100)) / 10; }
 function mon_tooltip(m) {
     var d = G.monsters[m];
     return ["HP " + d.hp, "Angriff " + d.attack + " x" + (d.frequency || 1) + "/s (" + (d.damage_type || "physical") + ")", "Rüstung " + (d.armor || 0), "Resistenz " + (d.resistance || 0),
             "Ausweichen " + (d.evasion || 0) + "%", "Reflexion " + (d.reflection || 0) + "%", "Lebensraub " + (d.lifesteal || 0) + "%", "Krit " + (d.crit || 0) + "%",
-            "Durchdringung A/R " + (d.apiercing || 0) + "/" + (d.rpiercing || 0), "Tempo " + (d.speed || 0) + " (ich " + character.speed + ")", "XP " + d.xp, "Respawn " + (d.respawn || "?") + " s"].join("\n");
+            "Durchdringung A/R " + (d.apiercing || 0) + "/" + (d.rpiercing || 0), "Tempo " + (d.speed || 0) + " (ich " + character.speed + ")", "XP " + d.xp, "Respawn " + (d.respawn || "?") + " s", "Spawns " + spawn_count(m)].join("\n");
 }
 var sort_key = "xph", sort_dir = -1;
 try { var sv = JSON.parse(localStorage.getItem("lp_sort") || "null"); if (sv) { sort_key = sv.k; sort_dir = sv.d; } } catch (e) {}
@@ -549,7 +562,7 @@ function sort_value(m, k) {
         case "name": return m;
         case "danger": return mon_danger(d);
         case "ttk": return mon_ttk(d);
-        case "xpest": return mon_xph_est(d);
+        case "xpest": return mon_xph_est(d, m);
         case "xpk": return d.xp || 0;
         case "xph": return st ? st.xp_h : estimate(m) * 100;
         case "gph": return st ? st.gold_h : 0;
