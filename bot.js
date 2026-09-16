@@ -8,7 +8,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v30";
+var BOT_VERSION = "v31";
 game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – P = Pause, U = sichere Upgrades, K = alle Upgrades, L = Statistik, G = Gifts tauschen");
 
 var GOLD_RESERVE = 20000;
@@ -59,19 +59,20 @@ var last_weapon_log = 0;
 var blocked_spots = {};
 var farm_stats = load_stats();
 var current_spot = null, need_repick = true;
+var manual_spot = null; // per Button fest gewählter Spot (kein Messen)
 var meas = null; // laufende Messung
 // Laufende Messung / Spot aus letztem Lauf wiederherstellen
 try {
     var saved = JSON.parse(localStorage.getItem("lp_state_" + character.name) || "null");
     if (saved && (Date.now() - saved.t) < 30 * 60 * 1000) {
-        current_spot = saved.spot || null; need_repick = !current_spot;
+        current_spot = saved.spot || null; need_repick = !current_spot; manual_spot = saved.manual || null;
         if (saved.meas) { meas = saved.meas; meas.last_xp = character.xp; meas.last_level = character.level; meas.last_gold = character.gold; meas.pause_start = 0; }
         if (current_spot) game_log("Weiter bei Spot " + current_spot + (meas ? " (Messung läuft weiter)" : ""));
     }
 } catch (e) {}
 var last_state_save = 0;
 function save_state() {
-    try { localStorage.setItem("lp_state_" + character.name, JSON.stringify({ t: Date.now(), spot: current_spot, meas: meas })); } catch (e) {}
+    try { localStorage.setItem("lp_state_" + character.name, JSON.stringify({ t: Date.now(), spot: current_spot, meas: meas, manual: manual_spot })); } catch (e) {}
 }
 var cburst_logged = false;
 
@@ -197,13 +198,30 @@ function choose_spot() {
 }
 function pick_farm_monster() {
     if (!has_weapon()) return NO_WEAPON_MONSTER;
+    if (manual_spot) { if (current_spot != manual_spot) { current_spot = manual_spot; need_repick = false; meas = null; save_state(); } return current_spot; }
     if (!current_spot || need_repick) { current_spot = choose_spot(); need_repick = false; save_state(); }
     return current_spot;
+}
+// Buttons: fester Spot / Automatik / neu messen
+function set_manual_spot(mon) {
+    manual_spot = mon; meas = null; blocked_spots = {}; need_repick = true;
+    game_log("Fester Farmspot: " + mon); save_state();
+    stop("smart"); busy = false;
+}
+function set_auto_spot() {
+    manual_spot = null; meas = null; need_repick = true; current_spot = null;
+    game_log("Automatische Spotwahl aktiv"); save_state();
+    stop("smart"); busy = false;
+}
+function reset_measurements() {
+    farm_stats = {}; save_stats(); blocked_spots = {}; meas = null; manual_spot = null; current_spot = null; need_repick = true;
+    game_log("Messwerte gelöscht – Messung startet neu"); save_state();
+    stop("smart"); busy = false;
 }
 
 // Messung
 function start_measure(mon) {
-    meas = { mon: mon, start: Date.now(), xp: 0, gold: 0, last_xp: character.xp, last_level: character.level, last_gold: character.gold, paused_ms: 0, pause_start: 0 };
+    meas = { mon: mon, manual: !!manual_spot, start: Date.now(), xp: 0, gold: 0, last_xp: character.xp, last_level: character.level, last_gold: character.gold, paused_ms: 0, pause_start: 0 };
 }
 function measure_tick() {
     if (!meas || !has_weapon()) return;
@@ -221,7 +239,7 @@ function measure_tick() {
 
     var active = Date.now() - meas.start - meas.paused_ms - (meas.pause_start ? Date.now() - meas.pause_start : 0);
     if (Date.now() - last_state_save > 10000) { last_state_save = Date.now(); save_state(); }
-    if (active >= EVAL_MS) finish_measure(false);
+    if (active >= EVAL_MS && !meas.manual) finish_measure(false);
 }
 function finish_measure(died) {
     if (!meas) return;
@@ -229,7 +247,7 @@ function finish_measure(died) {
     var h = active / 3600000;
     var st = farm_stats[meas.mon] || { deaths: 0 };
     st.xp_h = meas.xp / h; st.gold_h = meas.gold / h; st.t = Date.now(); st.level = character.level;
-    if (died) { st.deaths = (st.deaths || 0) + 1; st.unsafe_until = character.level + 3; st.xp_h = 0; }
+    if (died) { st.deaths = (st.deaths || 0) + 1; if (!manual_spot) { st.unsafe_until = character.level + 3; st.xp_h = 0; } }
     farm_stats[meas.mon] = st; save_stats();
     game_log("Spot " + meas.mon + ": " + Math.round(st.xp_h) + " XP/h, " + Math.round(st.gold_h) + " Gold/h" + (died ? " – GESTORBEN, gesperrt bis Level " + st.unsafe_until : ""));
     meas = null; need_repick = true; save_state();
@@ -250,7 +268,7 @@ function go_to_farm_spot() {
     busy = true; set_message("Laufe zu " + mon);
     smart_move(mon)
         .then(function () {
-            if (!get_nearest_monster({ type: mon })) {
+            if (!get_nearest_monster({ type: mon }) && !manual_spot) {
                 blocked_spots[mon] = true; need_repick = true; meas = null;
                 game_log("Spot " + mon + " erreicht, aber keine Monster – überspringe");
             } else if (!meas || meas.mon != mon) { start_measure(mon); save_state(); }
@@ -314,11 +332,18 @@ function init_panel() {
     var old = doc.getElementById("lp_panel"); if (old) old.remove();
     var div = doc.createElement("div"); div.id = "lp_panel";
     div.style.cssText = "position:absolute;left:10px;top:130px;z-index:9999;background:rgba(0,0,0,0.78);color:#e8e8e8;font:12px/1.35 monospace;padding:6px 9px;border:1px solid #777;border-radius:3px;min-width:230px;cursor:move;user-select:none;white-space:pre;";
+    div.innerHTML = "";
     try { var p = JSON.parse(localStorage.getItem("lp_panel_pos") || "null"); if (p) { div.style.left = p.x + "px"; div.style.top = p.y + "px"; } } catch (e) {}
     doc.body.appendChild(div);
     if (parent.__lp_panel_h) { doc.removeEventListener("mousemove", parent.__lp_panel_h.mm); doc.removeEventListener("mouseup", parent.__lp_panel_h.mu); }
     var drag = null;
-    div.addEventListener("mousedown", function (e) { drag = { dx: e.clientX - div.offsetLeft, dy: e.clientY - div.offsetTop }; e.preventDefault(); });
+    div.addEventListener("mousedown", function (e) { if (e.target.tagName == "BUTTON") return; drag = { dx: e.clientX - div.offsetLeft, dy: e.clientY - div.offsetTop }; e.preventDefault(); });
+    div.addEventListener("click", function (e) {
+        var b = e.target; if (b.tagName != "BUTTON") return;
+        var act = b.getAttribute("data-act"), mon = b.getAttribute("data-mon");
+        if (act == "farm") set_manual_spot(mon); else if (act == "auto") set_auto_spot(); else if (act == "reset") reset_measurements();
+        e.stopPropagation(); last_panel = 0;
+    });
     var mm = function (e) { if (!drag) return; div.style.left = (e.clientX - drag.dx) + "px"; div.style.top = (e.clientY - drag.dy) + "px"; };
     var mu = function () { if (drag) { try { localStorage.setItem("lp_panel_pos", JSON.stringify({ x: div.offsetLeft, y: div.offsetTop })); } catch (e) {} } drag = null; };
     doc.addEventListener("mousemove", mm); doc.addEventListener("mouseup", mu);
@@ -345,13 +370,21 @@ function update_panel() {
     lines.push("Nächstes Level in " + (rate > 0 ? fmt_time((G.levels[character.level] - character.xp) / rate * 3600000) : "-"));
     var a = anniv();
     if (a && a.active) lines.push("Kuss: " + (a.available === false ? "erledigt" : (a.live && a.target ? "JETZT " + a.target : "nächste in " + fmt_time(a.next - Date.now()))));
-    var keys = Object.keys(farm_stats);
-    if (keys.length) {
-        lines.push("--- Spots (XP/h | G/h) ---");
-        keys.sort(function (x, y) { return (farm_stats[y].xp_h || 0) - (farm_stats[x].xp_h || 0); });
-        keys.slice(0, 8).forEach(function (m) { var st = farm_stats[m]; lines.push((m == current_spot ? "> " : "  ") + (m + "          ").slice(0, 10) + " " + fmt(st.xp_h) + " | " + fmt(st.gold_h) + (st.deaths ? " †" + st.deaths : "") + (stats_valid(st) ? "" : " (alt)")); });
-    }
-    panel.textContent = lines.join("\n");
+    var esc = function (t) { return String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;"); };
+    var html = lines.map(esc).join("\n");
+    var BS = "font:11px monospace;padding:0 5px;margin-left:4px;cursor:pointer;background:#333;color:#eee;border:1px solid #888;border-radius:2px;";
+    html += "\n<span style='color:#9cf'>Modus: " + (manual_spot ? "fest (" + manual_spot + ")" : "automatisch") + "</span>"
+          + " <button data-act='auto' style='" + BS + "'>Auto</button><button data-act='reset' style='" + BS + "'>Neu messen</button>";
+    html += "\n--- Monster für Lv " + character.level + " (XP/h | G/h) ---";
+    var mons = CANDIDATES.filter(is_safe_monster);
+    mons.sort(function (x, y) { var a = farm_stats[x], b = farm_stats[y]; return ((b && b.xp_h) || estimate(y) * 100) - ((a && a.xp_h) || estimate(x) * 100); });
+    mons.forEach(function (m) {
+        var st = farm_stats[m];
+        var row = (m == current_spot ? "&gt; " : "  ") + esc((m + "          ").slice(0, 10)) + " " + (st ? fmt(st.xp_h) + " | " + fmt(st.gold_h) + (st.deaths ? " †" + st.deaths : "") + (stats_valid(st) ? "" : " (alt)") : "  -  |  -  ");
+        row += "<button data-act='farm' data-mon='" + m + "' style='" + BS + (m == manual_spot ? "background:#264;" : "") + "'>Farmen</button>";
+        html += "\n" + row;
+    });
+    panel.innerHTML = html;
 }
 var last_panel = 0;
 
