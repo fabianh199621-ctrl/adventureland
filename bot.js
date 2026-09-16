@@ -8,7 +8,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v39";
+var BOT_VERSION = "v40";
 game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – P = Pause, U = sichere Upgrades, K = alle Upgrades, L = Statistik, G = Gifts tauschen");
 
 var GOLD_RESERVE = 20000;
@@ -359,7 +359,7 @@ function init_panel() {
     var old = doc.getElementById("lp_panel"); if (old) old.remove();
     var st = doc.getElementById("lp_style"); if (st) st.remove();
     st = doc.createElement("style"); st.id = "lp_style";
-    st.textContent = "#lp_panel{position:fixed;left:10px;top:130px;z-index:2147483000;pointer-events:auto;width:340px;background:#14161c;color:#e6e6e6;font:12px/1.4 'Segoe UI',Arial,sans-serif;border:1px solid #3a3f4b;border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.6);user-select:none;overflow:hidden}"
+    st.textContent = "#lp_panel{position:fixed;left:10px;top:130px;z-index:2147483000;pointer-events:auto;width:470px;background:#14161c;color:#e6e6e6;font:12px/1.4 'Segoe UI',Arial,sans-serif;border:1px solid #3a3f4b;border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.6);user-select:none;overflow:hidden}"
       + "#lp_head{display:flex;align-items:center;gap:8px;padding:6px 10px;background:linear-gradient(#2b3140,#1e222c);cursor:move;border-bottom:1px solid #3a3f4b;touch-action:none}"
       + "#lp_head b{flex:1;font-size:13px;letter-spacing:.3px}#lp_head .lp_state{font-size:11px;padding:1px 7px;border-radius:10px;background:#2e7d32}"
       + "#lp_head .lp_state.pause{background:#c62828}#lp_head .lp_state.busy{background:#ef6c00}"
@@ -370,7 +370,7 @@ function init_panel() {
       + ".lp_spot{background:#1c2029;border:1px solid #2f3440;border-radius:4px;padding:6px 8px;margin:4px 0 6px}.lp_spot .lp_big{font-size:15px;font-weight:600}"
       + ".lp_row{display:flex;gap:6px;align-items:center;margin:4px 0}.lp_row .lp_mode{color:#8ab4f8;flex:1}"
       + "#lp_body button{font:11px 'Segoe UI',Arial;padding:1px 7px;cursor:pointer;background:#2f3440;color:#eee;border:1px solid #555;border-radius:3px}#lp_body button:hover{background:#3d4453}#lp_body button.on{background:#2e7d32;border-color:#4caf50}"
-      + "table.lp_t{width:100%;border-collapse:collapse;font-size:11.5px;margin-top:4px}table.lp_t th{color:#9aa3b2;font-weight:normal;text-align:right;padding:2px 4px;border-bottom:1px solid #3a3f4b}table.lp_t th:first-child,table.lp_t td:first-child{text-align:left}"
+      + "table.lp_t{width:100%;border-collapse:collapse;font-size:11.5px;margin-top:4px}table.lp_t th{color:#9aa3b2;font-weight:normal;text-align:right;padding:2px 4px;border-bottom:1px solid #3a3f4b;cursor:pointer}table.lp_t th:hover{color:#fff}table.lp_t th.sorted{color:#8ab4f8}table.lp_t th:first-child,table.lp_t td:first-child{text-align:left}"
       + "table.lp_t td{padding:2px 4px;text-align:right;white-space:nowrap}table.lp_t tr:nth-child(even) td{background:#181b22}table.lp_t tr.cur td{background:#20302a;color:#c8f0d0}table.lp_t td.old{color:#8a8f99}";
     doc.head.appendChild(st);
 
@@ -396,7 +396,9 @@ function init_panel() {
     var onClick = function (e) {
         if (!inside(e)) return;
         e.stopPropagation();
-        var b = e.target; if (b.tagName != "BUTTON") return;
+        var b = e.target;
+        if (b.tagName == "TH" && b.getAttribute("data-sort")) { set_sort(b.getAttribute("data-sort")); return; }
+        if (b.tagName != "BUTTON") return;
         if (b.id == "lp_toggle") { div.__collapsed = !div.__collapsed; try { localStorage.setItem("lp_panel_collapsed", div.__collapsed ? "1" : "0"); } catch (x) {} last_panel = 0; return; }
         var act = b.getAttribute("data-act"), mon = b.getAttribute("data-mon");
         if (act == "farm") set_manual_spot(mon); else if (act == "auto") set_auto_spot(); else if (act == "reset") reset_measurements();
@@ -411,6 +413,27 @@ function init_panel() {
     return div;
 }
 var panel = init_panel();
+// Monster-Stärke: sqrt(DPS x effektive HP); effektive HP berücksichtigt Resistenz (Magier) bzw. Rüstung
+function mon_dps(d) { return (d.attack || 0) * (d.frequency || 1); }
+function mon_ehp(d) { var red = character.ctype == "mage" ? (d.resistance || 0) : (d.armor || 0); return (d.hp || 0) * (1 + red / 100); }
+function mon_strength(d) { return Math.sqrt(mon_dps(d) * mon_ehp(d)) / 10; }
+var sort_key = "xph", sort_dir = -1;
+try { var sv = JSON.parse(localStorage.getItem("lp_sort") || "null"); if (sv) { sort_key = sv.k; sort_dir = sv.d; } } catch (e) {}
+function set_sort(k) { if (sort_key == k) sort_dir = -sort_dir; else { sort_key = k; sort_dir = (k == "name" ? 1 : -1); } try { localStorage.setItem("lp_sort", JSON.stringify({ k: sort_key, d: sort_dir })); } catch (e) {} last_panel = 0; }
+function sort_value(m, k) {
+    var d = G.monsters[m], st = farm_stats[m];
+    switch (k) {
+        case "name": return m;
+        case "str": return mon_strength(d);
+        case "hp": return d.hp || 0;
+        case "dps": return mon_dps(d);
+        case "xpk": return d.xp || 0;
+        case "xph": return st ? st.xp_h : estimate(m) * 100;
+        case "gph": return st ? st.gold_h : 0;
+        case "ang": return st && st.attack || 0;
+    }
+    return 0;
+}
 function fmt(n) { n = Math.round(n || 0); return n >= 1000000 ? (n / 1000000).toFixed(2) + "M" : n >= 1000 ? (n / 1000).toFixed(1) + "k" : String(n); }
 function fmt_time(ms) { if (!isFinite(ms) || ms < 0) return "-"; var m = Math.round(ms / 60000); return m >= 60 ? Math.floor(m / 60) + "h " + (m % 60) + "m" : m + "m"; }
 function esc(t) { return String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;"); }
@@ -445,12 +468,14 @@ function update_panel() {
       + "<div class='lp_k'>Session " + fmt(sess.xp / sh) + " XP/h · " + fmt(sess.gold / sh) + " G/h · nächstes Level in " + (rate > 0 ? fmt_time((G.levels[character.level] - character.xp) / rate * 3600000) : "-") + "</div></div>";
     h += "<div class='lp_row'><span class='lp_mode'>Modus: " + (manual_spot ? "fest (" + esc(manual_spot) + ")" : "automatisch") + "</span><button data-act='auto'" + (manual_spot ? "" : " class='on'") + ">Auto</button><button data-act='reset'>Neu messen</button></div>";
     if (!panel.__collapsed) {
-        h += "<table class='lp_t'><tr><th>Monster</th><th>HP</th><th>ATK</th><th>XP/h</th><th>G/h</th><th>ANG</th><th></th></tr>";
+        var cols = [["name", "Monster"], ["str", "Stärke"], ["hp", "HP"], ["dps", "DPS"], ["xpk", "XP/Kill"], ["xph", "XP/h"], ["gph", "G/h"], ["ang", "ANG"]];
+        h += "<table class='lp_t'><tr>" + cols.map(function (c) { return "<th data-sort='" + c[0] + "'" + (sort_key == c[0] ? " class='sorted'" : "") + ">" + c[1] + (sort_key == c[0] ? (sort_dir < 0 ? " ▾" : " ▴") : "") + "</th>"; }).join("") + "<th></th></tr>";
         var mons = CANDIDATES.filter(is_safe_monster);
-        mons.sort(function (x, y) { var a1 = farm_stats[x], b1 = farm_stats[y]; return ((b1 && b1.xp_h) || estimate(y) * 100) - ((a1 && a1.xp_h) || estimate(x) * 100); });
+        mons.sort(function (x, y) { var a1 = sort_value(x, sort_key), b1 = sort_value(y, sort_key); return (a1 < b1 ? -1 : a1 > b1 ? 1 : 0) * sort_dir; });
         mons.forEach(function (m) {
             var st = farm_stats[m], d = G.monsters[m], oldc = st && !stats_valid(st) ? " class='old'" : "";
-            h += "<tr" + (m == current_spot ? " class='cur'" : "") + "><td>" + esc(m) + (st && st.deaths ? " <span style='color:#ef5350'>†" + st.deaths + "</span>" : "") + "</td><td>" + fmt(d.hp) + "</td><td>" + d.attack + "</td>"
+            h += "<tr" + (m == current_spot ? " class='cur'" : "") + "><td>" + esc(m) + (st && st.deaths ? " <span style='color:#ef5350'>†" + st.deaths + "</span>" : "") + "</td>"
+               + "<td>" + mon_strength(d).toFixed(1) + "</td><td>" + fmt(d.hp) + "</td><td>" + Math.round(mon_dps(d)) + "</td><td>" + fmt(d.xp) + "</td>"
                + "<td" + oldc + ">" + (st ? fmt(st.xp_h) : "-") + "</td><td" + oldc + ">" + (st ? fmt(st.gold_h) : "-") + "</td><td" + oldc + ">" + (st && st.attack ? st.attack : "-") + "</td>"
                + "<td><button data-act='farm' data-mon='" + m + "'" + (m == manual_spot ? " class='on'" : "") + ">Farmen</button></td></tr>";
         });
