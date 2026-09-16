@@ -6,7 +6,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v23";
+var BOT_VERSION = "v24";
 game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – P = Pause, U = sichere Upgrades, K = alle Upgrades, L = Statistik");
 
 var GOLD_RESERVE = 20000;
@@ -86,6 +86,8 @@ function on_key(ev) {
     else if (k == "K") upgrade_routine(true);
     else if (k == "L") log_stats();
 }
+// alte Snippet-Belegungen aus früheren Versionen entfernen
+try { unmap_key("P"); unmap_key("U"); unmap_key("K"); unmap_key("L"); } catch (e) {}
 // alten Handler (von vorherigem Run) entfernen, dann neu registrieren
 if (parent.__logicplan_keyhandler) parent.document.removeEventListener("keydown", parent.__logicplan_keyhandler);
 parent.__logicplan_keyhandler = on_key;
