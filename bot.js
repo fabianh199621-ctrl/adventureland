@@ -8,7 +8,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v47";
+var BOT_VERSION = "v48";
 game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – P = Pause, U = sichere Upgrades, K = alle Upgrades, L = Statistik, G = Gifts tauschen");
 
 var GOLD_RESERVE = 20000;
@@ -73,6 +73,8 @@ var KISS_ENABLED = true;             // 10-Jahre-Event: jede Runde zum Ziel lauf
 var KITE_HP = 0.35;                  // unter 35 % HP mit Schwarm: kurz zurückweichen und heilen
 var FLEE_HP = 0.15;                  // unter 15 % HP: in die Stadt
 var FLEE_ATTACKERS = 2;              // ... wenn mind. 2 Monster auf mich zielen
+var MAX_AGGRO = 3;                   // ab so vielen Angreifern kein neues Ziel ziehen
+var STUCK_MS = 5 * 60 * 1000;        // ohne XP so lange "farmend" -> festgefahren
 var CBURST_MIN_TARGETS = 2;
 var CBURST_MP_PER_TARGET = 80;
 var CBURST_MIN_MP = 0.5;
@@ -399,9 +401,12 @@ function try_cburst() {
 
 // ---------- Eigenes Fenster im Spiel (verschiebbar) ----------
 var sess = { start: Date.now(), xp: 0, gold: 0, last_xp: character.xp, last_level: character.level, last_gold: character.gold };
+var last_gain = Date.now(), stuck_count = 0;
 function session_tick() {
+    var before = sess.xp;
     if (character.level > sess.last_level) sess.xp += (G.levels[sess.last_level] - sess.last_xp) + character.xp;
     else sess.xp += Math.max(0, character.xp - sess.last_xp);
+    if (sess.xp > before) last_gain = Date.now();
     sess.last_xp = character.xp; sess.last_level = character.level;
     var dg = character.gold - sess.last_gold; if (dg > 0) sess.gold += dg; sess.last_gold = character.gold;
 }
@@ -573,6 +578,23 @@ function update_panel() {
     panel.querySelector("#lp_body").innerHTML = h;
 }
 var last_panel = 0;
+
+// ---------- Hänger-Erkennung ----------
+var unsticking = false;
+async function check_stuck() {
+    if (unsticking || paused || busy || upgrading || kissing || fleeing || exchanging || !has_weapon()) { if (busy || paused || upgrading || kissing || fleeing || exchanging) last_gain = Date.now(); return; }
+    if (Date.now() - last_gain < STUCK_MS) return;
+    unsticking = true; busy = true; stuck_count++;
+    game_log("Festgefahren? " + Math.round(STUCK_MS / 60000) + " min ohne XP – setze Position zurück (" + stuck_count + ")");
+    set_message("Neustart Weg");
+    try {
+        stop("smart"); stop("move"); change_target(null);
+        if (stuck_count % 3 == 0) await smart_move("town"); // jedes dritte Mal über die Stadt
+        var mon = pick_farm_monster();
+        await smart_move(mon);
+    } catch (e) { blocked_spots[pick_farm_monster()] = true; need_repick = true; }
+    last_gain = Date.now(); unsticking = false; busy = false;
+}
 
 // ---------- Statusanzeige ----------
 var last_status = 0;
@@ -1152,7 +1174,7 @@ setInterval(function () {
     if (paused) return;
     measure_tick();
 
-    check_weapon(); check_flee(); check_elixir(); kiss_routine(); tidy_inventory(); check_potions();
+    check_weapon(); check_flee(); check_elixir(); kiss_routine(); tidy_inventory(); check_potions(); check_stuck();
     if (busy || is_moving(character)) return;
 
     var farm = pick_farm_monster();
@@ -1165,13 +1187,15 @@ setInterval(function () {
     }
 
     if (!target) {
-        target = get_nearest_monster({ type: farm, no_target: true });
-        if (!target) { // sonst nur Monster, die niemand anderen anvisieren (kein Kill-Klau)
+        var aggro = attackers_on_me();
+        if (aggro < MAX_AGGRO) target = get_nearest_monster({ type: farm, no_target: true });
+        if (!target) { // sonst nur Monster, die niemand anderen anvisieren (kein Kill-Klau); bei viel Aggro nur eigene Angreifer
             var best_d = 1e9;
             for (var mid in parent.entities) {
                 var m = parent.entities[mid];
                 if (!m || m.type != "monster" || m.dead || m.mtype != farm) continue;
                 if (m.target && m.target != character.name) continue;
+                if (aggro >= MAX_AGGRO && m.target != character.name) continue;
                 var d = distance(character, m); if (d < best_d) { best_d = d; target = m; }
             }
         }
