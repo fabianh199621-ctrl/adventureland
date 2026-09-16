@@ -6,7 +6,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v22";
+var BOT_VERSION = "v23";
 game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – P = Pause, U = sichere Upgrades, K = alle Upgrades, L = Statistik");
 
 var GOLD_RESERVE = 20000;
@@ -21,7 +21,8 @@ var MAX_TARGET_HP_FACTOR = 5;
 var CANDIDATES = ["goo", "crab", "bee", "croc", "armadillo", "squig", "squigtoad", "poisio",
                   "tortoise", "frog", "rat", "minimush", "snake", "osnake", "scorpion", "spider",
                   "arcticbee", "boar", "iceroamer", "crabx", "bat", "cgoo"];
-var EVAL_MS = 10 * 60 * 1000;        // Messdauer je Spot
+var EVAL_MS = 3 * 60 * 1000;         // Messdauer je Spot
+var MEASURE_TOP = 6;                 // nur die 6 vielversprechendsten Spots werden gemessen
 var REEVAL_MS = 6 * 60 * 60 * 1000;  // Messwerte gelten so lange
 var LEVEL_RESET = 5;                 // ... oder bis 5 Level später
 var XP_WEIGHT = 1, GOLD_WEIGHT = 1;  // Gewichtung XP/h vs. Gold/h
@@ -117,13 +118,21 @@ function is_safe_monster(mon) {
 function stats_valid(st) {
     return st && (Date.now() - st.t) < REEVAL_MS && Math.abs(character.level - st.level) < LEVEL_RESET;
 }
+// Geschätztes Potenzial aus Spieldaten: XP pro Kill / nötige Schläge
+function estimate(mon) {
+    var d = G.monsters[mon];
+    var hits = Math.max(1, Math.ceil(d.hp / Math.max(1, character.attack)));
+    return (d.xp || 0) / hits + (d.gold || 0) / hits * 0.5;
+}
 function candidate_list() {
-    return CANDIDATES.filter(function (m) {
+    var list = CANDIDATES.filter(function (m) {
         if (blocked_spots[m] || !is_safe_monster(m)) return false;
         var st = farm_stats[m];
         if (st && st.unsafe_until && character.level < st.unsafe_until) return false;
         return true;
     });
+    list.sort(function (a, b) { return estimate(b) - estimate(a); });
+    return list.slice(0, MEASURE_TOP);
 }
 function choose_spot() {
     var cands = candidate_list();
