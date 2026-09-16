@@ -1,5 +1,6 @@
 // ===== Adventure Land – Vollautomatik Magier (nichts einstellen) =====
-// P = Pause (stoppt auch Upgrades)
+// P = Pause (stoppt auch Upgrades) – Start immer im Pause-Modus
+// O = Bot komplett aus/an (Hauptschleife stoppen/starten)
 // U = sichere Upgrades: kaufbare Items: Reserve +5 im Inventar, getragenes Teil bis +8; Drop-Items +3; INT-Scrolls; Schmuck +2; bessere Ausrüstung kaufen
 // K = wie U, aber Drop-Items bis +5 (Risiko!)
 // L = Farm-Statistik (XP/h, Gold/h je Monster) ins Log
@@ -8,8 +9,8 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v52";
-game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – P = Pause, U = sichere Upgrades, K = alle Upgrades, L = Statistik, G = Gifts tauschen");
+var BOT_VERSION = "v53";
+game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – PAUSIERT. P = Start/Pause, O = Bot aus/an, U = sichere Upgrades, K = alle Upgrades, L = Statistik, G = Gifts tauschen");
 
 var GOLD_RESERVE = 20000;
 var UPGRADE_TARGET = 8;              // kaufbare Items: Ziel für das getragene Teil
@@ -80,7 +81,8 @@ var CBURST_MIN_TARGETS = 2;
 var CBURST_MP_PER_TARGET = 80;
 var CBURST_MIN_MP = 0.5;
 
-var busy = false, paused = false, upgrading = false, pending_upgrade = null;
+var busy = false, paused = true, upgrading = false, pending_upgrade = null; // Start pausiert
+var bot_running = true, main_timer = null;
 var last_weapon_log = 0;
 var blocked_spots = {};
 var farm_stats = load_stats();
@@ -130,6 +132,7 @@ function on_key(ev) {
     if (ev.ctrlKey || ev.altKey || ev.metaKey) return;
     var k = (ev.key || "").toUpperCase();
     if (k == "P") toggle_pause();
+    else if (k == "O") toggle_bot();
     else if (k == "U") upgrade_routine(false);
     else if (k == "K") upgrade_routine(true);
     else if (k == "L") log_stats();
@@ -161,7 +164,22 @@ function event_debug() {
     game_log("Event-Diagnose angezeigt (Fenster) – bitte Screenshot");
 }
 
+function toggle_bot() {
+    bot_running = !bot_running;
+    if (!bot_running) {
+        if (main_timer) clearInterval(main_timer); main_timer = null;
+        stop("smart"); stop("move"); busy = false; upgrading = false; kissing = false; fleeing = false; exchanging = false; pontying = false;
+        set_message("BOT AUS"); game_log("Bot AUS (O zum Starten) – nur das Panel läuft weiter");
+        try { update_panel(); } catch (e) {}
+        if (!parent.__lp_panel_timer) parent.__lp_panel_timer = setInterval(function () { try { update_panel(); } catch (e) {} }, 2000);
+    } else {
+        if (parent.__lp_panel_timer) { clearInterval(parent.__lp_panel_timer); parent.__lp_panel_timer = null; }
+        paused = true; start_main();
+        set_message("PAUSE"); game_log("Bot AN – pausiert, P zum Losfarmen");
+    }
+}
 function toggle_pause() {
+    if (!bot_running) { game_log("Bot ist AUS – erst O drücken"); return; }
     paused = !paused;
     if (paused) {
         stop("move"); stop("smart"); busy = false;
@@ -532,8 +550,8 @@ function update_panel() {
     if (!panel || !panel.parentNode) panel = init_panel();
     var hp = Math.round(character.hp / character.max_hp * 100), mp = Math.round(character.mp / character.max_mp * 100);
     var state = panel.querySelector("#lp_state");
-    var st_txt = paused ? "PAUSE" : upgrading ? "Upgrade" : pending_upgrade ? "Upgrade wartet" : kissing ? "Kuss" : fleeing ? "Rückzug" : exchanging ? "Tausch" : pontying ? "Ponty" : busy ? "unterwegs" : "farmt";
-    state.textContent = st_txt; state.className = "lp_state" + (paused ? " pause" : (upgrading || pending_upgrade || kissing || fleeing || exchanging || busy) ? " busy" : "");
+    var st_txt = !bot_running ? "AUS" : paused ? "PAUSE" : upgrading ? "Upgrade" : pending_upgrade ? "Upgrade wartet" : kissing ? "Kuss" : fleeing ? "Rückzug" : exchanging ? "Tausch" : pontying ? "Ponty" : busy ? "unterwegs" : "farmt";
+    state.textContent = st_txt; state.className = "lp_state" + ((paused || !bot_running) ? " pause" : (upgrading || pending_upgrade || kissing || fleeing || exchanging || busy) ? " busy" : "");
     panel.querySelector("#lp_toggle").textContent = panel.__collapsed ? "▸" : "▾";
 
     var sh = Math.max(1 / 60, (Date.now() - sess.start) / 3600000);
@@ -752,7 +770,7 @@ async function exchange_gifts() {
     if (busy || upgrading) { game_log("Gerade beschäftigt – gleich nochmal G drücken"); return; }
     var n = quantity("anniversarygift");
     if (!n) { game_log("Keine Anniversary Gifts im Inventar"); return; }
-    if (paused) { paused = false; game_log("Pause aufgehoben"); }
+    unpause("Gift-Tausch");
     exchanging = true; busy = true;
     game_log("Tausche " + n + " Anniversary Gifts bei Xyn");
     set_message("Zu Xyn");
@@ -908,8 +926,10 @@ async function check_weapon() {
 }
 
 // ---------- Buttons: nur Compound / nur Aufräumen ----------
+function unpause(why) { if (paused) { paused = false; game_log("Pause aufgehoben (" + why + ")"); } }
 async function compound_only() {
     if (upgrading) { game_log("Upgrade läuft bereits"); return; }
+    unpause("Compound");
     if (busy) { game_log("Gerade unterwegs – gleich nochmal"); return; }
     upgrading = true; busy = true; set_message("Compound");
     try {
@@ -923,6 +943,7 @@ async function compound_only() {
 }
 async function tidy_now() {
     if (busy || upgrading) { game_log("Gerade beschäftigt – gleich nochmal"); return; }
+    unpause("Aufräumen");
     var saved = INV_MIN_FREE; INV_MIN_FREE = 999; // erzwingen
     try { await tidy_inventory(); } finally { INV_MIN_FREE = saved; }
     if (!paused) go_to_farm_spot();
@@ -1210,10 +1231,10 @@ async function process_slot(slot, manual) {
 // manual=false: sichere Upgrades (U) | manual=true: alles bis +5 (K)
 async function upgrade_routine(manual) {
     if (upgrading) { game_log("Upgrade läuft bereits"); return; }
-    if (busy) { pending_upgrade = manual ? "K" : "U"; game_log("Upgrade vorgemerkt – startet, sobald er frei ist"); return; }
+    if (busy) { pending_upgrade = manual ? "K" : "U"; unpause("Upgrade vorgemerkt"); game_log("Upgrade vorgemerkt – startet, sobald er frei ist"); return; }
     pending_upgrade = null;
     if (!has_weapon()) { game_log("Keine Waffe – kein Upgrade"); return; }
-    if (paused) { paused = false; game_log("Pause aufgehoben"); }
+    unpause("Upgrade");
 
     var stat_scroll = STAT_TYPE + "scroll", stat_price = G.items[stat_scroll].g;
     var empty = Object.keys(FILL_SLOTS).filter(function (s) { return !character.slots[s]; }).length;
@@ -1281,7 +1302,9 @@ async function upgrade_routine(manual) {
 }
 
 // ---------- Hauptschleife ----------
-setInterval(function () {
+function start_main() {
+  if (main_timer) clearInterval(main_timer);
+  main_timer = setInterval(function () {
     heal_logic(); loot();
     if (character.rip) { if (meas) finish_measure(true); respawn(); busy = false; fleeing = false; kissing = false; return; }
     session_tick();
@@ -1325,4 +1348,6 @@ setInterval(function () {
     else if (can_attack(target)) {
         if (!try_cburst()) { status_message(); attack(target); }
     }
-}, 1000 / 4);
+  }, 1000 / 4);
+}
+start_main();
