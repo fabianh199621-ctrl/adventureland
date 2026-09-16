@@ -8,7 +8,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v49";
+var BOT_VERSION = "v50";
 game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – P = Pause, U = sichere Upgrades, K = alle Upgrades, L = Statistik, G = Gifts tauschen");
 
 var GOLD_RESERVE = 20000;
@@ -461,6 +461,7 @@ function init_panel() {
         if (act == "farm") set_manual_spot(mon); else if (act == "auto") set_auto_spot(); else if (act == "reset") reset_measurements();
         else if (act == "hide") hide_mon(mon, true); else if (act == "show") hide_mon(mon, false);
         else if (act == "worth") { only_worth = !only_worth; save_hidden(); }
+        else if (act == "sortinv") sort_inventory();
         last_panel = 0;
     };
     if (parent.__lp_panel_h) { var H = parent.__lp_panel_h; ["pointerdown", "mousedown"].forEach(function (t) { win.removeEventListener(t, H.down, true); }); ["pointermove", "mousemove"].forEach(function (t) { win.removeEventListener(t, H.move, true); }); ["pointerup", "mouseup"].forEach(function (t) { win.removeEventListener(t, H.up, true); }); win.removeEventListener("click", H.click, true); }
@@ -553,7 +554,7 @@ function update_panel() {
     h += "<div class='lp_spot'><div><span class='lp_k'>Spot</span> <b>" + esc(current_spot || "-") + "</b>" + (meas_txt ? " <span class='lp_k'>(" + meas_txt + ")</span>" : "") + "</div>"
       + "<div class='lp_big'>" + fmt(cur_xp_h) + " XP/h &nbsp;·&nbsp; " + fmt(cur_gold_h) + " G/h</div>"
       + "<div class='lp_k'>Session " + fmt(sess.xp / sh) + " XP/h · " + fmt(sess.gold / sh) + " G/h · nächstes Level in " + (rate > 0 ? fmt_time((G.levels[character.level] - character.xp) / rate * 3600000) : "-") + "</div></div>";
-    h += "<div class='lp_row'><span class='lp_mode'>Modus: " + (manual_spot ? "fest (" + esc(manual_spot) + ")" : "automatisch") + "</span><button data-act='auto'" + (manual_spot ? "" : " class='on'") + ">Auto</button><button data-act='reset'>Neu messen</button><button data-act='worth'" + (only_worth ? " class='on'" : "") + " title='nur die 5 besten nach geschätzten XP/h'>Top 5</button></div>";
+    h += "<div class='lp_row'><span class='lp_mode'>Modus: " + (manual_spot ? "fest (" + esc(manual_spot) + ")" : "automatisch") + "</span><button data-act='auto'" + (manual_spot ? "" : " class='on'") + ">Auto</button><button data-act='reset'>Neu messen</button><button data-act='worth'" + (only_worth ? " class='on'" : "") + " title='nur die 5 besten nach geschätzten XP/h'>Top 5</button><button data-act='sortinv' title='Inventar sortieren'>Inv ⇅</button></div>";
     if (!panel.__collapsed) {
         var cols = [["name", "Monster"], ["danger", "Gefahr"], ["ttk", "s/Kill"], ["xpk", "XP/Kill"], ["xpest", "XP/h*"], ["xph", "XP/h"], ["gph", "G/h"], ["ang", "ANG"]];
         h += "<table class='lp_t'><tr>" + cols.map(function (c) { return "<th data-sort='" + c[0] + "'" + (sort_key == c[0] ? " class='sorted'" : "") + ">" + c[1] + (sort_key == c[0] ? (sort_dir < 0 ? " ▾" : " ▴") : "") + "</th>"; }).join("") + "<th></th></tr>";
@@ -901,6 +902,47 @@ async function check_weapon() {
         last_weapon_log = Date.now();
         game_log("Ohne Waffe bei " + NO_WEAPON_MONSTER + " – spare für " + cheapest + " (" + (cheapest ? G.items[cheapest].g : "?") + " Gold, habe " + character.gold + ")");
     }
+}
+
+// ---------- Inventar sortieren (Button) ----------
+var sorting_inv = false;
+function inv_rank(it) {
+    var n = it.name, def = G.items[n] || {};
+    if (/^hpot/.test(n)) return 0; if (/^mpot/.test(n)) return 1; if (/^elixir/.test(n)) return 2;
+    if (/^(scroll|cscroll)/.test(n)) return 3; if (/scroll$/.test(n)) return 4;
+    if (EVENT_ITEMS.test(n)) return 5;
+    if (equipped_names()[n]) return 6;              // Reserven der getragenen Ausrüstung
+    if (def.compound) return 7;                      // Schmuck
+    if (def.upgrade) return 8;                       // sonstige Ausrüstung
+    if (def.type == "material" || def.e) return 9;   // Materialien / tauschbar
+    return 10;
+}
+async function sort_inventory() {
+    if (sorting_inv) return;
+    sorting_inv = true;
+    try {
+        var items = [];
+        for (var i = 0; i < character.items.length; i++) if (character.items[i]) items.push({ i: i, it: character.items[i] });
+        items.sort(function (a, b) {
+            var ra = inv_rank(a.it), rb = inv_rank(b.it); if (ra != rb) return ra - rb;
+            if (a.it.name != b.it.name) return a.it.name < b.it.name ? -1 : 1;
+            return (b.it.level || 0) - (a.it.level || 0);
+        });
+        var n = 0;
+        for (var pos = 0; pos < items.length; pos++) {
+            var cur = character.items[pos];
+            var want = items[pos].it;
+            if (cur && cur.name == want.name && (cur.level || 0) == (want.level || 0) && cur.q == want.q) continue;
+            // Index des gewünschten Items suchen (ab pos)
+            var from = -1;
+            for (var j = pos; j < character.items.length; j++) { var it = character.items[j]; if (it && it.name == want.name && (it.level || 0) == (want.level || 0) && it.q == want.q) { from = j; break; } }
+            if (from < 0 || from == pos) continue;
+            swap(from, pos); n++;
+            await sleep(120);
+        }
+        game_log("Inventar sortiert (" + n + " Verschiebungen)");
+    } catch (e) { game_log("Sortier-Fehler: " + e); }
+    sorting_inv = false;
 }
 
 // ---------- Ponty: gebrauchte Items prüfen und kaufen ----------
