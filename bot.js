@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v55";
+var BOT_VERSION = "v56";
 game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – PAUSIERT. P = Start/Pause, N = neu laden, U = sichere Upgrades, K = alle Upgrades, L = Statistik, G = Gifts tauschen");
 
 var GOLD_RESERVE = 20000;
@@ -657,7 +657,7 @@ function is_junk(it) { // kaufbare Standardausrüstung ohne Level/Attribut; unge
     if ((it.level || 0) > 0 || it.stat_type) return false;
     return is_buyable(it.name);
 }
-function should_keep(it) { return (equipped_names()[it.name] && (it.level || 0) >= BACKUP_LEVEL) || (G.items[it.name] && G.items[it.name].compound && (equipped_names()[it.name] || find_inv_indices(it.name, it.level || 0).length >= 3)) || KEEP_ITEMS.test(it.name) || EVENT_ITEMS.test(it.name) || EVENT_ITEMS.test(G.items[it.name] && G.items[it.name].name || ""); }
+function should_keep(it) { return (equipped_names()[it.name] && (it.level || 0) > 0) || (G.items[it.name] && G.items[it.name].compound && (equipped_names()[it.name] || find_inv_indices(it.name, it.level || 0).length >= 3)) || KEEP_ITEMS.test(it.name) || EVENT_ITEMS.test(it.name) || EVENT_ITEMS.test(G.items[it.name] && G.items[it.name].name || ""); }
 async function tidy_inventory() {
     if (busy || upgrading || paused || character.esize >= INV_MIN_FREE) return;
     busy = true;
@@ -1054,7 +1054,8 @@ async function check_ponty(force) {
 var SLOT_TYPES = { helmet: "helmet", chest: "chest", pants: "pants", shoes: "shoes", gloves: "gloves", cape: "cape", mainhand: "weapon", offhand: "offhand", ring1: "ring", ring2: "ring", earring1: "earring", earring2: "earring", amulet: "amulet", belt: "belt", orb: "orb" };
 function gear_score(def) {
     if (!def) return 0;
-    return (def.int || 0) * 10 + (def.attack || 0) * 3 + (def.range || 0) * 0.5 + (def.frequency || 0) * 200 + (def.hp || 0) * 0.2 + (def.mp || 0) * 0.2 + (def.armor || 0) * 0.5 + (def.resistance || 0) * 0.5;
+    var main = character.ctype == "mage" || character.ctype == "priest" ? (def.int || 0) : character.ctype == "warrior" ? (def.str || 0) : (def.dex || 0);
+    return main * 30 + (def.attack || 0) * 3 + (def.range || 0) * 0.5 + (def.frequency || 0) * 200 + (def.hp || 0) * 0.05 + (def.mp || 0) * 0.1 + (def.armor || 0) * 0.3 + (def.resistance || 0) * 0.3;
 }
 function fits_slot(def, slot) {
     var t = SLOT_TYPES[slot]; if (!t) return false;
@@ -1210,6 +1211,24 @@ async function ensure_backup(name) { // Reservekopie auf +BACKUP_LEVEL herstelle
     }
     return false;
 }
+// Reserven aus der Bank zurückholen (für getragene kaufbare Teile ohne Reserve im Inventar)
+async function fetch_backups_from_bank() {
+    var need = equipped_slots("upgrade").map(function (sl) { return character.slots[sl].name; })
+        .filter(function (n, i, a) { return a.indexOf(n) == i && is_buyable(n) && backup_index(n) < 0; });
+    if (!need.length) return;
+    set_message("Bank: Reserven"); await smart_move("bank"); await sleep(800);
+    var bank = character.bank || {}; var got = 0;
+    for (var pack in bank) {
+        if (pack.indexOf("items") != 0 || !Array.isArray(bank[pack])) continue;
+        for (var i = 0; i < bank[pack].length; i++) {
+            var it = bank[pack][i];
+            if (!it || need.indexOf(it.name) < 0 || (it.level || 0) < BACKUP_LEVEL || character.esize < 1) continue;
+            if (backup_index(it.name) >= 0) continue;
+            try { bank_retrieve(pack, i); got++; await sleep(400); } catch (e) {}
+        }
+    }
+    if (got) game_log("Reserven aus der Bank geholt: " + got);
+}
 async function process_slot(slot, manual) {
     var item = character.slots[slot]; if (!item) return;
     var name = item.name, buyable = is_buyable(name), goal = target_level(name, manual);
@@ -1275,6 +1294,8 @@ async function upgrade_routine(manual) {
         up_slots = slots_to_upgrade(manual);
 
         if (up_slots.length) {
+            await fetch_backups_from_bank();
+            up_slots = slots_to_upgrade(manual);
             await smart_move("upgrade");
             for (var k = 0; k < up_slots.length; k++) { check_pause(); await process_slot(up_slots[k], manual); await smart_move("upgrade"); }
         }
