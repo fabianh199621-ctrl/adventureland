@@ -8,7 +8,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v36";
+var BOT_VERSION = "v37";
 game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – P = Pause, U = sichere Upgrades, K = alle Upgrades, L = Statistik, G = Gifts tauschen");
 
 var GOLD_RESERVE = 20000;
@@ -16,7 +16,8 @@ var UPGRADE_TARGET = 8;              // kaufbare Items (Nachkauf bei Zerstörung
 var SAFE_TARGET_DROP = 3;            // Drop-Items bei U
 var RISKY_TARGET_DROP = 5;           // Drop-Items bei K
 var MAX_REBUYS = 6;
-var COMPOUND_TARGET = 2;
+var COMPOUND_TARGET = 2;             // getragener Schmuck
+var COMPOUND_SPARE_MAX = 3;          // ungetragener Schmuck im Inventar wird bis hierhin compoundet
 var STAT_TYPE = "int";
 var FALLBACK_WEAPONS = ["staff", "stick"];
 var NO_WEAPON_MONSTER = "goo";
@@ -433,13 +434,14 @@ function status_message(prefix) {
 
 // ---------- Inventar aufräumen: Schrott verkaufen, Rest in die Bank ----------
 var EQUIP_TYPES = ["helmet", "chest", "pants", "shoes", "gloves", "cape", "weapon", "shield", "quiver", "source", "misc_offhand"]; // Schmuck nie verkaufen (Compound)
-function is_junk(it) { // kaufbare Standardausrüstung ohne Level/Attribut
+function is_junk(it) { // kaufbare Standardausrüstung ohne Level/Attribut; ungetragener kaufbarer Schmuck +0 in Einzelstücken
     var def = G.items[it.name]; if (!def) return false;
+    if (def.compound) return is_buyable(it.name) && (it.level || 0) == 0 && !equipped_names()[it.name] && find_inv_indices(it.name, 0).length < 3;
     if (EQUIP_TYPES.indexOf(def.type) < 0) return false;
     if ((it.level || 0) > 0 || it.stat_type) return false;
     return is_buyable(it.name);
 }
-function should_keep(it) { return (G.items[it.name] && G.items[it.name].compound) || KEEP_ITEMS.test(it.name) || EVENT_ITEMS.test(it.name) || EVENT_ITEMS.test(G.items[it.name] && G.items[it.name].name || ""); }
+function should_keep(it) { return (G.items[it.name] && G.items[it.name].compound && (equipped_names()[it.name] || find_inv_indices(it.name, it.level || 0).length >= 3)) || KEEP_ITEMS.test(it.name) || EVENT_ITEMS.test(it.name) || EVENT_ITEMS.test(G.items[it.name] && G.items[it.name].name || ""); }
 async function tidy_inventory() {
     if (busy || upgrading || paused || character.esize >= INV_MIN_FREE) return;
     busy = true;
@@ -810,6 +812,40 @@ async function compound_slot(slot) {
     }
 }
 
+// ---------- Ungetragenen Schmuck compounden ----------
+function equipped_names() { var n = {}; for (var sl in character.slots) { var it = character.slots[sl]; if (it && sl.indexOf("trade") != 0) n[it.name] = true; } return n; }
+async function compound_spares() {
+    var eq = equipped_names();
+    var groups = {}; // name -> {level -> count}
+    character.items.forEach(function (it) {
+        if (!it) return; var def = G.items[it.name]; if (!def || !def.compound || eq[it.name]) return;
+        groups[it.name] = groups[it.name] || {}; var l = it.level || 0; groups[it.name][l] = (groups[it.name][l] || 0) + 1;
+    });
+    var todo = Object.keys(groups).filter(function (n) { for (var l in groups[n]) if (l < COMPOUND_SPARE_MAX && groups[n][l] >= 3) return true; return false; });
+    if (!todo.length) return;
+    game_log("Ungetragenen Schmuck compounden: " + todo.join(", "));
+    await smart_move("compound");
+    for (var t = 0; t < todo.length; t++) {
+        var name = todo[t];
+        for (var l = 0; l < COMPOUND_SPARE_MAX; l++) {
+            while (spendable() > 0) {
+                check_pause();
+                var idx = find_inv_indices(name, l);
+                if (idx.length < 3) break;
+                var scroll = "cscroll" + item_grade(character.items[idx[0]]);
+                if (quantity(scroll) < 1) { buy(scroll, 1); await sleep(600); }
+                var sc = locate_item(scroll);
+                if (sc < 0) { game_log("keine " + scroll); break; }
+                set_message(name + " +" + l + " x3");
+                try { await compound(idx[0], idx[1], idx[2], sc); } catch (e) {}
+                await wait_queue("compound");
+                if (find_inv_indices(name, l).length == idx.length - 3 && find_inv_index(name, l + 1) >= 0) game_log(name + " +" + (l + 1) + " erstellt");
+                else game_log(name + " compound (+" + l + ") fehlgeschlagen");
+            }
+        }
+    }
+}
+
 // ---------- Upgrade + Attribut + Compound ----------
 // manual=false: sichere Upgrades (U) | manual=true: alles bis +5 (K)
 async function upgrade_routine(manual) {
@@ -824,7 +860,8 @@ async function upgrade_routine(manual) {
     var stat_slots = spendable() >= stat_price ? slots_without_stat() : [];
     var comp_slots = slots_to_compound();
     var gear = Object.keys(SLOT_TYPES).some(function (sl) { var c = best_buyable_for(sl), cur = character.slots[sl]; return c && (!cur || (c != cur.name && gear_score(G.items[c]) >= gear_score(G.items[cur.name]) * (1 + 0.1 * (cur.level || 0)) * GEAR_MIN_GAIN)); });
-    if (!empty && !gear && !up_slots.length && !stat_slots.length && !comp_slots.length) { game_log("Nichts zu tun (oder zu wenig freies Gold: " + spendable() + ")"); return; }
+    var spares = (function () { var eq = equipped_names(), g = {}; character.items.forEach(function (it) { if (it && G.items[it.name] && G.items[it.name].compound && !eq[it.name] && (it.level || 0) < COMPOUND_SPARE_MAX) { var k = it.name + "|" + (it.level || 0); g[k] = (g[k] || 0) + 1; } }); return Object.keys(g).some(function (k) { return g[k] >= 3; }); })();
+    if (!empty && !gear && !spares && !up_slots.length && !stat_slots.length && !comp_slots.length) { game_log("Nichts zu tun (oder zu wenig freies Gold: " + spendable() + ")"); return; }
     if (character.esize < 2) { game_log("Upgrade: Inventar zu voll"); return; }
 
     upgrading = true; busy = true; set_message("Upgrade");
@@ -904,6 +941,7 @@ async function upgrade_routine(manual) {
 
         comp_slots = slots_to_compound();
         for (var c = 0; c < comp_slots.length; c++) { check_pause(); await compound_slot(comp_slots[c]); }
+        await compound_spares();
 
     } catch (e) {
         if (e == "PAUSE") game_log("Upgrade-Routine durch Pause abgebrochen");
