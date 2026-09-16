@@ -8,7 +8,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v50";
+var BOT_VERSION = "v51";
 game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – P = Pause, U = sichere Upgrades, K = alle Upgrades, L = Statistik, G = Gifts tauschen");
 
 var GOLD_RESERVE = 20000;
@@ -80,7 +80,7 @@ var CBURST_MIN_TARGETS = 2;
 var CBURST_MP_PER_TARGET = 80;
 var CBURST_MIN_MP = 0.5;
 
-var busy = false, paused = false, upgrading = false;
+var busy = false, paused = false, upgrading = false, pending_upgrade = null;
 var last_weapon_log = 0;
 var blocked_spots = {};
 var farm_stats = load_stats();
@@ -530,8 +530,8 @@ function update_panel() {
     if (!panel || !panel.parentNode) panel = init_panel();
     var hp = Math.round(character.hp / character.max_hp * 100), mp = Math.round(character.mp / character.max_mp * 100);
     var state = panel.querySelector("#lp_state");
-    var st_txt = paused ? "PAUSE" : upgrading ? "Upgrade" : kissing ? "Kuss" : fleeing ? "Rückzug" : exchanging ? "Tausch" : pontying ? "Ponty" : busy ? "unterwegs" : "farmt";
-    state.textContent = st_txt; state.className = "lp_state" + (paused ? " pause" : (upgrading || kissing || fleeing || exchanging || busy) ? " busy" : "");
+    var st_txt = paused ? "PAUSE" : upgrading ? "Upgrade" : pending_upgrade ? "Upgrade wartet" : kissing ? "Kuss" : fleeing ? "Rückzug" : exchanging ? "Tausch" : pontying ? "Ponty" : busy ? "unterwegs" : "farmt";
+    state.textContent = st_txt; state.className = "lp_state" + (paused ? " pause" : (upgrading || pending_upgrade || kissing || fleeing || exchanging || busy) ? " busy" : "");
     panel.querySelector("#lp_toggle").textContent = panel.__collapsed ? "▸" : "▾";
 
     var sh = Math.max(1 / 60, (Date.now() - sess.start) / 3600000);
@@ -1186,7 +1186,8 @@ async function process_slot(slot, manual) {
 // manual=false: sichere Upgrades (U) | manual=true: alles bis +5 (K)
 async function upgrade_routine(manual) {
     if (upgrading) { game_log("Upgrade läuft bereits"); return; }
-    if (busy) { game_log("Gerade beschäftigt (unterwegs) – gleich nochmal drücken"); return; }
+    if (busy) { pending_upgrade = manual ? "K" : "U"; game_log("Upgrade vorgemerkt – startet, sobald er frei ist"); return; }
+    pending_upgrade = null;
     if (!has_weapon()) { game_log("Keine Waffe – kein Upgrade"); return; }
     if (paused) { paused = false; game_log("Pause aufgehoben"); }
 
@@ -1263,6 +1264,7 @@ setInterval(function () {
     if (paused) return;
     measure_tick();
 
+    if (pending_upgrade && !busy && !upgrading) { var pu = pending_upgrade; pending_upgrade = null; upgrade_routine(pu == "K"); }
     check_weapon(); check_flee(); check_elixir(); kiss_routine(); tidy_inventory(); check_potions(); check_stuck(); check_ponty(false);
     if (busy || is_moving(character)) return;
 
