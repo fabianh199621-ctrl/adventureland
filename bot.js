@@ -1,19 +1,21 @@
 // ===== Adventure Land – Vollautomatik Magier (nichts einstellen) =====
 // P = Pause (stoppt auch Upgrades)
-// U = sichere Upgrades: kaufbare Items +5, Drop-Items +3, INT-Scrolls, Schmuck +2
-// K = alles bis +5, auch Drop-Items (Risiko!)
+// U = sichere Upgrades: kaufbare Items +8 (mit Nachkauf), Drop-Items +3, INT-Scrolls, Schmuck +2, bessere Ausrüstung kaufen
+// K = wie U, aber Drop-Items bis +5 (Risiko!)
 // L = Farm-Statistik (XP/h, Gold/h je Monster) ins Log
 // D = Event-Daten anzeigen (Diagnose für 10-Jahre-Event)
 // G = Anniversary Gifts bei Xyn eintauschen (manuell)
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v32";
+var BOT_VERSION = "v33";
 game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – P = Pause, U = sichere Upgrades, K = alle Upgrades, L = Statistik, G = Gifts tauschen");
 
 var GOLD_RESERVE = 20000;
-var UPGRADE_TARGET = 5;
-var SAFE_TARGET_DROP = 3;
+var UPGRADE_TARGET = 8;              // kaufbare Items (Nachkauf bei Zerstörung)
+var SAFE_TARGET_DROP = 3;            // Drop-Items bei U
+var RISKY_TARGET_DROP = 5;           // Drop-Items bei K
+var MAX_REBUYS = 6;
 var COMPOUND_TARGET = 2;
 var STAT_TYPE = "int";
 var FALLBACK_WEAPONS = ["staff", "stick"];
@@ -21,14 +23,13 @@ var NO_WEAPON_MONSTER = "goo";
 var MAX_TARGET_HP_FACTOR = 5;
 // Kandidaten für Farmspots – ungeeignete (zu stark) werden automatisch aussortiert
 var CANDIDATES = ["goo", "crab", "bee", "croc", "armadillo", "squig", "squigtoad", "poisio",
-                  "tortoise", "frog", "rat", "minimush", "snake", "osnake", "scorpion", "spider",
-                  "arcticbee", "boar", "iceroamer", "crabx", "bat", "cgoo"];
+                  "tortoise", "frog", "rat", "minimush", "snake", "osnake", "scorpion", "boar", "crabx"];
 var EVAL_MS = 3 * 60 * 1000;         // Messdauer je Spot
 var MEASURE_TOP = 6;                 // nur die 6 vielversprechendsten Spots werden gemessen
 var REEVAL_MS = 6 * 60 * 60 * 1000;  // Messwerte gelten so lange
 var ATTACK_DRIFT = 0.15;             // ... oder bis sich ANG um 15 % geändert hat
 var XP_WEIGHT = 1, GOLD_WEIGHT = 1;  // Gewichtung XP/h vs. Gold/h
-var HITS_TO_DIE_MIN = 8;             // Monster darf mich nicht in < 8 Schlägen töten
+var HITS_TO_DIE_MIN = 12;            // Monster darf mich nicht in < 8 Schlägen töten
 var HITS_TO_KILL_MAX = 25;           // ich muss es in <= 25 Schlägen töten können
 var FILL_SLOTS = {
     helmet:   ["wcap", "helmet"],
@@ -45,7 +46,10 @@ var FILL_SLOTS = {
     belt:     ["intbelt", "hpbelt"]
 };
 var INV_MIN_FREE = 5;                // unter so vielen freien Plätzen -> aufräumen
-var KEEP_ITEMS = /^(hpot|mpot|scroll|cscroll|intscroll|strscroll|dexscroll|vitscroll|tracker)/; // bleibt im Inventar
+var KEEP_ITEMS = /^(hpot|mpot|elixir|scroll|cscroll|intscroll|strscroll|dexscroll|vitscroll|tracker)/;
+var POTS_HP = ["hpot1", "hpot0"], POTS_MP = ["mpot1", "mpot0"]; // beste zuerst
+var ELIXIR = "elixirint0";           // wird aktiv gehalten, wenn kaufbar
+var GEAR_MIN_GAIN = 1.2;             // neue Ausrüstung nur, wenn mind. 20 % besser // bleibt im Inventar
 var EVENT_ITEMS = /cake|gift|anniv|kiss|slice/i;   // Event-Items bleiben im Inventar
 var KISS_ENABLED = true;             // 10-Jahre-Event: jede Runde zum Ziel laufen und küssen
 var FLEE_HP = 0.25;                  // Rückzug unter 25 % HP ...
@@ -154,7 +158,7 @@ function save_stats() { try { localStorage.setItem("lp_farm_" + character.name, 
 function is_safe_monster(mon) {
     var d = G.monsters[mon];
     if (!d) return false;
-    if (d.cooperative || d.boss || d.special) return false;
+    if (d.cooperative || d.boss || d.special || d.abilities) return false; // Sonderfähigkeiten (Einfrieren etc.) meiden
     if (d.attack * HITS_TO_DIE_MIN > character.max_hp) return false;
     if (d.hp > character.attack * HITS_TO_KILL_MAX) return false;
     return true;
@@ -283,18 +287,33 @@ function go_to_farm_spot() {
         .then(function () { busy = false; });
 }
 
-// ---------- Heilen / Tränke ----------
+// ---------- Heilen / Tränke (beste vorhandene Stufe) ----------
+function best_pot(list) { for (var i = 0; i < list.length; i++) { var idx = locate_item(list[i]); if (idx >= 0) return { idx: idx, name: list[i], gives: pot_gives(list[i]) }; } return null; }
+function pot_gives(name) { var g = G.items[name] && G.items[name].gives; if (!g) return name.indexOf("hpot") == 0 ? 200 : 300; for (var i = 0; i < g.length; i++) if (g[i][0] == "hp" || g[i][0] == "mp") return g[i][1]; return 200; }
+function pots_total(list) { return list.reduce(function (n, p) { return n + quantity(p); }, 0); }
 function heal_logic() {
     if (is_on_cooldown("use_hp")) return;
     var hp = character.hp / character.max_hp, mp = character.mp / character.max_mp;
     var missing_hp = character.max_hp - character.hp, missing_mp = character.max_mp - character.mp;
+    var hpot = best_pot(POTS_HP), mpot = best_pot(POTS_MP);
 
-    if (hp < 0.4 && missing_hp >= 200 && quantity("hpot0") > 0) {
-        game_log("Heiltrank genommen (HP " + Math.round(hp * 100) + "%)"); use_skill("use_hp");
-    } else if (mp < 0.3 && missing_mp >= 300 && quantity("mpot0") > 0) {
-        game_log("Manatrank genommen (MP " + Math.round(mp * 100) + "%)"); use_skill("use_mp");
+    if (hp < 0.4 && hpot && missing_hp >= hpot.gives * 0.8) {
+        game_log("Heiltrank " + hpot.name + " (HP " + Math.round(hp * 100) + "%)"); equip(hpot.idx);
+    } else if (mp < 0.3 && mpot && missing_mp >= mpot.gives * 0.8) {
+        game_log("Manatrank " + mpot.name + " (MP " + Math.round(mp * 100) + "%)"); equip(mpot.idx);
     } else if (character.hp < character.max_hp) use_skill("regen_hp");
     else if (character.mp < character.max_mp) use_skill("regen_mp");
+}
+
+// ---------- Elixier aktiv halten ----------
+var last_elixir = 0;
+function check_elixir() {
+    if (Date.now() - last_elixir < 10000 || busy) return;
+    last_elixir = Date.now();
+    var active = character.slots.elixir;
+    if (active && (!active.expires || new Date(active.expires).getTime() - Date.now() > 60000)) return;
+    var idx = locate_item(ELIXIR);
+    if (idx >= 0) { equip(idx); game_log("Elixier aktiviert: " + ELIXIR); }
 }
 
 // ---------- Magier: Cburst (erst ab Freischaltungs-Level) ----------
@@ -362,7 +381,7 @@ function update_panel() {
     var hp = Math.round(character.hp / character.max_hp * 100), mp = Math.round(character.mp / character.max_mp * 100);
     lines.push("LogicPlan " + BOT_VERSION + (paused ? "  [PAUSE]" : upgrading ? "  [UPGRADE]" : kissing ? "  [KUSS]" : fleeing ? "  [RÜCKZUG]" : ""));
     lines.push("Lv " + character.level + "  HP " + hp + "%  MP " + mp + "%  Gold " + fmt(character.gold));
-    lines.push("Tränke HP " + quantity("hpot0") + " / MP " + quantity("mpot0") + "  frei " + character.esize);
+    lines.push("Tränke HP " + pots_total(POTS_HP) + " / MP " + pots_total(POTS_MP) + "  Elixier " + (character.slots.elixir ? "an" : "aus") + "  frei " + character.esize);
     var sh = Math.max(1 / 60, (Date.now() - sess.start) / 3600000);
     var cur_xp_h = 0, cur_gold_h = 0;
     if (meas) { var mh = Math.max(1 / 60, (Date.now() - meas.start - meas.paused_ms) / 3600000); cur_xp_h = meas.xp / mh; cur_gold_h = meas.gold / mh; }
@@ -542,18 +561,24 @@ async function exchange_gifts() {
     if (!paused) go_to_farm_spot();
 }
 
-// ---------- Tränke kaufen ----------
+// ---------- Tränke kaufen: beste Stufe, die das Gold hergibt ----------
+function pick_pot_tier(list) { // list ist "beste zuerst"
+    for (var i = 0; i < list.length; i++) if (is_buyable(list[i]) && spendable() >= G.items[list[i]].g * 300) return list[i];
+    return list[list.length - 1];
+}
 function check_potions() {
     if (busy) return;
-    if (quantity("hpot0") >= 30 && quantity("mpot0") >= 30) return;
-    var price = G.items.hpot0.g + G.items.mpot0.g;
+    if (pots_total(POTS_HP) >= 30 && pots_total(POTS_MP) >= 30) return;
+    var hp_t = pick_pot_tier(POTS_HP), mp_t = pick_pot_tier(POTS_MP);
+    var price = G.items[hp_t].g + G.items[mp_t].g;
     var amount = Math.min(150, Math.floor((spendable() * 0.7) / price));
     if (amount < 20) return;
 
     busy = true; set_message("Tränke kaufen");
     smart_move("potions").then(function () {
-        buy("hpot0", amount); buy("mpot0", amount);
-        game_log("Tränke gekauft: " + amount + " HP / " + amount + " MP");
+        buy(hp_t, amount); buy(mp_t, amount);
+        game_log("Tränke gekauft: " + amount + " " + hp_t + " / " + amount + " " + mp_t);
+        if (is_buyable(ELIXIR) && quantity(ELIXIR) < 3 && spendable() > G.items[ELIXIR].g * 10) { buy(ELIXIR, 5); game_log("5x " + ELIXIR + " gekauft"); }
     }).catch(function () {}).then(function () { busy = false; });
 }
 
@@ -563,7 +588,7 @@ function npc_selling(name) {
     return null;
 }
 function is_buyable(name) { return npc_selling(name) != null; }
-function target_level(name, manual) { return (manual || is_buyable(name)) ? UPGRADE_TARGET : SAFE_TARGET_DROP; }
+function target_level(name, manual) { return is_buyable(name) ? UPGRADE_TARGET : (manual ? RISKY_TARGET_DROP : SAFE_TARGET_DROP); }
 
 function equipped_slots(kind) {
     var list = [];
@@ -666,6 +691,44 @@ async function check_weapon() {
     }
 }
 
+// ---------- Bessere kaufbare Ausrüstung ----------
+var SLOT_TYPES = { helmet: "helmet", chest: "chest", pants: "pants", shoes: "shoes", gloves: "gloves", cape: "cape", mainhand: "weapon", offhand: "offhand", ring1: "ring", ring2: "ring", earring1: "earring", earring2: "earring", amulet: "amulet", belt: "belt", orb: "orb" };
+function gear_score(def) {
+    if (!def) return 0;
+    return (def.int || 0) * 10 + (def.attack || 0) * 3 + (def.range || 0) * 0.5 + (def.frequency || 0) * 200 + (def.hp || 0) * 0.2 + (def.mp || 0) * 0.2 + (def.armor || 0) * 0.5 + (def.resistance || 0) * 0.5;
+}
+function fits_slot(def, slot) {
+    var t = SLOT_TYPES[slot]; if (!t) return false;
+    if (def.class && def.class.indexOf(character.ctype) < 0) return false;
+    if (t == "weapon") return !!def.wtype && (G.classes[character.ctype].mainhand || {})[def.wtype];
+    if (t == "offhand") return (G.classes[character.ctype].offhand || {})[def.type];
+    return def.type == t;
+}
+function best_buyable_for(slot) {
+    var best = null, best_s = 0;
+    for (var name in G.items) {
+        var def = G.items[name];
+        if (!fits_slot(def, slot) || !is_buyable(name)) continue;
+        if (def.g > spendable() * 0.5) continue;
+        var sc = gear_score(def);
+        if (sc > best_s) { best_s = sc; best = name; }
+    }
+    return best;
+}
+async function buy_better_gear() {
+    for (var slot in SLOT_TYPES) {
+        check_pause();
+        var cur = character.slots[slot];
+        var cand = best_buyable_for(slot);
+        if (!cand) continue;
+        var cur_s = cur ? gear_score(G.items[cur.name]) * (1 + 0.1 * (cur.level || 0)) : 0;
+        if (cur && cand == cur.name) continue;
+        if (gear_score(G.items[cand]) < cur_s * GEAR_MIN_GAIN) continue;
+        game_log("Bessere Ausrüstung für " + slot + ": " + cand + " (" + G.items[cand].g + " Gold)");
+        await buy_and_equip(cand);
+    }
+}
+
 async function fill_empty_slots() {
     for (var slot in FILL_SLOTS) {
         check_pause();
@@ -729,14 +792,17 @@ async function upgrade_routine(manual) {
     var up_slots = slots_to_upgrade(manual);
     var stat_slots = spendable() >= stat_price ? slots_without_stat() : [];
     var comp_slots = slots_to_compound();
-    if (!empty && !up_slots.length && !stat_slots.length && !comp_slots.length) { game_log("Nichts zu tun (oder zu wenig freies Gold: " + spendable() + ")"); return; }
+    var gear = Object.keys(SLOT_TYPES).some(function (sl) { var c = best_buyable_for(sl), cur = character.slots[sl]; return c && (!cur || (c != cur.name && gear_score(G.items[c]) >= gear_score(G.items[cur.name]) * (1 + 0.1 * (cur.level || 0)) * GEAR_MIN_GAIN)); });
+    if (!empty && !gear && !up_slots.length && !stat_slots.length && !comp_slots.length) { game_log("Nichts zu tun (oder zu wenig freies Gold: " + spendable() + ")"); return; }
     if (character.esize < 2) { game_log("Upgrade: Inventar zu voll"); return; }
 
     upgrading = true; busy = true; set_message("Upgrade");
     game_log((manual ? "ALLE Upgrades (Risiko)" : "Sichere Upgrades") + ": " + empty + " leere Slots, " + up_slots.length + " Upgrades, " + stat_slots.length + " Attribut, " + comp_slots.length + " Compound (frei: " + spendable() + " Gold)");
 
     try {
-        if (empty) { await fill_empty_slots(); up_slots = slots_to_upgrade(manual); }
+        if (empty) await fill_empty_slots();
+        await buy_better_gear();
+        up_slots = slots_to_upgrade(manual);
 
         if (up_slots.length) {
             await smart_move("upgrade");
@@ -769,7 +835,7 @@ async function upgrade_routine(manual) {
                         else if (find_inv_index(name, lvl) >= 0) { if (!paused) game_log(name + " Upgrade fehlgeschlagen, Item erhalten"); equip(find_inv_index(name, lvl)); await sleep(600); }
                         else {
                             game_log("!!! " + name + " ZERSTÖRT !!!");
-                            if (++rebuys > 3) { game_log(name + ": zu oft zerstört, abgebrochen"); rebuys = 99; }
+                            if (++rebuys > MAX_REBUYS) { game_log(name + ": zu oft zerstört, abgebrochen"); rebuys = 99; }
                             else if (slot == "mainhand") { rebuys = 99; }
                             else if (await buy_and_equip(name)) await smart_move("upgrade"); else rebuys = 99;
                         }
@@ -827,7 +893,7 @@ setInterval(function () {
     if (paused) return;
     measure_tick();
 
-    check_weapon(); check_flee(); kiss_routine(); tidy_inventory(); check_potions();
+    check_weapon(); check_flee(); check_elixir(); kiss_routine(); tidy_inventory(); check_potions();
     if (busy || is_moving(character)) return;
 
     var farm = pick_farm_monster();
