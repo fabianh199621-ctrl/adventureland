@@ -8,7 +8,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v51";
+var BOT_VERSION = "v52";
 game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – P = Pause, U = sichere Upgrades, K = alle Upgrades, L = Statistik, G = Gifts tauschen");
 
 var GOLD_RESERVE = 20000;
@@ -462,6 +462,8 @@ function init_panel() {
         else if (act == "hide") hide_mon(mon, true); else if (act == "show") hide_mon(mon, false);
         else if (act == "worth") { only_worth = !only_worth; save_hidden(); }
         else if (act == "sortinv") sort_inventory();
+        else if (act == "compound") compound_only();
+        else if (act == "tidy") tidy_now();
         last_panel = 0;
     };
     if (parent.__lp_panel_h) { var H = parent.__lp_panel_h; ["pointerdown", "mousedown"].forEach(function (t) { win.removeEventListener(t, H.down, true); }); ["pointermove", "mousemove"].forEach(function (t) { win.removeEventListener(t, H.move, true); }); ["pointerup", "mouseup"].forEach(function (t) { win.removeEventListener(t, H.up, true); }); win.removeEventListener("click", H.click, true); }
@@ -554,7 +556,8 @@ function update_panel() {
     h += "<div class='lp_spot'><div><span class='lp_k'>Spot</span> <b>" + esc(current_spot || "-") + "</b>" + (meas_txt ? " <span class='lp_k'>(" + meas_txt + ")</span>" : "") + "</div>"
       + "<div class='lp_big'>" + fmt(cur_xp_h) + " XP/h &nbsp;·&nbsp; " + fmt(cur_gold_h) + " G/h</div>"
       + "<div class='lp_k'>Session " + fmt(sess.xp / sh) + " XP/h · " + fmt(sess.gold / sh) + " G/h · nächstes Level in " + (rate > 0 ? fmt_time((G.levels[character.level] - character.xp) / rate * 3600000) : "-") + "</div></div>";
-    h += "<div class='lp_row'><span class='lp_mode'>Modus: " + (manual_spot ? "fest (" + esc(manual_spot) + ")" : "automatisch") + "</span><button data-act='auto'" + (manual_spot ? "" : " class='on'") + ">Auto</button><button data-act='reset'>Neu messen</button><button data-act='worth'" + (only_worth ? " class='on'" : "") + " title='nur die 5 besten nach geschätzten XP/h'>Top 5</button><button data-act='sortinv' title='Inventar sortieren'>Inv ⇅</button></div>";
+    h += "<div class='lp_row'><span class='lp_mode'>Modus: " + (manual_spot ? "fest (" + esc(manual_spot) + ")" : "automatisch") + "</span><button data-act='auto'" + (manual_spot ? "" : " class='on'") + ">Auto</button><button data-act='reset'>Neu messen</button><button data-act='worth'" + (only_worth ? " class='on'" : "") + " title='nur die 5 besten nach geschätzten XP/h'>Top 5</button><button data-act='sortinv' title='Inventar sortieren'>Inv ⇅</button></div>"
+      + "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Aktionen</span><button data-act='compound' title='Schmuck compounden (getragen + ungetragen)'>Compound</button><button data-act='tidy' title='Schrott verkaufen, Rest in die Bank'>Aufräumen</button></div>";
     if (!panel.__collapsed) {
         var cols = [["name", "Monster"], ["danger", "Gefahr"], ["ttk", "s/Kill"], ["xpk", "XP/Kill"], ["xpest", "XP/h*"], ["xph", "XP/h"], ["gph", "G/h"], ["ang", "ANG"]];
         h += "<table class='lp_t'><tr>" + cols.map(function (c) { return "<th data-sort='" + c[0] + "'" + (sort_key == c[0] ? " class='sorted'" : "") + ">" + c[1] + (sort_key == c[0] ? (sort_dir < 0 ? " ▾" : " ▴") : "") + "</th>"; }).join("") + "<th></th></tr>";
@@ -904,6 +907,27 @@ async function check_weapon() {
     }
 }
 
+// ---------- Buttons: nur Compound / nur Aufräumen ----------
+async function compound_only() {
+    if (upgrading) { game_log("Upgrade läuft bereits"); return; }
+    if (busy) { game_log("Gerade unterwegs – gleich nochmal"); return; }
+    upgrading = true; busy = true; set_message("Compound");
+    try {
+        var cs = slots_to_compound();
+        game_log("Compound: " + cs.length + " getragene Slots" );
+        for (var c = 0; c < cs.length; c++) { check_pause(); await compound_slot(cs[c]); }
+        await compound_spares();
+    } catch (e) { game_log(e == "PAUSE" ? "Compound durch Pause abgebrochen" : "Compound-Fehler: " + e); }
+    upgrading = false; busy = false;
+    if (!paused) go_to_farm_spot();
+}
+async function tidy_now() {
+    if (busy || upgrading) { game_log("Gerade beschäftigt – gleich nochmal"); return; }
+    var saved = INV_MIN_FREE; INV_MIN_FREE = 999; // erzwingen
+    try { await tidy_inventory(); } finally { INV_MIN_FREE = saved; }
+    if (!paused) go_to_farm_spot();
+}
+
 // ---------- Inventar sortieren (Button) ----------
 var sorting_inv = false;
 function inv_rank(it) {
@@ -1088,7 +1112,7 @@ async function compound_spares() {
         groups[it.name] = groups[it.name] || {}; var l = it.level || 0; groups[it.name][l] = (groups[it.name][l] || 0) + 1;
     });
     var todo = Object.keys(groups).filter(function (n) { for (var l in groups[n]) if (l < COMPOUND_SPARE_MAX && groups[n][l] >= 3) return true; return false; });
-    if (!todo.length) return;
+    if (!todo.length) { game_log("Ungetragener Schmuck: keine Dreiergruppen unter +" + COMPOUND_SPARE_MAX); return; }
     game_log("Ungetragenen Schmuck compounden: " + todo.join(", "));
     await smart_move("compound");
     for (var t = 0; t < todo.length; t++) {
@@ -1205,6 +1229,10 @@ async function upgrade_routine(manual) {
     game_log((manual ? "ALLE Upgrades (Risiko)" : "Sichere Upgrades") + ": " + empty + " leere Slots, " + up_slots.length + " Upgrades, " + stat_slots.length + " Attribut, " + comp_slots.length + " Compound (frei: " + spendable() + " Gold)");
 
     try {
+        // 0. Schmuck zuerst (billig): getragen + ungetragen
+        comp_slots = slots_to_compound();
+        for (var c0 = 0; c0 < comp_slots.length; c0++) { check_pause(); await compound_slot(comp_slots[c0]); }
+        await compound_spares();
         if (empty) await fill_empty_slots();
         await buy_better_gear();
         await check_ponty(true);
@@ -1241,9 +1269,6 @@ async function upgrade_routine(manual) {
             }
         }
 
-        comp_slots = slots_to_compound();
-        for (var c = 0; c < comp_slots.length; c++) { check_pause(); await compound_slot(comp_slots[c]); }
-        await compound_spares();
 
     } catch (e) {
         if (e == "PAUSE") game_log("Upgrade-Routine durch Pause abgebrochen");
