@@ -8,7 +8,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v44";
+var BOT_VERSION = "v45";
 game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – P = Pause, U = sichere Upgrades, K = alle Upgrades, L = Statistik, G = Gifts tauschen");
 
 var GOLD_RESERVE = 20000;
@@ -226,6 +226,7 @@ function pick_farm_monster() {
 function set_manual_spot(mon) {
     manual_spot = mon; meas = null; blocked_spots = {}; need_repick = true; current_spot = mon;
     game_log("Fester Farmspot: " + mon); save_state();
+    if (paused) { paused = false; game_log("Pause aufgehoben"); }
     stop("smart"); busy = false;
     change_target(null);
     if (!upgrading && !kissing && !fleeing) go_to_farm_spot(); // sofort losgehen, nicht erst Angreifer abarbeiten
@@ -233,6 +234,7 @@ function set_manual_spot(mon) {
 function set_auto_spot() {
     manual_spot = null; meas = null; need_repick = true; current_spot = null;
     game_log("Automatische Spotwahl aktiv"); save_state();
+    if (paused) { paused = false; game_log("Pause aufgehoben"); }
     stop("smart"); busy = false;
     change_target(null);
     if (!upgrading && !kissing && !fleeing) go_to_farm_spot();
@@ -288,12 +290,38 @@ function log_stats() {
     game_log("Aktuell: " + (current_spot || "-") + (meas ? " (Messung läuft)" : ""));
 }
 
+// Spawngebiet eines Monsters auf der aktuellen Karte (aus den Kartendaten)
+function spawn_areas(mon, map) {
+    var out = [], md = G.maps[map || character.map];
+    if (!md || !md.monsters) return out;
+    md.monsters.forEach(function (e) {
+        if (e.type != mon) return;
+        if (e.boundary) out.push(e.boundary);
+        if (e.boundaries) e.boundaries.forEach(function (b) { if (b[0] == (map || character.map)) out.push([b[1], b[2], b[3], b[4]]); });
+    });
+    return out;
+}
+var last_go = 0, roam_logged = false;
 function go_to_farm_spot() {
+    if (Date.now() - last_go < 5000) return;
+    last_go = Date.now();
     var mon = pick_farm_monster();
+    var areas = spawn_areas(mon);
+    // Schon im Spawngebiet, aber nichts in Sicht -> umherstreifen statt Weg neu suchen
+    if (areas.length && !get_nearest_monster({ type: mon })) {
+        var b = areas[Math.floor(Math.random() * areas.length)];
+        var tx = b[0] + Math.random() * (b[2] - b[0]), ty = b[1] + Math.random() * (b[3] - b[1]);
+        if (!roam_logged) { roam_logged = true; game_log("Keine " + mon + " in Sicht – streife im Spawngebiet umher"); }
+        busy = true; set_message("Suche " + mon);
+        smart_move({ x: tx, y: ty }).catch(function () {}).then(function () { busy = false; });
+        if (!meas || meas.mon != mon) { start_measure(mon); save_state(); }
+        return;
+    }
+    roam_logged = false;
     busy = true; set_message("Laufe zu " + mon);
     smart_move(mon)
         .then(function () {
-            if (!get_nearest_monster({ type: mon }) && !manual_spot) {
+            if (!get_nearest_monster({ type: mon }) && !manual_spot && !spawn_areas(mon).length) {
                 blocked_spots[mon] = true; need_repick = true; meas = null;
                 game_log("Spot " + mon + " erreicht, aber keine Monster – überspringe");
             } else if (!meas || meas.mon != mon) { start_measure(mon); save_state(); }
