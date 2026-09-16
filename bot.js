@@ -8,7 +8,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v43";
+var BOT_VERSION = "v44";
 game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – P = Pause, U = sichere Upgrades, K = alle Upgrades, L = Statistik, G = Gifts tauschen");
 
 var GOLD_RESERVE = 20000;
@@ -224,14 +224,18 @@ function pick_farm_monster() {
 }
 // Buttons: fester Spot / Automatik / neu messen
 function set_manual_spot(mon) {
-    manual_spot = mon; meas = null; blocked_spots = {}; need_repick = true;
+    manual_spot = mon; meas = null; blocked_spots = {}; need_repick = true; current_spot = mon;
     game_log("Fester Farmspot: " + mon); save_state();
     stop("smart"); busy = false;
+    change_target(null);
+    if (!upgrading && !kissing && !fleeing) go_to_farm_spot(); // sofort losgehen, nicht erst Angreifer abarbeiten
 }
 function set_auto_spot() {
     manual_spot = null; meas = null; need_repick = true; current_spot = null;
     game_log("Automatische Spotwahl aktiv"); save_state();
     stop("smart"); busy = false;
+    change_target(null);
+    if (!upgrading && !kissing && !fleeing) go_to_farm_spot();
 }
 function reset_measurements() {
     Object.keys(farm_stats).forEach(function (m) { farm_stats[m].t = 0; }); // nur als veraltet markieren
@@ -1100,8 +1104,8 @@ setInterval(function () {
                 var d = distance(character, m); if (d < best_d) { best_d = d; target = m; }
             }
         }
-        if (!target) {
-            for (var id in parent.entities) { var e = parent.entities[id]; if (is_valid_target(e) && e.target == character.name) { target = e; break; } }
+        if (!target) { // Angreifer nur erledigen, wenn sie nah sind; sonst weiter zum Spot
+            for (var id in parent.entities) { var e = parent.entities[id]; if (is_valid_target(e) && e.target == character.name && distance(character, e) < 120) { target = e; break; } }
         }
         if (target) change_target(target); else { go_to_farm_spot(); return; }
     }
