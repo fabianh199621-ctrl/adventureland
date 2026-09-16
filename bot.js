@@ -2,11 +2,12 @@
 // P = Pause (stoppt auch Upgrades)
 // U = sichere Upgrades: kaufbare Items +5, Drop-Items +3, INT-Scrolls, Schmuck +2
 // K = alles bis +5, auch Drop-Items (Risiko!)
+// L = Farm-Statistik (XP/h, Gold/h je Monster) ins Log
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v21";
-game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – P = Pause, U = sichere Upgrades, K = alle Upgrades");
+var BOT_VERSION = "v22";
+game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – P = Pause, U = sichere Upgrades, K = alle Upgrades, L = Statistik");
 
 var GOLD_RESERVE = 20000;
 var UPGRADE_TARGET = 5;
@@ -16,15 +17,16 @@ var STAT_TYPE = "int";
 var FALLBACK_WEAPONS = ["staff", "stick"];
 var NO_WEAPON_MONSTER = "goo";
 var MAX_TARGET_HP_FACTOR = 5;
-var FARM_TABLE = [
-    { min: 45, mon: "scorpion" },
-    { min: 38, mon: "squig" },
-    { min: 30, mon: "armadillo" },
-    { min: 18, mon: "croc" },
-    { min: 10, mon: "bee" },
-    { min: 5,  mon: "crab" },
-    { min: 0,  mon: "goo" }
-];
+// Kandidaten für Farmspots – ungeeignete (zu stark) werden automatisch aussortiert
+var CANDIDATES = ["goo", "crab", "bee", "croc", "armadillo", "squig", "squigtoad", "poisio",
+                  "tortoise", "frog", "rat", "minimush", "snake", "osnake", "scorpion", "spider",
+                  "arcticbee", "boar", "iceroamer", "crabx", "bat", "cgoo"];
+var EVAL_MS = 10 * 60 * 1000;        // Messdauer je Spot
+var REEVAL_MS = 6 * 60 * 60 * 1000;  // Messwerte gelten so lange
+var LEVEL_RESET = 5;                 // ... oder bis 5 Level später
+var XP_WEIGHT = 1, GOLD_WEIGHT = 1;  // Gewichtung XP/h vs. Gold/h
+var HITS_TO_DIE_MIN = 8;             // Monster darf mich nicht in < 8 Schlägen töten
+var HITS_TO_KILL_MAX = 25;           // ich muss es in <= 25 Schlägen töten können
 var FILL_SLOTS = {
     helmet:   ["wcap", "helmet"],
     chest:    ["wattire", "coat"],
@@ -46,6 +48,9 @@ var CBURST_MIN_MP = 0.5;
 var busy = false, paused = false, upgrading = false;
 var last_weapon_log = 0;
 var blocked_spots = {};
+var farm_stats = load_stats();
+var current_spot = null, need_repick = true;
+var meas = null; // laufende Messung {mon, start, xp, gold, last_xp, last_level, last_gold}
 var cburst_logged = false;
 
 function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
@@ -78,6 +83,7 @@ function on_key(ev) {
     if (k == "P") toggle_pause();
     else if (k == "U") upgrade_routine(false);
     else if (k == "K") upgrade_routine(true);
+    else if (k == "L") log_stats();
 }
 // alten Handler (von vorherigem Run) entfernen, dann neu registrieren
 if (parent.__logicplan_keyhandler) parent.document.removeEventListener("keydown", parent.__logicplan_keyhandler);
@@ -95,14 +101,95 @@ function toggle_pause() {
     }
 }
 
-// ---------- Farmspot ----------
+// ---------- Farmspot: automatisch nach XP/h und Gold/h ----------
+function load_stats() { try { return JSON.parse(localStorage.getItem("lp_farm_" + character.name) || "{}"); } catch (e) { return {}; } }
+function save_stats() { try { localStorage.setItem("lp_farm_" + character.name, JSON.stringify(farm_stats)); } catch (e) {} }
+
+// Ist das Monster für meine Werte schaffbar?
+function is_safe_monster(mon) {
+    var d = G.monsters[mon];
+    if (!d) return false;
+    if (d.cooperative || d.boss || d.special) return false;
+    if (d.attack * HITS_TO_DIE_MIN > character.max_hp) return false;
+    if (d.hp > character.attack * HITS_TO_KILL_MAX) return false;
+    return true;
+}
+function stats_valid(st) {
+    return st && (Date.now() - st.t) < REEVAL_MS && Math.abs(character.level - st.level) < LEVEL_RESET;
+}
+function candidate_list() {
+    return CANDIDATES.filter(function (m) {
+        if (blocked_spots[m] || !is_safe_monster(m)) return false;
+        var st = farm_stats[m];
+        if (st && st.unsafe_until && character.level < st.unsafe_until) return false;
+        return true;
+    });
+}
+function choose_spot() {
+    var cands = candidate_list();
+    if (!cands.length) return "goo";
+    // 1. noch nicht (oder veraltet) gemessene Spots zuerst
+    for (var i = 0; i < cands.length; i++) if (!stats_valid(farm_stats[cands[i]])) { game_log("Messe Spot: " + cands[i]); return cands[i]; }
+    // 2. sonst bester Score
+    var max_xp = 1, max_gold = 1;
+    cands.forEach(function (m) { max_xp = Math.max(max_xp, farm_stats[m].xp_h); max_gold = Math.max(max_gold, farm_stats[m].gold_h); });
+    var best = null, best_score = -1;
+    cands.forEach(function (m) {
+        var st = farm_stats[m];
+        var score = XP_WEIGHT * st.xp_h / max_xp + GOLD_WEIGHT * st.gold_h / max_gold;
+        if (score > best_score) { best_score = score; best = m; }
+    });
+    var b = farm_stats[best];
+    game_log("Bester Spot: " + best + " (" + Math.round(b.xp_h) + " XP/h, " + Math.round(b.gold_h) + " Gold/h)");
+    return best;
+}
 function pick_farm_monster() {
     if (!has_weapon()) return NO_WEAPON_MONSTER;
-    for (var i = 0; i < FARM_TABLE.length; i++) {
-        var f = FARM_TABLE[i];
-        if (character.level >= f.min && !blocked_spots[f.mon]) return f.mon;
-    }
-    return "goo";
+    if (!current_spot || need_repick) { current_spot = choose_spot(); need_repick = false; }
+    return current_spot;
+}
+
+// Messung
+function start_measure(mon) {
+    meas = { mon: mon, start: Date.now(), xp: 0, gold: 0, last_xp: character.xp, last_level: character.level, last_gold: character.gold, paused_ms: 0, pause_start: 0 };
+}
+function measure_tick() {
+    if (!meas || !has_weapon()) return;
+    // XP-Zuwachs (inkl. Level-Up)
+    if (character.level > meas.last_level) meas.xp += (G.levels[meas.last_level] - meas.last_xp) + character.xp;
+    else meas.xp += Math.max(0, character.xp - meas.last_xp);
+    meas.last_xp = character.xp; meas.last_level = character.level;
+    // Gold: nur Zuwächse zählen (Käufe ignorieren)
+    var dg = character.gold - meas.last_gold;
+    if (dg > 0) meas.gold += dg;
+    meas.last_gold = character.gold;
+    // Zeit, in der er unterwegs/beschäftigt war, nicht mitzählen
+    if (busy || upgrading) { if (!meas.pause_start) meas.pause_start = Date.now(); }
+    else if (meas.pause_start) { meas.paused_ms += Date.now() - meas.pause_start; meas.pause_start = 0; }
+
+    var active = Date.now() - meas.start - meas.paused_ms - (meas.pause_start ? Date.now() - meas.pause_start : 0);
+    if (active >= EVAL_MS) finish_measure(false);
+}
+function finish_measure(died) {
+    if (!meas) return;
+    var active = Math.max(60000, Date.now() - meas.start - meas.paused_ms);
+    var h = active / 3600000;
+    var st = farm_stats[meas.mon] || { deaths: 0 };
+    st.xp_h = meas.xp / h; st.gold_h = meas.gold / h; st.t = Date.now(); st.level = character.level;
+    if (died) { st.deaths = (st.deaths || 0) + 1; st.unsafe_until = character.level + 3; st.xp_h = 0; }
+    farm_stats[meas.mon] = st; save_stats();
+    game_log("Spot " + meas.mon + ": " + Math.round(st.xp_h) + " XP/h, " + Math.round(st.gold_h) + " Gold/h" + (died ? " – GESTORBEN, gesperrt bis Level " + st.unsafe_until : ""));
+    meas = null; need_repick = true;
+}
+function log_stats() {
+    var keys = Object.keys(farm_stats);
+    if (!keys.length) { game_log("Noch keine Messwerte"); return; }
+    keys.sort(function (a, b) { return (farm_stats[b].xp_h || 0) - (farm_stats[a].xp_h || 0); });
+    keys.forEach(function (m) {
+        var st = farm_stats[m];
+        game_log(m + ": " + Math.round(st.xp_h) + " XP/h, " + Math.round(st.gold_h) + " Gold/h" + (st.deaths ? ", Tode " + st.deaths : "") + (stats_valid(st) ? "" : " (veraltet)"));
+    });
+    game_log("Aktuell: " + (current_spot || "-") + (meas ? " (Messung läuft)" : ""));
 }
 
 function go_to_farm_spot() {
@@ -111,13 +198,13 @@ function go_to_farm_spot() {
     smart_move(mon)
         .then(function () {
             if (!get_nearest_monster({ type: mon })) {
-                blocked_spots[mon] = true;
+                blocked_spots[mon] = true; need_repick = true; meas = null;
                 game_log("Spot " + mon + " erreicht, aber keine Monster – überspringe");
-            }
+            } else if (!meas || meas.mon != mon) start_measure(mon);
         })
         .catch(function () {
-            blocked_spots[mon] = true;
-            game_log("Spot " + mon + " nicht erreichbar – nehme nächstniedrigeren");
+            blocked_spots[mon] = true; need_repick = true; meas = null;
+            game_log("Spot " + mon + " nicht erreichbar – überspringe");
         })
         .then(function () { busy = false; });
 }
@@ -432,8 +519,9 @@ async function upgrade_routine(manual) {
 // ---------- Hauptschleife ----------
 setInterval(function () {
     heal_logic(); loot();
-    if (character.rip) { respawn(); busy = false; return; }
+    if (character.rip) { if (meas) finish_measure(true); respawn(); busy = false; return; }
     if (paused) return;
+    measure_tick();
 
     check_weapon(); check_potions();
     if (busy || is_moving(character)) return;
