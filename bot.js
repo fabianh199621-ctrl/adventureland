@@ -9,7 +9,25 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v60";
+var BOT_VERSION = "v61";
+// ---------- Log-Puffer (für "Log kopieren") ----------
+var LOG_MAX = 300, log_buf = [];
+try { log_buf = JSON.parse(localStorage.getItem("lp_log") || "[]"); } catch (e) { log_buf = []; }
+var _game_log = game_log;
+function game_log(msg, color) {
+    try {
+        var d = new Date(), ts = ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2) + ":" + ("0" + d.getSeconds()).slice(-2);
+        log_buf.push(ts + " " + msg); if (log_buf.length > LOG_MAX) log_buf = log_buf.slice(-LOG_MAX);
+        localStorage.setItem("lp_log", JSON.stringify(log_buf));
+    } catch (e) {}
+    return _game_log(msg, color);
+}
+function copy_log() {
+    var txt = "LogicPlan " + BOT_VERSION + " – " + character.name + " Lv " + character.level + " – " + new Date().toLocaleString() + "\n" + log_buf.join("\n");
+    var ok = function () { _game_log("Log in die Zwischenablage kopiert (" + log_buf.length + " Zeilen)"); };
+    var fallback = function () { try { var ta = parent.document.createElement("textarea"); ta.value = txt; parent.document.body.appendChild(ta); ta.select(); parent.document.execCommand("copy"); ta.remove(); ok(); } catch (e) { _game_log("Kopieren fehlgeschlagen: " + e); } };
+    try { parent.navigator.clipboard.writeText(txt).then(ok, fallback); } catch (e) { fallback(); }
+}
 game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – PAUSIERT. P = Start/Pause, N = neu laden, U = sichere Upgrades, K = alle Upgrades, L = Statistik, G = Gifts tauschen");
 
 var GOLD_RESERVE = 20000;
@@ -498,6 +516,8 @@ function init_panel() {
         else if (act == "sortinv") sort_inventory();
         else if (act == "compound") compound_only();
         else if (act == "tidy") tidy_now();
+        else if (act == "copylog") copy_log();
+        else if (act == "clearlog") { log_buf = []; try { localStorage.setItem("lp_log", "[]"); } catch (x) {} _game_log("Log-Puffer geleert"); }
         last_panel = 0;
     };
     if (parent.__lp_panel_h) { var H = parent.__lp_panel_h; ["pointerdown", "mousedown"].forEach(function (t) { win.removeEventListener(t, H.down, true); }); ["pointermove", "mousemove"].forEach(function (t) { win.removeEventListener(t, H.move, true); }); ["pointerup", "mouseup"].forEach(function (t) { win.removeEventListener(t, H.up, true); }); win.removeEventListener("click", H.click, true); }
@@ -604,7 +624,7 @@ function update_panel() {
       + "<div class='lp_big'>" + fmt(cur_xp_h) + " XP/h &nbsp;·&nbsp; " + fmt(cur_gold_h) + " G/h</div>"
       + "<div class='lp_k'>Session " + fmt(sess.xp / sh) + " XP/h · " + fmt(sess.gold / sh) + " G/h · nächstes Level in " + (rate > 0 ? fmt_time((G.levels[character.level] - character.xp) / rate * 3600000) : "-") + "</div></div>";
     h += "<div class='lp_row'><span class='lp_mode'>Modus: " + (manual_spot ? "fest (" + esc(manual_spot) + ")" : "automatisch") + "</span><button data-act='auto'" + (manual_spot ? "" : " class='on'") + ">Auto</button><button data-act='reset'>Neu messen</button><button data-act='worth'" + (only_worth ? " class='on'" : "") + " title='nur die 5 besten nach geschätzten XP/h'>Top 5</button><button data-act='sortinv' title='Inventar sortieren'>Inv ⇅</button></div>"
-      + "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Aktionen</span><button data-act='compound' title='Schmuck compounden (getragen + ungetragen)'>Compound</button><button data-act='tidy' title='Schrott verkaufen, Rest in die Bank'>Aufräumen</button></div>";
+      + "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Aktionen</span><button data-act='compound' title='Schmuck compounden (getragen + ungetragen)'>Compound</button><button data-act='tidy' title='Schrott verkaufen, Rest in die Bank'>Aufräumen</button><button data-act='copylog' title='Bot-Log in die Zwischenablage'>Log kopieren</button><button data-act='clearlog' title='Log-Puffer leeren' style='padding:1px 5px'>✕</button></div>";
     if (!panel.__collapsed) {
         var cols = [["name", "Monster"], ["danger", "Gefahr"], ["ttk", "s/Kill"], ["xpk", "XP/Kill"], ["xpest", "XP/h*"], ["xph", "XP/h"], ["gph", "G/h"], ["ang", "ANG"]];
         h += "<table class='lp_t'><tr>" + cols.map(function (c) { return "<th data-sort='" + c[0] + "'" + (sort_key == c[0] ? " class='sorted'" : "") + ">" + c[1] + (sort_key == c[0] ? (sort_dir < 0 ? " ▾" : " ▴") : "") + "</th>"; }).join("") + "<th></th></tr>";
