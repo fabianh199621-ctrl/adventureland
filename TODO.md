@@ -1,4 +1,4 @@
-# Adventure Land Bot – Ideen & To-do (Stand v84)
+# Adventure Land Bot – Ideen & To-do (Stand v98)
 
 ## A) Aus der Community geklaut (Guides, fremde Bots)
 
@@ -18,16 +18,11 @@
 
 ## B) Eigene offene Punkte
 
-- **Kuchen-Tausch am Markt**: Stände nach `slice_*` scannen, fehlende Sorten kaufen → Sixfold Cake bei Mira (Event läuft noch).
 - **Item-Vergleich nebeneinander** im Char-Fenster (Werte jetzt / auf Zielstufe, Klick = vergleichen).
 - **Fenster-Kleinigkeiten**: Tode und Küsse zählen, Laufzeit, Tabellen einklappbar (teilweise erledigt).
 - **Kuss-Erfolg** sauber über den Event-Buff erkennen (Buff-Name aus „Buffs jetzt"-Log).
 - **Offerings** beim Upgrade ab bestimmtem Itemwert automatisch einsetzen.
 - **Ponty-Kauf prüfen**: Party Hat ×3 und hpbelt+1 (82k) – Grund steht ab v83 im Log.
-- **Junk-Verkauf erweitern**: überzählige Drop-Duplikate (z. B. 3× Mushroom Staff nach Upgrade) verkaufen statt banken.
-- **Bank aufräumen**: gleiche Items stapeln, Übersicht im Panel.
-- **Tagesbilanz** alle 30 min ins Log (XP, Gold, Kills, Tode, Küsse).
-- **Modell kalibrieren**: XP/h-Schätzung mit Messwerten abgleichen (Auslastungsfaktor).
 
 ## C) Erledigt (Kurzfassung)
-v20 Loader · v21 Tasten/Upgrade manuell · v22–v26 Spotmessung · v27–v29 Inventar, Rückzug, Kuss, Gifts · v30–v34 Panel · v35 Kiten · v36–v37 Kuss/Compound · v38–v46 Panel-Design, Sortierung, fester Spot · v47 Reserve +5 · v48 Hänger/Aggro · v49–v50 Ponty, Inv-Sortierung · v51–v55 Pause/N/Loader · v56–v60 Reserve-Fixes · v61–v64 Log, Versionierung · v65–v68 Ausrüstungsziele & Wirtschaftlichkeit · v69–v72 Scroll, U nach Empfehlung, Referenz G/h · v73 Char-Fenster · v74–v78 Kauf-Fixes · v79 Elixiere via Muscheln · v80 bestes Teil tragen · v81 Beifang · v82 Town-Teleport · v83 Kaufgrund/Sperre · v84 Panel-Position
+v20 Loader · v21 Tasten/Upgrade manuell · v22–v26 Spotmessung · v27–v29 Inventar, Rückzug, Kuss, Gifts · v30–v34 Panel · v35 Kiten · v36–v37 Kuss/Compound · v38–v46 Panel-Design, Sortierung, fester Spot · v47 Reserve +5 · v48 Hänger/Aggro · v49–v50 Ponty, Inv-Sortierung · v51–v55 Pause/N/Loader · v56–v60 Reserve-Fixes · v61–v64 Log, Versionierung · v65–v68 Ausrüstungsziele & Wirtschaftlichkeit · v69–v72 Scroll, U nach Empfehlung, Referenz G/h · v73 Char-Fenster · v74–v78 Kauf-Fixes · v79 Elixiere via Muscheln · v80 bestes Teil tragen · v81 Beifang · v82 Town-Teleport · v83 Kaufgrund/Sperre · v84 Panel-Position · v85–v88 Monster Hunt, Muscheln · v89–v95 Kalibrierung, N-Resume, Bank sortieren · v96–v97 gelevelte Monster · v98 Tagesbilanz, Duplikate verkaufen, Sixfold Cake
