@@ -939,7 +939,7 @@ async function kiss_routine() {
     set_message("Kuss: " + name);
     try {
         stop("smart");
-        await smart_move({ map: a.map, x: a.x, y: a.y });
+        await travel({ map: a.map, x: a.x, y: a.y });
         var range = (G.skills.ikissyou && G.skills.ikissyou.range) || 50;
         var t_end = Math.min(a.expires || Date.now() + 240000, Date.now() + 240000);
         var ok = false, tries = 0, clean = 0;
