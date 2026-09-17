@@ -1094,7 +1094,7 @@ function ponty_offer() { // Angebot abfragen (Socket), Promise mit Liste
         setTimeout(function () { if (!done) { done = true; try { parent.socket.off("secondhands", h); } catch (e) {} resolve([]); } }, 4000);
     });
 }
-function item_score(it) { return gear_score(G.items[it.name]) * (1 + 0.1 * (it.level || 0)); }
+function item_score(it) { return gear_score(G.items[it.name], it.level || 0); }
 function slot_for_item(def) { for (var sl in SLOT_TYPES) if (fits_slot(def, sl)) return sl; return null; }
 async function check_ponty(force) {
     if (pontying || upgrading || kissing || fleeing || exchanging) return;
@@ -1234,9 +1234,9 @@ function compute_goals() { // je Slot: aktuelles Item, nächstbesseres machbares
     if (Date.now() - goal_cache_t < 30000) return goal_cache;
     goal_cache_t = Date.now(); goal_cache = {};
     for (var slot in SLOT_TYPES) {
-        var cur = character.slots[slot], cur_s = cur ? item_score(cur) : 0;
+        var cur = character.slots[slot], cur_s = cur ? gear_score(G.items[cur.name], projected_level(G.items[cur.name])) : 0; // beide auf Ziel-Level projiziert
         var cands = [];
-        for (var name in G.items) { var def = G.items[name]; if (!fits_slot(def, slot) || (goal_skip[name] && Date.now() - goal_skip[name] < 24 * 3600000)) continue; var sc = gear_score(def); if (sc > cur_s * 1.05 && sc > 0) cands.push({ name: name, score: sc }); }
+        for (var name in G.items) { var def = G.items[name]; if (!fits_slot(def, slot) || (goal_skip[name] && Date.now() - goal_skip[name] < 24 * 3600000)) continue; var sc = gear_score(def, projected_level(def)); if (sc > cur_s * 1.05 && sc > 0) cands.push({ name: name, score: sc }); }
         cands.sort(function (a, b) { return b.score - a.score; }); // beste zuerst
         var pick = null, fallback = null;
         for (var i = 0; i < cands.length; i++) {
@@ -1245,7 +1245,7 @@ function compute_goals() { // je Slot: aktuelles Item, nächstbesseres machbares
             if (plan) {
                 var hrs = plan.reduce(function (a, b) { return a + (b.hours || 0); }, 0);
                 if (hrs <= GOAL_MAX_HOURS) { pick = { item: cands[i].name, score: cands[i].score, plan: plan, hours: hrs }; break; }
-                if (!fallback || hrs < fallback.hours) fallback = { item: cands[i].name, score: cands[i].score, plan: null, hours: hrs, slow: true };
+                if (hrs <= GOAL_MAX_HOURS * 5 && (!fallback || hrs < fallback.hours)) fallback = { item: cands[i].name, score: cands[i].score, plan: null, hours: hrs, slow: true };
             }
         }
         if (!pick) pick = fallback || (cands.length ? { item: cands[0].name, score: cands[0].score, plan: null } : null);
@@ -1302,11 +1302,18 @@ async function run_goal() {
 
 // ---------- Bessere kaufbare Ausrüstung ----------
 var SLOT_TYPES = { helmet: "helmet", chest: "chest", pants: "pants", shoes: "shoes", gloves: "gloves", cape: "cape", mainhand: "weapon", offhand: "offhand", ring1: "ring", ring2: "ring", earring1: "earring", earring2: "earring", amulet: "amulet", belt: "belt", orb: "orb" };
-function gear_score(def) {
-    if (!def) return 0;
-    var main = character.ctype == "mage" || character.ctype == "priest" ? (def.int || 0) : character.ctype == "warrior" ? (def.str || 0) : (def.dex || 0);
-    return main * 30 + (def.attack || 0) * 3 + (def.range || 0) * 0.5 + (def.frequency || 0) * 200 + (def.hp || 0) * 0.05 + (def.mp || 0) * 0.1 + (def.armor || 0) * 0.3 + (def.resistance || 0) * 0.3;
+// Ausrüstungswert: Hauptattribut (Magier: INT, "stat" zählt mit) stark gewichtet; level = projiziertes Upgrade-/Compound-Level
+function stat_weights(st) {
+    var main = character.ctype == "mage" || character.ctype == "priest" ? (st.int || 0) : character.ctype == "warrior" ? (st.str || 0) : (st.dex || 0);
+    return (main + (st.stat || 0)) * 30 + (st.attack || 0) * 3 + (st.range || 0) * 0.5 + (st.frequency || 0) * 200 + (st.hp || 0) * 0.05 + (st.mp || 0) * 0.1 + (st.armor || 0) * 0.5 + (st.resistance || 0) * 0.5 + (st.rpiercing || 0) * 2;
 }
+function gear_score(def, level) {
+    if (!def) return 0;
+    var sc = stat_weights(def), lv = level || 0;
+    if (lv > 0) { if (def.upgrade) sc += lv * stat_weights(def.upgrade); else if (def.compound) sc += lv * stat_weights(def.compound); }
+    return sc;
+}
+function projected_level(def) { return def.upgrade ? UPGRADE_TARGET : def.compound ? COMPOUND_TARGET : 0; }
 function fits_slot(def, slot) {
     var t = SLOT_TYPES[slot]; if (!t) return false;
     if (def.class && def.class.indexOf(character.ctype) < 0) return false;
@@ -1331,7 +1338,7 @@ async function buy_better_gear() {
         var cur = character.slots[slot];
         var cand = best_buyable_for(slot);
         if (!cand) continue;
-        var cur_s = cur ? gear_score(G.items[cur.name]) * (1 + 0.1 * (cur.level || 0)) : 0;
+        var cur_s = cur ? item_score(cur) : 0;
         if (cur && cand == cur.name) continue;
         if (gear_score(G.items[cand]) < cur_s * GEAR_MIN_GAIN) continue;
         game_log("Bessere Ausrüstung für " + slot + ": " + cand + " (" + G.items[cand].g + " Gold)");
@@ -1551,7 +1558,7 @@ async function upgrade_routine(manual) {
     var up_slots = slots_to_upgrade(manual);
     var stat_slots = spendable() >= stat_price ? slots_without_stat() : [];
     var comp_slots = slots_to_compound();
-    var gear = Object.keys(SLOT_TYPES).some(function (sl) { var c = best_buyable_for(sl), cur = character.slots[sl]; return c && (!cur || (c != cur.name && gear_score(G.items[c]) >= gear_score(G.items[cur.name]) * (1 + 0.1 * (cur.level || 0)) * GEAR_MIN_GAIN)); });
+    var gear = Object.keys(SLOT_TYPES).some(function (sl) { var c = best_buyable_for(sl), cur = character.slots[sl]; return c && (!cur || (c != cur.name && gear_score(G.items[c]) >= item_score(cur) * GEAR_MIN_GAIN)); });
     var spares = (function () { var eq = equipped_names(), g = {}; character.items.forEach(function (it) { if (it && G.items[it.name] && G.items[it.name].compound && !eq[it.name] && (it.level || 0) < COMPOUND_SPARE_MAX) { var k = it.name + "|" + (it.level || 0); g[k] = (g[k] || 0) + 1; } }); return Object.keys(g).some(function (k) { return g[k] >= 3; }); })();
     if (!empty && !gear && !spares && !up_slots.length && !stat_slots.length && !comp_slots.length) { game_log("Nichts zu tun (oder zu wenig freies Gold: " + spendable() + ")"); return; }
     if (character.esize < 2) { game_log("Upgrade: Inventar zu voll"); return; }
