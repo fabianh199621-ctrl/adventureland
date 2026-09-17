@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v61";
+var BOT_VERSION = "v62";
 // ---------- Log-Puffer (für "Log kopieren") ----------
 var LOG_MAX = 300, log_buf = [];
 try { log_buf = JSON.parse(localStorage.getItem("lp_log") || "[]"); } catch (e) { log_buf = []; }
@@ -39,6 +39,8 @@ var MAX_REBUYS = 6;
 var COMPOUND_TARGET = 3;             // getragener Schmuck
 var PONTY_INTERVAL = 30 * 60 * 1000; // Ponty (gebrauchte Items) regelmäßig prüfen
 var MARKET_INTERVAL = 30 * 60 * 1000; // Marktstände in der Stadt regelmäßig prüfen
+var GOAL_MAX_HOURS = 3;              // Beschaffung per Farmen: max. erwartete Stunden pro Schritt
+var GOAL_GIVEUP_FACTOR = 2.5;        // Abbruch nach dem X-fachen der erwarteten Zeit
 var COMPOUND_SPARE_MAX = 3;          // ungetragener Schmuck im Inventar wird bis hierhin compoundet
 var STAT_TYPE = "int";
 var FALLBACK_WEAPONS = ["staff", "stick"];
@@ -492,6 +494,7 @@ function init_panel() {
     var win = parent.window, drag = null, head = div.querySelector("#lp_head");
     var collapsed = false; try { collapsed = localStorage.getItem("lp_panel_collapsed") == "1"; } catch (e) {}
     div.__collapsed = collapsed;
+    try { div.__gear = localStorage.getItem("lp_panel_gear") == "1"; } catch (e) { div.__gear = false; }
     var inside = function (e) { return e.target && div.contains(e.target); };
     var onDown = function (e) {
         if (!inside(e)) return;
@@ -517,6 +520,10 @@ function init_panel() {
         else if (act == "compound") compound_only();
         else if (act == "tidy") tidy_now();
         else if (act == "copylog") copy_log();
+        else if (act == "goal") start_goal(b.getAttribute("data-slot"));
+        else if (act == "goalstop") stop_goal("manuell");
+        else if (act == "goalskip") { goal_skip[b.getAttribute("data-item")] = Date.now(); save_goal_skip(); goal_cache_t = 0; }
+        else if (act == "geartoggle") { div.__gear = !div.__gear; try { localStorage.setItem("lp_panel_gear", div.__gear ? "1" : "0"); } catch (x) {} }
         else if (act == "clearlog") { log_buf = []; try { localStorage.setItem("lp_log", "[]"); } catch (x) {} _game_log("Log-Puffer geleert"); }
         last_panel = 0;
     };
@@ -625,6 +632,19 @@ function update_panel() {
       + "<div class='lp_k'>Session " + fmt(sess.xp / sh) + " XP/h · " + fmt(sess.gold / sh) + " G/h · nächstes Level in " + (rate > 0 ? fmt_time((G.levels[character.level] - character.xp) / rate * 3600000) : "-") + "</div></div>";
     h += "<div class='lp_row'><span class='lp_mode'>Modus: " + (manual_spot ? "fest (" + esc(manual_spot) + ")" : "automatisch") + "</span><button data-act='auto'" + (manual_spot ? "" : " class='on'") + ">Auto</button><button data-act='reset'>Neu messen</button><button data-act='worth'" + (only_worth ? " class='on'" : "") + " title='nur die 5 besten nach geschätzten XP/h'>Top 5</button><button data-act='sortinv' title='Inventar sortieren'>Inv ⇅</button></div>"
       + "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Aktionen</span><button data-act='compound' title='Schmuck compounden (getragen + ungetragen)'>Compound</button><button data-act='tidy' title='Schrott verkaufen, Rest in die Bank'>Aufräumen</button><button data-act='copylog' title='Bot-Log in die Zwischenablage'>Log kopieren</button><button data-act='clearlog' title='Log-Puffer leeren' style='padding:1px 5px'>✕</button></div>";
+    h += "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Ausrüstung: " + (gear_goal ? "<span style='color:#8ab4f8'>" + esc(gear_goal.item) + " – " + esc(plan_text(gear_goal.steps.slice(gear_goal.step))) + "</span>" : "kein Auftrag") + "</span>"
+      + (gear_goal ? "<button data-act='goalstop'>Stopp</button>" : "") + "<button data-act='geartoggle'>" + (panel.__gear ? "▾" : "▸") + " Slots</button></div>";
+    if (panel.__gear) {
+        var goals = compute_goals();
+        h += "<table class='lp_t'><tr><th>Slot</th><th>Aktuell</th><th>Ziel</th><th>Weg</th><th></th></tr>";
+        for (var gs in goals) {
+            var g = goals[gs], t = g.target;
+            h += "<tr><td>" + gs + "</td><td>" + (g.cur ? esc(g.cur.name) + "+" + (g.cur.level || 0) : "<span style='color:#ef5350'>leer</span>") + "</td>"
+               + "<td>" + (t ? esc(t.item) : "-") + "</td><td style='text-align:left;white-space:normal;max-width:190px'>" + (t ? esc(plan_text(t.plan)) : "-") + "</td>"
+               + "<td>" + (t && t.plan ? "<button data-act='goal' data-slot='" + gs + "'" + (gear_goal && gear_goal.slot == gs ? " class='on'" : "") + ">Beschaffen</button>" : "") + (t ? " <button data-act='goalskip' data-item='" + t.item + "' title='dieses Item überspringen' style='padding:1px 5px'>✕</button>" : "") + "</td></tr>";
+        }
+        h += "</table>";
+    }
     if (!panel.__collapsed) {
         var cols = [["name", "Monster"], ["danger", "Gefahr"], ["ttk", "s/Kill"], ["xpk", "XP/Kill"], ["xpest", "XP/h*"], ["xph", "XP/h"], ["gph", "G/h"], ["ang", "ANG"]];
         h += "<table class='lp_t'><tr>" + cols.map(function (c) { return "<th data-sort='" + c[0] + "'" + (sort_key == c[0] ? " class='sorted'" : "") + ">" + c[1] + (sort_key == c[0] ? (sort_dir < 0 ? " ▾" : " ▴") : "") + "</th>"; }).join("") + "<th></th></tr>";
@@ -1148,6 +1168,131 @@ async function check_market(force) {
     marketing = false; busy = false;
 }
 
+// ---------- Ausrüstungs-Ziele: nächstbesseres Item je Slot + Beschaffungsweg ----------
+var goal_cache = {}, goal_cache_t = 0;
+var gear_goal = null;        // aktiver Beschaffungsauftrag {slot, item, steps:[...], step:0, started, expect_ms}
+var goal_skip = {}; try { goal_skip = JSON.parse(localStorage.getItem("lp_goal_skip") || "{}"); } catch (e) {}
+function save_goal_skip() { try { localStorage.setItem("lp_goal_skip", JSON.stringify(goal_skip)); } catch (e) {} }
+
+function drop_sources(item) { // Monster, die item droppen: [{mon, chance}]
+    var out = [], dm = (G.drops && G.drops.monsters) || {};
+    for (var m in dm) dm[m].forEach(function (d) { if (d[1] == item && G.monsters[m]) out.push({ mon: m, chance: d[0] }); });
+    return out;
+}
+function kills_per_hour(mon) { var d = G.monsters[mon], ttk = mon_ttk(d); if (!isFinite(ttk)) return 0; var k = 3600 / (ttk + 2) * 0.8; if (d.respawn) k = Math.min(k, spawn_count(mon) * 3600 / d.respawn); return k; }
+function best_farm_source(item) { // sicherstes/schnellstes Monster für item
+    var best = null;
+    drop_sources(item).forEach(function (src) {
+        if (!is_safe_monster(src.mon) || EXCLUDE[src.mon]) return;
+        var h = 1 / (src.chance * Math.max(0.01, kills_per_hour(src.mon)));
+        if (!best || h < best.hours) best = { mon: src.mon, chance: src.chance, hours: h };
+    });
+    return best;
+}
+function exchange_source(item) { // Tauschitem (z.B. leather -> cape)
+    for (var t in G.drops) {
+        if (!G.items[t] || !G.items[t].e || !Array.isArray(G.drops[t])) continue;
+        for (var i = 0; i < G.drops[t].length; i++) if (G.drops[t][i][1] == item) return { base: t, need: G.items[t].e, weight: G.drops[t][i][0] };
+    }
+    return null;
+}
+// Plan für ein Item: Liste von Schritten oder null (nicht machbar). depth begrenzt Rekursion
+function plan_for(item, qty, depth) {
+    qty = qty || 1; depth = depth || 0;
+    var have = quantity(item); if (have >= qty) return [];
+    var need = qty - have;
+    if (is_buyable(item)) { if (G.items[item].g * need <= spendable()) return [{ type: "buy", item: item, qty: need, hours: 0 }]; return null; }
+    var fs = best_farm_source(item);
+    if (fs && fs.hours * need <= GOAL_MAX_HOURS) return [{ type: "farm", mon: fs.mon, item: item, qty: qty, hours: fs.hours * need }];
+    if (depth < 1 && G.craft && G.craft[item]) {
+        var c = G.craft[item], steps = [], hours = 0, ok = true;
+        c.items.forEach(function (ing) { if (!ok) return; var sub = plan_for(ing[1], ing[0], depth + 1); if (!sub) { ok = false; return; } sub.forEach(function (st) { steps.push(st); hours += st.hours || 0; }); });
+        if (ok && (c.cost || 0) <= spendable()) { steps.push({ type: "craft", item: item, npc: c.quest || "craftsman", hours: 0 }); return steps; }
+    }
+    if (depth < 1) {
+        var ex = exchange_source(item);
+        if (ex) { var sub2 = plan_for(ex.base, ex.need * Math.max(1, Math.ceil(1 / Math.max(0.01, ex.weight))), depth + 1); if (sub2 && sub2.reduce(function (a, b) { return a + (b.hours || 0); }, 0) <= GOAL_MAX_HOURS) { sub2.push({ type: "exchange", item: ex.base, want: item, hours: 0 }); return sub2; } }
+    }
+    return null; // sonst: Markt/Ponty (läuft ohnehin)
+}
+function plan_text(steps) {
+    if (!steps) return "Markt/Ponty";
+    if (!steps.length) return "im Inventar";
+    return steps.map(function (st) {
+        if (st.type == "buy") return "kaufen";
+        if (st.type == "farm") return st.mon + " (" + (st.qty > 1 ? st.qty + "x " : "") + st.item + ", ~" + (st.hours < 1 ? Math.round(st.hours * 60) + " min" : st.hours.toFixed(1) + " h") + ")";
+        if (st.type == "craft") return "craften bei " + (G.npcs[st.npc] ? G.npcs[st.npc].name : st.npc);
+        if (st.type == "exchange") return "tauschen (" + st.item + ")";
+        return st.type;
+    }).join(" → ");
+}
+function compute_goals() { // je Slot: aktuelles Item, nächstbesseres machbares Ziel, Plan
+    if (Date.now() - goal_cache_t < 30000) return goal_cache;
+    goal_cache_t = Date.now(); goal_cache = {};
+    for (var slot in SLOT_TYPES) {
+        var cur = character.slots[slot], cur_s = cur ? item_score(cur) : 0;
+        var cands = [];
+        for (var name in G.items) { var def = G.items[name]; if (!fits_slot(def, slot) || goal_skip[name]) continue; var sc = gear_score(def); if (sc > cur_s * 1.05 && sc > 0) cands.push({ name: name, score: sc }); }
+        cands.sort(function (a, b) { return a.score - b.score; });
+        var pick = null, tried = 0;
+        for (var i = 0; i < cands.length && tried < 12; i++) {
+            if (cur && cands[i].name == cur.name) continue;
+            tried++;
+            var plan = plan_for(cands[i].name, 1, 0);
+            if (plan) { pick = { item: cands[i].name, score: cands[i].score, plan: plan }; break; }
+            if (!pick) pick = { item: cands[i].name, score: cands[i].score, plan: null, market: true };
+        }
+        goal_cache[slot] = { cur: cur, target: pick };
+    }
+    return goal_cache;
+}
+function start_goal(slot) {
+    var g = compute_goals()[slot]; if (!g || !g.target || !g.target.plan) { game_log("Für " + slot + " gibt es keinen automatischen Weg"); return; }
+    unpause("Beschaffen");
+    gear_goal = { slot: slot, item: g.target.item, steps: g.target.plan, step: 0, started: Date.now(), step_started: Date.now() };
+    game_log("Beschaffung gestartet: " + g.target.item + " für " + slot + " – " + plan_text(g.target.plan));
+}
+function stop_goal(reason) { if (gear_goal) { game_log("Beschaffung beendet: " + gear_goal.item + (reason ? " (" + reason + ")" : "")); } gear_goal = null; if (manual_spot && goal_spot) { manual_spot = null; goal_spot = null; need_repick = true; } goal_cache_t = 0; }
+var goal_spot = null, goal_busy = false;
+async function run_goal() {
+    if (!gear_goal || goal_busy || upgrading || kissing || fleeing || exchanging || pontying || marketing) return;
+    var st = gear_goal.steps[gear_goal.step];
+    if (!st) { // fertig: Ziel-Item anlegen
+        goal_busy = true;
+        var idx = find_inv_index(gear_goal.item, 0); if (idx < 0) for (var i = 0; i < character.items.length; i++) if (character.items[i] && character.items[i].name == gear_goal.item) { idx = i; break; }
+        if (idx >= 0) { equip(idx, gear_goal.slot); await sleep(600); game_log(gear_goal.item + " angelegt (" + gear_goal.slot + ")"); }
+        stop_goal("fertig"); goal_busy = false; return;
+    }
+    if (st.type == "farm") {
+        if (quantity(st.item) >= st.qty) { gear_goal.step++; gear_goal.step_started = Date.now(); if (manual_spot == goal_spot) { manual_spot = null; goal_spot = null; need_repick = true; } return; }
+        if (manual_spot != st.mon) { goal_spot = st.mon; set_manual_spot(st.mon); }
+        var limit = Math.max(20 * 60 * 1000, st.hours * 3600000 * GOAL_GIVEUP_FACTOR);
+        if (Date.now() - gear_goal.step_started > limit) { goal_skip[gear_goal.item] = Date.now(); save_goal_skip(); stop_goal("Zeitlimit beim Farmen von " + st.item); }
+        return;
+    }
+    if (busy) return;
+    goal_busy = true; busy = true;
+    try {
+        if (st.type == "buy") { await buy_items(st.item, st.qty); }
+        else if (st.type == "craft") {
+            set_message("Craften"); if (!await go_to_npc(st.npc)) throw "NPC " + st.npc + " nicht gefunden";
+            var before = quantity(st.item);
+            try { await auto_craft(st.item); } catch (e) { game_log("Craft-Fehler: " + (e && e.reason || e)); }
+            await sleep(2000);
+            if (quantity(st.item) <= before && find_inv_index(st.item, 0) < 0) throw "Craft nicht gelungen (" + st.item + ")";
+            game_log(st.item + " gecraftet");
+        }
+        else if (st.type == "exchange") {
+            set_message("Tauschen"); await smart_move("exchange");
+            var tries = 0;
+            while (quantity(st.want) < 1 && quantity(st.item) >= G.items[st.item].e && tries++ < 30 && character.esize > 1) { var ix = locate_item(st.item); try { await exchange(ix); } catch (e) {} await wait_queue("exchange"); }
+            if (quantity(st.want) < 1) throw "Tausch ergab kein " + st.want;
+        }
+        gear_goal.step++; gear_goal.step_started = Date.now();
+    } catch (e) { stop_goal("Fehler: " + e); }
+    goal_busy = false; busy = false;
+}
+
 // ---------- Bessere kaufbare Ausrüstung ----------
 var SLOT_TYPES = { helmet: "helmet", chest: "chest", pants: "pants", shoes: "shoes", gloves: "gloves", cape: "cape", mainhand: "weapon", offhand: "offhand", ring1: "ring", ring2: "ring", earring1: "earring", earring2: "earring", amulet: "amulet", belt: "belt", orb: "orb" };
 function gear_score(def) {
@@ -1474,7 +1619,7 @@ function start_main() {
     measure_tick();
 
     if (pending_upgrade && !busy && !upgrading) { var pu = pending_upgrade; pending_upgrade = null; upgrade_routine(pu == "K"); }
-    check_weapon(); check_gear_slots(); check_flee(); check_elixir(); kiss_routine(); tidy_inventory(); check_potions(); check_stuck(); check_ponty(false); check_market(false);
+    run_goal(); check_weapon(); check_gear_slots(); check_flee(); check_elixir(); kiss_routine(); tidy_inventory(); check_potions(); check_stuck(); check_ponty(false); check_market(false);
     if (busy || is_moving(character)) return;
 
     var farm = pick_farm_monster();
