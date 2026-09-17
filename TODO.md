@@ -1,6 +1,8 @@
 # Adventure Land Bot – Ideen / To-do
 
 ## Offen
+- **Item-Vergleich**: zwei Items nebeneinander mit allen Werten und Bewertung jetzt/auf Zielstufe (Char-Fenster), Klick auf Kachel = vergleichen.
+- **Monster Hunt-Quests** automatisch annehmen/abgeben (Tokens gegen Ausrüstung).
 - **Kuchen-Tausch am Markt**: Stände anderer Spieler nach `slice_*` scannen und fehlende Sorten automatisch kaufen (Preislimit), Ziel: Sixfold Cake bei Mira.
 - **Zweiter/dritter Charakter**: Priester (Heilung, Party-XP) und/oder Händler (Stand, Bank verwalten). Größeres Projekt.
 - **Fenster-Kleinigkeiten**: Tode und erfolgreiche Küsse zählen, Laufzeit anzeigen, Tabelle einklappbar.
