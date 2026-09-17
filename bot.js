@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v59";
+var BOT_VERSION = "v60";
 game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – PAUSIERT. P = Start/Pause, N = neu laden, U = sichere Upgrades, K = alle Upgrades, L = Statistik, G = Gifts tauschen");
 
 var GOLD_RESERVE = 20000;
@@ -1263,12 +1263,13 @@ async function upgrade_inv(name, level, target) {
         if (quantity(scroll) < 1) { buy(scroll, 1); await sleep(600); }
         var sidx = locate_item(scroll);
         if (sidx < 0) { game_log("keine " + scroll); return { level: level, destroyed: false, stopped: true }; }
+        var n_same = find_inv_indices(name, level).length, n_next = find_inv_indices(name, level + 1).length;
         set_message(name + " +" + level + " -> +" + (level + 1));
         try { await upgrade(idx, sidx); } catch (e) {}
         await wait_queue("upgrade");
-        var got = find_inv_index(name, level + 1);
-        if (got >= 0) { level++; game_log(name + " ist jetzt +" + level); }
-        else if (find_inv_index(name, level) >= 0) game_log(name + " Upgrade fehlgeschlagen, Item erhalten");
+        var m_same = find_inv_indices(name, level).length, m_next = find_inv_indices(name, level + 1).length;
+        if (m_next > n_next) { level++; game_log(name + " ist jetzt +" + level); }
+        else if (m_same == n_same) game_log(name + " Upgrade fehlgeschlagen, Item erhalten");
         else { game_log("!!! " + name + " +" + level + " ZERSTÖRT !!!"); return { level: level, destroyed: true }; }
     }
     return { level: level, destroyed: false };
@@ -1336,33 +1337,32 @@ async function process_slot(slot, manual) {
 async function process_slot_inner(slot, manual) {
     var item = character.slots[slot]; if (!item) return;
     var name = item.name, buyable = is_buyable(name), goal = target_level(name, manual);
-    if ((item.level || 0) >= goal && (!buyable || backup_index(name) >= 0)) return;
-    if (buyable && !await ensure_backup(name)) { game_log(name + ": keine Reserve möglich – übersprungen"); return; }
     var rebuys = 0;
     while (rebuys <= MAX_REBUYS) {
         check_pause();
+        // Nichts angelegt? -> Reserve anlegen, ggf. vorher neu bauen
+        if (!character.slots[slot]) {
+            if (backup_index(name) < 0) {
+                if (!buyable) { game_log(name + ": zerstört, nicht kaufbar – Slot bleibt leer"); break; }
+                if (!await ensure_backup(name)) { game_log(name + ": Neubau nicht möglich"); break; }
+            }
+            var b = backup_index(name); if (b < 0) break;
+            equip(b, slot); await sleep(600);
+            game_log(name + " +" + (character.slots[slot] ? character.slots[slot].level || 0 : "?") + " angelegt");
+        }
         var cur = character.slots[slot]; if (!cur) break;
-        var lvl = cur.level || 0; if (lvl >= goal) break;
-        // Getragenes Teil ins Inventar, aber Reserve davon unterscheiden: Reserve-Index vorher merken
+        var lvl = cur.level || 0;
+        // Reserve sicherstellen (die angelegte zählt nicht mit)
+        if (buyable && backup_index(name) < 0) { if (!await ensure_backup(name)) { game_log(name + ": keine Reserve möglich – kein Risiko-Upgrade"); break; } }
+        if (lvl >= goal) break;
         unequip(slot); await sleep(600);
         var r = await upgrade_inv(name, lvl, goal);
-        if (r.destroyed) {
-            rebuys++;
-            if (!buyable) break;
-            var b = backup_index(name);
-            if (b < 0) { game_log(name + ": keine Reserve mehr"); break; }
-            equip(b, slot); await sleep(600);
-            game_log("Reserve " + name + " +" + (character.slots[slot].level || 0) + " angelegt");
-            if (!await ensure_backup(name)) break;
-            continue;
-        }
-        // bestes Exemplar anlegen (das gerade verbesserte), Reserve bleibt im Inventar
+        if (r.destroyed) { rebuys++; continue; } // Schleifenanfang legt Reserve an / baut neu
         var best = -1, bl = -1;
         for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && it.name == name && (it.level || 0) > bl) { best = i; bl = it.level || 0; } }
         if (best >= 0) { equip(best, slot); await sleep(600); }
         if (r.stopped) break;
-        if (buyable && backup_index(name) < 0) await ensure_backup(name);
-        break;
+        if (r.level >= goal) { if (buyable && backup_index(name) < 0) await ensure_backup(name); break; }
     }
 }
 
