@@ -1,4 +1,4 @@
-# Adventure Land Bot – Ideen & To-do (Stand v117)
+# Adventure Land Bot – Ideen & To-do (Stand v137)
 
 ## A) Aus der Community geklaut (Guides, fremde Bots)
 
@@ -27,5 +27,27 @@
 - **Offerings** beim Upgrade ab bestimmtem Itemwert automatisch einsetzen.
 - **Ponty-Kauf prüfen**: Party Hat ×3 und hpbelt+1 (82k) – Grund steht ab v83 im Log.
 
+## D) Ideen Bot-Logik (Vorschläge vom 18.09., noch nicht beauftragt)
+
+1. **Gold-Ziel / Fortschritt** – Summe der offenen Zielbau-Kosten minus Gold, geteilt durch aktuelle G/h → „noch X Mio. ≈ Y h farmen". Kleiner Aufwand, sofort spürbar.
+2. **Fokus mit Nachholen** – „Fokus für N h", danach einmal alle Routinen (Kuss, Ponty, Markt, Kuchen, Ausrüstungs-Tick) durchlaufen, aufräumen, zurück in den Fokus. Mittlerer Aufwand.
+3. **Preisgedächtnis Händler** – je Item+Stufe Tiefstpreis/Durchschnitt der letzten 7 Tage speichern; in der Angebotsspalte „Tiefstpreis 7 Tage" und Marker „günstig". Braucht ein paar Tage Daten.
+4. **Tod im Hunt = Monster sperren** – nach Tod am Hunt-Monster sofort 30 min sperren und Jagd wie „alle gelevelt" behandeln. Kleiner Aufwand.
+5. **Events mitnehmen** – laufende Events (Goo Brawl, Wabbit, Franky, Feiertage) aus `parent.S` erkennen; bei sicherem Event-Monster mit mehr XP/G dorthin wechseln, gleiche Gefahr-Bewertung. Größerer Aufwand, größter XP-Hebel.
+6. **Grad-1-Upgradechancen** (Firestaff & Co.) aus dem Spiel ablesen und eintragen – bisher geschätzt.
+7. **Glück/Gold/XP-Boni** mit kleinen Gewichten in die Item-Bewertung aufnehmen (verändert die Rangfolge im Zielbau-Dropdown).
+
+## E) Ideen Panel (Vorschläge vom 18.09., noch nicht beauftragt)
+
+1. **Fortschrittszeile Zielbau** – „6/10 Slots fertig · noch ~4,2 Mio. ≈ 11 h" mit Balken (Panel-Seite von D1).
+2. **Reiter statt Scrollen** – „Farmen" (Status, Spot, Modus, Monster-Tabelle), „Ausrüstung" (Zielbau, Serverwechsel, Angebote), „Tag" (Tagesbilanz, Kuss, Kuchen, Hunt); Breite je Reiter, Kompaktansicht bleibt.
+3. **Ereignisleiste** – die letzten 3 Log-Zeilen klein im Panel, Klick = kopieren.
+4. **Warnzeile** oben, nur wenn etwas ansteht: Bank fast voll, Tränke < 50, Angebot unter Limit gefunden, Hunt läuft ab, Tode heute.
+5. **Tastenkürzel** – F Fokus, Z Zielbau auf/zu, M Kompaktansicht; Kürzel im Tooltip.
+6. **Zielbau kompakter** – Spalten „Bauen oder kaufen?" und „Zwischenlösung" standardmäßig eingeklappt, per Klick auf den Spaltenkopf ausklappen (620 statt 900 px).
+7. **Deckkraft/Schriftgröße** – Regler 80–100 % und 11/12/13 px.
+
+Empfohlene Reihenfolge: E2 + E1 zusammen, dann E4; D1 + D4 in einer Version, dann D2, D3; D5 erst, wenn ein Event ansteht.
+
 ## C) Erledigt (Kurzfassung)
-v20 Loader · v21 Tasten/Upgrade manuell · v22–v26 Spotmessung · v27–v29 Inventar, Rückzug, Kuss, Gifts · v30–v34 Panel · v35 Kiten · v36–v37 Kuss/Compound · v38–v46 Panel-Design, Sortierung, fester Spot · v47 Reserve +5 · v48 Hänger/Aggro · v49–v50 Ponty, Inv-Sortierung · v51–v55 Pause/N/Loader · v56–v60 Reserve-Fixes · v61–v64 Log, Versionierung · v65–v68 Ausrüstungsziele & Wirtschaftlichkeit · v69–v72 Scroll, U nach Empfehlung, Referenz G/h · v73 Char-Fenster · v74–v78 Kauf-Fixes · v79 Elixiere via Muscheln · v80 bestes Teil tragen · v81 Beifang · v82 Town-Teleport · v83 Kaufgrund/Sperre · v84 Panel-Position · v85–v88 Monster Hunt, Muscheln · v89–v95 Kalibrierung, N-Resume, Bank sortieren · v96–v97 gelevelte Monster · v98 Tagesbilanz, Duplikate verkaufen, Sixfold Cake · v99–v105 Inventar/Bank-Fixes, Jagd-Rückfall, Abbruch per Taste, Aufräumen-Button · v106 Wunschliste (fester Magier-Build), Auto-Ausrüstung mit 1 M Reserve, Waffe zuerst, HP-Schmuck verkaufen · v107–v111 Jetzt-Button, Reserve-/Bank-Fixes, Wertmodell · v112–v115 Händlerscan alle Server, Danach-Schalter · v116 Zielbau (Zielitem + Stufe je Slot) · v117 Wiki im Spiel
+v20 Loader · v21 Tasten/Upgrade manuell · v22–v26 Spotmessung · v27–v29 Inventar, Rückzug, Kuss, Gifts · v30–v34 Panel · v35 Kiten · v36–v37 Kuss/Compound · v38–v46 Panel-Design, Sortierung, fester Spot · v47 Reserve +5 · v48 Hänger/Aggro · v49–v50 Ponty, Inv-Sortierung · v51–v55 Pause/N/Loader · v56–v60 Reserve-Fixes · v61–v64 Log, Versionierung · v65–v68 Ausrüstungsziele & Wirtschaftlichkeit · v69–v72 Scroll, U nach Empfehlung, Referenz G/h · v73 Char-Fenster · v74–v78 Kauf-Fixes · v79 Elixiere via Muscheln · v80 bestes Teil tragen · v81 Beifang · v82 Town-Teleport · v83 Kaufgrund/Sperre · v84 Panel-Position · v85–v88 Monster Hunt, Muscheln · v89–v95 Kalibrierung, N-Resume, Bank sortieren · v96–v97 gelevelte Monster · v98 Tagesbilanz, Duplikate verkaufen, Sixfold Cake · v99–v105 Inventar/Bank-Fixes, Jagd-Rückfall, Abbruch per Taste, Aufräumen-Button · v106 Wunschliste (fester Magier-Build), Auto-Ausrüstung mit 1 M Reserve, Waffe zuerst, HP-Schmuck verkaufen · v107–v111 Jetzt-Button, Reserve-/Bank-Fixes, Wertmodell · v112–v115 Händlerscan alle Server, Danach-Schalter · v116 Zielbau (Zielitem + Stufe je Slot) · v117 Wiki im Spiel · v118–v128 Chancen-Tabellen, Bauen-oder-kaufen, Serverwechsel, Wiki-Kategorien · v129 alte Empfehlungstabelle raus · v130–v133 Zielbau = Getragenes, Jetzt nur ein Slot, Reserven (3 Kopien) · v134 Kompaktansicht, feste Zielbau-Spalten · v135 Kandidaten auf eingestellter Stufe bewerten · v136 Kaufen-Knopf je Angebot, Preislimit je Slot, Ist-Knopf · v137 Fokus-Modus
