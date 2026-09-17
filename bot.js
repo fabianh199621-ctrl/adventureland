@@ -9,11 +9,11 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v62";
+var BOT_VERSION = "v63";
 // ---------- Log-Puffer (für "Log kopieren") ----------
 var LOG_MAX = 300, log_buf = [];
 try { log_buf = JSON.parse(localStorage.getItem("lp_log") || "[]"); } catch (e) { log_buf = []; }
-var _game_log = game_log;
+var _game_log = window.game_log; // Original aus dem Spiel (nicht unsere Hülle)
 function game_log(msg, color) {
     try {
         var d = new Date(), ts = ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2) + ":" + ("0" + d.getSeconds()).slice(-2);
@@ -1232,7 +1232,7 @@ function compute_goals() { // je Slot: aktuelles Item, nächstbesseres machbares
     for (var slot in SLOT_TYPES) {
         var cur = character.slots[slot], cur_s = cur ? item_score(cur) : 0;
         var cands = [];
-        for (var name in G.items) { var def = G.items[name]; if (!fits_slot(def, slot) || goal_skip[name]) continue; var sc = gear_score(def); if (sc > cur_s * 1.05 && sc > 0) cands.push({ name: name, score: sc }); }
+        for (var name in G.items) { var def = G.items[name]; if (!fits_slot(def, slot) || (goal_skip[name] && Date.now() - goal_skip[name] < 24 * 3600000)) continue; var sc = gear_score(def); if (sc > cur_s * 1.05 && sc > 0) cands.push({ name: name, score: sc }); }
         cands.sort(function (a, b) { return a.score - b.score; });
         var pick = null, tried = 0;
         for (var i = 0; i < cands.length && tried < 12; i++) {
