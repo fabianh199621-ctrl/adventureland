@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v58";
+var BOT_VERSION = "v59";
 game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – PAUSIERT. P = Start/Pause, N = neu laden, U = sichere Upgrades, K = alle Upgrades, L = Statistik, G = Gifts tauschen");
 
 var GOLD_RESERVE = 20000;
@@ -684,9 +684,10 @@ async function tidy_inventory() {
             for (var j = 0; j < junk.length; j++) { var it = character.items[junk[j]]; if (!it) continue; sell(junk[j], it.q || 1); await sleep(300); }
             game_log("Inventar: " + junk.length + " Schrott-Items verkauft");
         }
-        // 2. Rest in die Bank
+        // 2. Rest in die Bank (vorher: Teile für leere Slots zurückholen)
         if (character.esize < INV_MIN_FREE + 3) {
-            set_message("Bank"); await smart_move("bank");
+            set_message("Bank"); await smart_move("bank"); await sleep(800);
+            await retrieve_for_empty_slots();
             var n = 0;
             for (var k = 0; k < character.items.length; k++) {
                 var it2 = character.items[k]; if (!it2 || should_keep(it2)) continue;
@@ -803,6 +804,7 @@ async function exchange_gifts() {
     try {
         // 1. tauschbare Sachen aus der Bank holen
         set_message("Bank"); await smart_move("bank"); await sleep(800);
+        await retrieve_for_empty_slots();
         var bank = character.bank || {}, got = 0;
         for (var pack in bank) {
             if (pack.indexOf("items") != 0 || !Array.isArray(bank[pack])) continue;
@@ -927,6 +929,14 @@ async function buy_and_equip(name, ignore_reserve) {
     if (!await buy_items(name, 1, ignore_reserve)) return false;
     var idx = find_inv_index(name, 0); if (idx < 0) return false;
     equip(idx); await sleep(600); return true;
+}
+
+// ---------- Leere Slots aus dem Inventar füllen ----------
+var last_slot_check = 0;
+async function check_gear_slots() {
+    if (Date.now() - last_slot_check < 10000 || upgrading || busy) return;
+    last_slot_check = Date.now();
+    for (var slot in SLOT_TYPES) { if (slot == "mainhand") continue; if (!character.slots[slot]) await reequip_slot(slot); }
 }
 
 // ---------- Waffe ----------
@@ -1279,12 +1289,28 @@ async function ensure_backup(name) { // Reservekopie auf +BACKUP_LEVEL herstelle
     }
     return false;
 }
+// Teile für leere Slots aus der Bank holen (muss in der Bank stehen)
+async function retrieve_for_empty_slots() {
+    var bank = character.bank || {}, got = 0;
+    for (var slot in SLOT_TYPES) {
+        if (character.slots[slot] || slot == "mainhand") continue;
+        var best = null, bs = -1;
+        for (var pack in bank) {
+            if (pack.indexOf("items") != 0 || !Array.isArray(bank[pack])) continue;
+            for (var i = 0; i < bank[pack].length; i++) { var it = bank[pack][i]; if (!it || !G.items[it.name] || !fits_slot(G.items[it.name], slot)) continue; var sc = item_score(it); if (sc > bs) { bs = sc; best = { pack: pack, i: i, it: it }; } }
+        }
+        if (best && character.esize > 0) { try { bank_retrieve(best.pack, best.i); got++; await sleep(500); await reequip_slot(slot); } catch (e) {} }
+    }
+    if (got) game_log("Aus der Bank für leere Slots geholt: " + got);
+}
 // Reserven aus der Bank zurückholen (für getragene kaufbare Teile ohne Reserve im Inventar)
 async function fetch_backups_from_bank() {
     var need = equipped_slots("upgrade").map(function (sl) { return character.slots[sl].name; })
         .filter(function (n, i, a) { return a.indexOf(n) == i && is_buyable(n) && backup_index(n) < 0; });
-    if (!need.length) return;
+    var empty_slots = Object.keys(SLOT_TYPES).filter(function (sl) { return sl != "mainhand" && !character.slots[sl]; });
+    if (!need.length && !empty_slots.length) return;
     set_message("Bank: Reserven"); await smart_move("bank"); await sleep(800);
+    await retrieve_for_empty_slots();
     var bank = character.bank || {}; var got = 0;
     for (var pack in bank) {
         if (pack.indexOf("items") != 0 || !Array.isArray(bank[pack])) continue;
@@ -1297,7 +1323,17 @@ async function fetch_backups_from_bank() {
     }
     if (got) game_log("Reserven aus der Bank geholt: " + got);
 }
+function best_inv_for_slot(slot) { // bestes Inventar-Item, das in den Slot passt
+    var best = -1, bs = -1;
+    for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (!it || !G.items[it.name]) continue; if (!fits_slot(G.items[it.name], slot)) continue; var sc = item_score(it); if (sc > bs) { bs = sc; best = i; } }
+    return best;
+}
+async function reequip_slot(slot) { if (character.slots[slot]) return; var b = best_inv_for_slot(slot); if (b >= 0) { game_log("Slot " + slot + " leer – lege " + character.items[b].name + "+" + (character.items[b].level || 0) + " an"); equip(b, slot); await sleep(600); } }
 async function process_slot(slot, manual) {
+    try { await process_slot_inner(slot, manual); }
+    finally { try { await reequip_slot(slot); } catch (e) {} }
+}
+async function process_slot_inner(slot, manual) {
     var item = character.slots[slot]; if (!item) return;
     var name = item.name, buyable = is_buyable(name), goal = target_level(name, manual);
     if ((item.level || 0) >= goal && (!buyable || backup_index(name) >= 0)) return;
@@ -1362,9 +1398,9 @@ async function upgrade_routine(manual) {
         await check_market(true);
         up_slots = slots_to_upgrade(manual);
 
+        await fetch_backups_from_bank();
+        up_slots = slots_to_upgrade(manual);
         if (up_slots.length) {
-            await fetch_backups_from_bank();
-            up_slots = slots_to_upgrade(manual);
             await smart_move("upgrade");
             for (var k = 0; k < up_slots.length; k++) { check_pause(); await process_slot(up_slots[k], manual); await smart_move("upgrade"); }
         }
@@ -1418,7 +1454,7 @@ function start_main() {
     measure_tick();
 
     if (pending_upgrade && !busy && !upgrading) { var pu = pending_upgrade; pending_upgrade = null; upgrade_routine(pu == "K"); }
-    check_weapon(); check_flee(); check_elixir(); kiss_routine(); tidy_inventory(); check_potions(); check_stuck(); check_ponty(false); check_market(false);
+    check_weapon(); check_gear_slots(); check_flee(); check_elixir(); kiss_routine(); tidy_inventory(); check_potions(); check_stuck(); check_ponty(false); check_market(false);
     if (busy || is_moving(character)) return;
 
     var farm = pick_farm_monster();
