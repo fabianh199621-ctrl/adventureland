@@ -5,11 +5,11 @@
 // K = wie U, aber Drop-Items bis +5 (Risiko!)
 // L = Farm-Statistik (XP/h, Gold/h je Monster) ins Log
 // D = Event-Daten anzeigen (Diagnose für 10-Jahre-Event)
-// G = Anniversary Gifts bei Xyn eintauschen (manuell)
+// G = bei Xyn alles Tauschbare eintauschen (Gifts, Muscheln, Edelsteine, Leder …), holt vorher aus der Bank
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v57";
+var BOT_VERSION = "v58";
 game_log("LogicPlan-Skript " + BOT_VERSION + " gestartet – PAUSIERT. P = Start/Pause, N = neu laden, U = sichere Upgrades, K = alle Upgrades, L = Statistik, G = Gifts tauschen");
 
 var GOLD_RESERVE = 20000;
@@ -20,6 +20,7 @@ var RISKY_TARGET_DROP = 5;           // Drop-Items bei K
 var MAX_REBUYS = 6;
 var COMPOUND_TARGET = 3;             // getragener Schmuck
 var PONTY_INTERVAL = 30 * 60 * 1000; // Ponty (gebrauchte Items) regelmäßig prüfen
+var MARKET_INTERVAL = 30 * 60 * 1000; // Marktstände in der Stadt regelmäßig prüfen
 var COMPOUND_SPARE_MAX = 3;          // ungetragener Schmuck im Inventar wird bis hierhin compoundet
 var STAT_TYPE = "int";
 var FALLBACK_WEAPONS = ["staff", "stick"];
@@ -578,7 +579,7 @@ function update_panel() {
     if (!panel || !panel.parentNode) panel = init_panel();
     var hp = Math.round(character.hp / character.max_hp * 100), mp = Math.round(character.mp / character.max_mp * 100);
     var state = panel.querySelector("#lp_state");
-    var st_txt = !bot_running ? "AUS" : paused ? "PAUSE" : upgrading ? "Upgrade" : pending_upgrade ? "Upgrade wartet" : kissing ? "Kuss" : fleeing ? "Rückzug" : exchanging ? "Tausch" : pontying ? "Ponty" : busy ? "unterwegs" : "farmt";
+    var st_txt = !bot_running ? "AUS" : paused ? "PAUSE" : upgrading ? "Upgrade" : pending_upgrade ? "Upgrade wartet" : kissing ? "Kuss" : fleeing ? "Rückzug" : exchanging ? "Tausch" : pontying ? "Ponty" : marketing ? "Markt" : busy ? "unterwegs" : "farmt";
     state.textContent = st_txt; state.className = "lp_state" + ((paused || !bot_running) ? " pause" : (upgrading || pending_upgrade || kissing || fleeing || exchanging || busy) ? " busy" : "");
     panel.querySelector("#lp_toggle").textContent = panel.__collapsed ? "▸" : "▾";
 
@@ -613,7 +614,7 @@ function update_panel() {
             var st = farm_stats[m], d = G.monsters[m], oldc = st && !stats_valid(st) ? " class='old'" : "";
             var dg = mon_danger(d), ttk = mon_ttk(d);
             h += "<tr" + (m == current_spot ? " class='cur'" : "") + "><td title='" + esc(mon_tooltip(m)) + "'>" + esc(m) + (st && st.deaths ? " <span style='color:#ef5350'>†" + st.deaths + "</span>" : "") + "</td>"
-               + "<td style='color:" + (dg > 0.35 ? "#ef5350" : dg > 0.15 ? "#ffb74d" : "#81c784") + "'>" + (isFinite(dg) ? Math.round(dg * 100) + "%" : "∞") + "</td><td>" + (isFinite(ttk) ? ttk.toFixed(1) : "∞") + "</td><td>" + fmt(d.xp) + "</td><td>" + fmt(mon_xph_est(d)) + "</td>"
+               + "<td style='color:" + (dg > 0.35 ? "#ef5350" : dg > 0.15 ? "#ffb74d" : "#81c784") + "'>" + (isFinite(dg) ? Math.round(dg * 100) + "%" : "∞") + "</td><td>" + (isFinite(ttk) ? ttk.toFixed(1) : "∞") + "</td><td>" + fmt(d.xp) + "</td><td>" + fmt(mon_xph_est(d, m)) + "</td>"
                + "<td" + oldc + ">" + (st ? fmt(st.xp_h) : "-") + "</td><td" + oldc + ">" + (st ? fmt(st.gold_h) : "-") + "</td><td" + oldc + ">" + (st && st.attack ? st.attack : "-") + "</td>"
                + "<td><button data-act='farm' data-mon='" + m + "'" + (m == manual_spot ? " class='on'" : "") + ">Farmen</button> <button data-act='hide' data-mon='" + m + "' title='ausblenden' style='padding:1px 5px'>✕</button></td></tr>";
         });
@@ -793,31 +794,43 @@ async function kiss_routine() {
 
 // ---------- Anniversary Gifts bei Xyn eintauschen (Taste G) ----------
 var exchanging = false;
+function exchangeable(it) { var d = G.items[it.name]; return d && d.e && (it.q || 1) >= d.e; }
 async function exchange_gifts() {
     if (exchanging) { game_log("Tausch läuft bereits"); return; }
     if (busy || upgrading) { game_log("Gerade beschäftigt – gleich nochmal G drücken"); return; }
-    var n = quantity("anniversarygift");
-    if (!n) { game_log("Keine Anniversary Gifts im Inventar"); return; }
-    unpause("Gift-Tausch");
+    unpause("Xyn-Tausch");
     exchanging = true; busy = true;
-    game_log("Tausche " + n + " Anniversary Gifts bei Xyn");
-    set_message("Zu Xyn");
     try {
-        stop("smart");
-        await smart_move("exchange");
-        var done = 0, fails = 0;
-        while (quantity("anniversarygift") > 0 && !paused) {
-            if (character.esize < 2) { game_log("Inventar voll – Tausch gestoppt (" + quantity("anniversarygift") + " übrig)"); break; }
-            var idx = locate_item("anniversarygift");
-            var before = quantity("anniversarygift");
-            try { await exchange(idx); } catch (e) {}
-            await sleep(1200);
-            while (character.q && character.q.exchange) await sleep(500);
-            await sleep(300);
-            if (quantity("anniversarygift") < before) { done++; fails = 0; set_message("Tausch " + done + "/" + n); }
-            else if (++fails >= 3) { game_log("Tausch klappt nicht (Xyn nicht erreichbar?)"); break; }
+        // 1. tauschbare Sachen aus der Bank holen
+        set_message("Bank"); await smart_move("bank"); await sleep(800);
+        var bank = character.bank || {}, got = 0;
+        for (var pack in bank) {
+            if (pack.indexOf("items") != 0 || !Array.isArray(bank[pack])) continue;
+            for (var i = 0; i < bank[pack].length; i++) { var bi = bank[pack][i]; if (bi && G.items[bi.name] && G.items[bi.name].e && character.esize > 2) { try { bank_retrieve(pack, i); got++; await sleep(400); } catch (e) {} } }
         }
-        game_log("Fertig: " + done + " Gifts getauscht");
+        if (got) game_log("Aus der Bank geholt: " + got + " tauschbare Stapel");
+        // 2. bei Xyn alles tauschen
+        var todo = character.items.filter(function (it) { return it && exchangeable(it); }).map(function (it) { return it.name; });
+        if (!todo.length) { game_log("Nichts zum Tauschen"); }
+        else {
+            game_log("Tausche bei Xyn: " + todo.filter(function (n, i, a) { return a.indexOf(n) == i; }).join(", "));
+            set_message("Zu Xyn"); stop("smart"); await smart_move("exchange");
+            var done = 0, fails = 0;
+            while (!paused) {
+                var idx = -1;
+                for (var k = 0; k < character.items.length; k++) if (character.items[k] && exchangeable(character.items[k])) { idx = k; break; }
+                if (idx < 0) break;
+                if (character.esize < 2) { game_log("Inventar voll – Tausch gestoppt"); break; }
+                var nm = character.items[idx].name, before = quantity(nm);
+                try { await exchange(idx); } catch (e) {}
+                await sleep(1200);
+                while (character.q && character.q.exchange) await sleep(500);
+                await sleep(300);
+                if (quantity(nm) < before) { done++; fails = 0; set_message("Tausch " + done); }
+                else if (++fails >= 3) { game_log("Tausch klappt nicht bei " + nm); break; }
+            }
+            game_log("Fertig: " + done + " Tauschvorgänge");
+        }
     } catch (e) { game_log("Tausch-Fehler: " + e); }
     exchanging = false; busy = false;
     if (!paused) go_to_farm_spot();
@@ -1063,6 +1076,48 @@ async function check_ponty(force) {
     pontying = false; busy = false;
 }
 
+// ---------- Marktstände anderer Spieler ----------
+var last_market = 0, marketing = false;
+function market_offers() { // alle Angebote sichtbarer Stände
+    var out = [];
+    for (var id in parent.entities) {
+        var p = parent.entities[id];
+        if (!p || p.type != "character" || !p.stand || !p.slots) continue;
+        for (var sl in p.slots) {
+            if (sl.indexOf("trade") != 0) continue;
+            var it = p.slots[sl]; if (!it || !it.price || it.b) continue; // b = Kaufgesuch
+            out.push({ seller: p, slot: sl, name: it.name, level: it.level || 0, price: it.price, q: it.q || 1, id: p.id });
+        }
+    }
+    return out;
+}
+async function check_market(force) {
+    if (marketing || upgrading || kissing || fleeing || exchanging || pontying) return;
+    if (!force && (busy || Date.now() - last_market < MARKET_INTERVAL)) return;
+    marketing = true; busy = true; last_market = Date.now();
+    try {
+        set_message("Markt"); await smart_move("town"); await sleep(1500);
+        var offers = market_offers(), bought = 0;
+        game_log("Markt: " + offers.length + " Angebote an " + offers.filter(function (o, i, a) { return a.findIndex(function (x) { return x.id == o.id; }) == i; }).length + " Ständen");
+        offers.sort(function (a, b) { return a.price - b.price; });
+        for (var i = 0; i < offers.length; i++) {
+            var o = offers[i], def = G.items[o.name]; if (!def) continue;
+            var slot = slot_for_item(def); if (!slot) continue;
+            if (o.price > spendable() * 0.5 || character.esize < 2) continue;
+            var cur = character.slots[slot], cur_s = cur ? item_score(cur) : 0;
+            if (cur && item_score(o) < cur_s * GEAR_MIN_GAIN) continue;
+            if (distance(character, o.seller) > 300) { try { await smart_move({ x: o.seller.x, y: o.seller.y + 30 }); } catch (e) { continue; } }
+            game_log("Markt: kaufe " + o.name + "+" + o.level + " für " + slot + " von " + o.seller.name + " (" + fmt(o.price) + " Gold)");
+            var before = character.esize;
+            try { trade_buy(o.seller, o.slot, 1); } catch (e) { game_log("Markt-Kauf fehlgeschlagen: " + e); continue; }
+            await sleep(1500);
+            if (character.esize < before) { var idx = find_inv_index(o.name, o.level); if (idx >= 0) { equip(idx, slot); await sleep(600); bought++; } }
+        }
+        if (bought) game_log("Markt: " + bought + " Item(s) gekauft und angelegt");
+    } catch (e) { game_log("Markt-Fehler: " + e); }
+    marketing = false; busy = false;
+}
+
 // ---------- Bessere kaufbare Ausrüstung ----------
 var SLOT_TYPES = { helmet: "helmet", chest: "chest", pants: "pants", shoes: "shoes", gloves: "gloves", cape: "cape", mainhand: "weapon", offhand: "offhand", ring1: "ring", ring2: "ring", earring1: "earring", earring2: "earring", amulet: "amulet", belt: "belt", orb: "orb" };
 function gear_score(def) {
@@ -1304,6 +1359,7 @@ async function upgrade_routine(manual) {
         if (empty) await fill_empty_slots();
         await buy_better_gear();
         await check_ponty(true);
+        await check_market(true);
         up_slots = slots_to_upgrade(manual);
 
         if (up_slots.length) {
@@ -1362,7 +1418,7 @@ function start_main() {
     measure_tick();
 
     if (pending_upgrade && !busy && !upgrading) { var pu = pending_upgrade; pending_upgrade = null; upgrade_routine(pu == "K"); }
-    check_weapon(); check_flee(); check_elixir(); kiss_routine(); tidy_inventory(); check_potions(); check_stuck(); check_ponty(false);
+    check_weapon(); check_flee(); check_elixir(); kiss_routine(); tidy_inventory(); check_potions(); check_stuck(); check_ponty(false); check_market(false);
     if (busy || is_moving(character)) return;
 
     var farm = pick_farm_monster();
