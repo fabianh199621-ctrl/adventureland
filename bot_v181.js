@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v180";
+var BOT_VERSION = "v181";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : character.ctype == "ranger" || /ranger/i.test(character.name) ? "ranger" : "priest";
@@ -1259,15 +1259,29 @@ function mon_dps_on_me(d) {
     var def = d.damage_type == "magical" ? (character.resistance || 0) - (d.rpiercing || 0) : (character.armor || 0) - (d.apiercing || 0);
     return mon_dps(d) * dmg_mult(def);
 }
+// Team-Beitrag: Ranger-Schaden und Priester-Heilung zählen, wenn sie leben, gemeldet haben und neben mir stehen
+function team_member_active(key) {
+    if (!team_on[key]) return null; var nm = TEAM[key], st = team_state[nm]; if (!st || Date.now() - st.t > 90000 || st.state == "tot" || !(st.attack > 0)) return null;
+    var p = null; try { p = get_player(nm); } catch (e) {} if (!p || p.rip || p.map != character.map || distance(character, p) > 400) return null;
+    return st;
+}
+function team_dps_vs(d) { // zusätzlicher Schaden des Rangers (physisch, gegen Rüstung) und des Priesters (magisch, anteilig – er heilt auch)
+    var out = 0, r = team_member_active("ranger"), pr = team_member_active("priest");
+    if (r) out += r.attack * (r.frequency || 1) * dmg_mult((d.armor || 0)) * (1 - (d.evasion || 0) / 100);
+    if (pr) out += pr.attack * (pr.frequency || 1) * dmg_mult((d.resistance || 0)) * 0.4;
+    return out;
+}
+function team_heal_rate() { var pr = team_member_active("priest"); return pr ? pr.attack * (pr.frequency || 1) * 0.6 : 0; } // Heilung ≈ Angriffswert je Zauber, ein Teil der Zeit geht in Angriffe
+function team_bonus_txt() { var r = team_member_active("ranger"), pr = team_member_active("priest"); return r || pr ? " mit Team (" + (r ? "Ranger" : "") + (r && pr ? "+" : "") + (pr ? "Priest" : "") + ")" : ""; }
 function mon_ttk(d) { // Sekunden pro Kill inkl. Lebensraub
-    var dps = my_dps_vs(d); if (dps <= 0) return Infinity;
+    var dps = my_dps_vs(d) + team_dps_vs(d); if (dps <= 0) return Infinity;
     var heal = mon_dps(d) * (d.lifesteal || 0) / 100;
     var net = dps - heal; if (net <= 0) return Infinity;
     return (d.hp || 0) / net;
 }
 function mon_danger(d) { // Anteil meiner HP, den ein Kill kostet
     var ttk = mon_ttk(d); if (!isFinite(ttk)) return Infinity;
-    var incoming = mon_dps_on_me(d) + my_dps_vs(d) * (d.reflection || 0) / 100;
+    var incoming = Math.max(0, mon_dps_on_me(d) + my_dps_vs(d) * (d.reflection || 0) / 100 - team_heal_rate());
     return incoming * ttk / character.max_hp;
 }
 // Anzahl gleichzeitiger Spawns eines Monstertyps (alle Karten)
@@ -1375,7 +1389,7 @@ function update_panel() {
     h += team_wish_html(panel);
     if (!panel.__collapsed) {
         var cols = [["name", "Monster"], ["danger", "Gefahr"], ["ttk", "s/Kill"], ["xpk", "XP/Kill"], ["xpest", "XP/h*"], ["xph", "XP/h"], ["gph", "G/h"], ["ang", "ANG"]];
-        h += "<div class='lp_k' style='font-size:11px;margin-top:4px'>Schätzung kalibriert ×" + xp_calibration().toFixed(1) + " (aus " + Object.keys(farm_stats).length + " gemessenen Spots)</div>";
+        h += "<div class='lp_k' style='font-size:11px;margin-top:4px'>Schätzung kalibriert ×" + xp_calibration().toFixed(1) + " (aus " + Object.keys(farm_stats).length + " gemessenen Spots)" + (team_bonus_txt() ? " · Gefahr" + team_bonus_txt() : "") + "</div>";
         h += "<table class='lp_t'><tr>" + cols.map(function (c) { return "<th data-sort='" + c[0] + "'" + (sort_key == c[0] ? " class='sorted'" : "") + ">" + c[1] + (sort_key == c[0] ? (sort_dir < 0 ? " ▾" : " ▴") : "") + "</th>"; }).join("") + "<th></th></tr>";
         var mons = visible_mons();
         mons.sort(function (x, y) { var a1 = sort_value(x, sort_key), b1 = sort_value(y, sort_key); return (a1 < b1 ? -1 : a1 > b1 ? 1 : 0) * sort_dir; });
@@ -2037,7 +2051,7 @@ async function daisy() { var pos = find_npc("monsterhunter"); if (!pos) throw "D
 var hunt_max_danger = 0.10; try { var hmd = parseFloat(localStorage.getItem("lp_hunt_max_danger")); if (isFinite(hmd) && hmd > 0) hunt_max_danger = hmd; } catch (e) {} // Jagden nur bis zu dieser Gefahr (Anteil HP je Kill)
 function hunt_danger_ok(id) { var d = G.monsters[id]; return !!d && mon_danger(d) <= hunt_max_danger; }
 function hunt_target_ok(id) { return id && G.monsters[id] && is_safe_monster(id) && hunt_danger_ok(id) && !hidden_mons[id] && !EXCLUDE[id] && !spot_blocked(id) && team_safe(id); }
-function hunt_skip_reason(id) { var d = G.monsters[id]; if (!d) return "unbekannt"; if (!hunt_danger_ok(id)) return Math.round(mon_danger(d) * 100) + " % > " + Math.round(hunt_max_danger * 100) + " %"; if (!is_safe_monster(id)) return "nicht sicher"; if (spot_blocked(id)) return "gesperrt"; if (!team_safe(id)) return "zu stark für den Priester"; return "ausgeblendet"; }
+function hunt_skip_reason(id) { var d = G.monsters[id]; if (!d) return "unbekannt"; if (!hunt_danger_ok(id)) return Math.round(mon_danger(d) * 100) + " % > " + Math.round(hunt_max_danger * 100) + " %" + team_bonus_txt(); if (!is_safe_monster(id)) return "nicht sicher"; if (spot_blocked(id)) return "gesperrt"; if (!team_safe(id)) return "zu stark für den Priester"; return "ausgeblendet"; }
 async function spend_tokens() { // Set-Teile kaufen, günstigstes fehlendes zuerst
     var want = MH_SET.filter(function (n) { var def = G.items[n]; var sl = slot_for_item(def); var worn = character.slots[sl]; return !(worn && worn.name == n) && locate_item(n) < 0; })
         .sort(function (a, b) { return (G.tokens.monstertoken[a] || 99) - (G.tokens.monstertoken[b] || 99); });
