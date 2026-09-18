@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v179";
+var BOT_VERSION = "v180";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : character.ctype == "ranger" || /ranger/i.test(character.name) ? "ranger" : "priest";
@@ -413,6 +413,14 @@ function tw_copies(name) { // Inventarkopien, die dem Team-Zielbau gehören, hö
     var team = out.filter(function (c) { return c.level > BACKUP_LEVEL; }); if (team.length) return team; // über Reserve-Stufe: eindeutig Team
     var res = out.filter(function (c) { return c.level <= BACKUP_LEVEL; }); return res.length > RESERVE_COPIES ? res.slice(RESERVE_COPIES) : []; // sonst nur Überschuss über die Reserven des Magiers
 }
+function tw_build_copy(name) { // Kopie zum Weiterbauen: Team-Kopie, sonst (bei Überschneidung mit dem Magier) die niedrigste Kopie, die nicht seine Reserve ist
+    var c = tw_copies(name)[0]; if (c) return c;
+    if (!tw_overlap(name)) return null;
+    var bi = backup_index(name), out = [];
+    for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && it.name == name && !it.p && i != bi && (it.level || 0) <= BACKUP_LEVEL) out.push({ i: i, level: it.level || 0 }); }
+    out.sort(function (a, b) { return a.level - b.level; });
+    return out[0] || null;
+}
 function tw_status(key, slot) { // {state, text}
     var c = tw_cfg(key, slot); if (!c || !c.item) return null;
     var st = team_state[TEAM[key]], worn = st && st.slots && st.slots[slot];
@@ -443,11 +451,11 @@ async function team_build_step(only, manual) { // in der Ausrüstungsroutine: bi
         while (true) { // bei Zerstörung im selben Durchlauf neu kaufen und weiterbauen, bis es steht (Grenzen: Budget je Durchlauf, Gold-Reserve, Pause)
             check_pause();
             if (g0 - character.gold > TEAM_BUILD_BUDGET) { game_log("Team-Zielbau: Budget für diesen Durchlauf (" + fmt(TEAM_BUILD_BUDGET) + ") ausgeschöpft"); stopped = true; break; }
-            if (!tw_copies(name).length) { // beschaffen
+            if (!tw_build_copy(name)) { // beschaffen
                 if (is_buyable(name)) { if (!await buy_items(name, 1)) break; game_log("Team-Zielbau [" + lab + "]: " + name + " beim NPC gekauft" + (rebuys ? " (Neukauf " + rebuys + ")" : "")); }
                 else { var off = tw_market_offer(name); if (!off || off.price > (c.max || TEAM_BUILD_DEFAULT_MAX) || off.price > spendable()) break; if (!await tw_buy_offer(off)) break; game_log("Team-Zielbau [" + lab + "]: " + name + "+" + (off.level || 0) + " am Markt gekauft (" + fmt(off.price) + ")"); }
             }
-            var cp = tw_copies(name)[0]; if (!cp) break;
+            var cp = tw_build_copy(name); if (!cp) break;
             if (cp.level >= c.level) break;
             var lv = Math.min(c.level, TEAM_BUILD_MAX_LEVEL);
             await travel_place("upgrade");
