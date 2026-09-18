@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v161";
+var BOT_VERSION = "v162";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : "priest";
@@ -1271,8 +1271,13 @@ function spare_for_priest() { // [{i, slot, gain}] – Inventarteile, die der Ma
         for (var i = 0; i < character.items.length; i++) {
             var it = character.items[i]; if (!it || used[i]) continue; var def = G.items[it.name]; if (!def || !fits_class(def, "priest", slot)) continue;
             if (KEEP_ITEMS.test(it.name) || EVENT_ITEMS.test(it.name)) continue;
-            if (on_wishlist(it.name)) { // Zielbau-Teil des Magiers: nur, wenn mehr als die Reserven da sind (die beste Kopie bleibt)
-                var copies = 0; for (var c = 0; c < character.items.length; c++) if (character.items[c] && character.items[c].name == it.name) copies++; if (copies <= RESERVE_COPIES || i == backup_index(it.name)) continue;
+            if (on_wishlist(it.name)) { // Zielbau-Teil des Magiers
+                if (def.compound) { // Schmuck: Kopien nur abgeben, wenn alle Slots mit diesem Teil ihr Ziel erreicht haben (dann ist das Compound-Material übrig)
+                    var all_done = true, any = false; for (var sl2 in SLOT_TYPES) { var w2 = character.slots[sl2]; if (w2 && w2.name == it.name) { any = true; if ((w2.level || 0) < wish_level(sl2)) all_done = false; } }
+                    if (!any || !all_done) continue;
+                } else {
+                    var copies = 0; for (var c = 0; c < character.items.length; c++) if (character.items[c] && character.items[c].name == it.name) copies++; if (copies <= RESERVE_COPIES || i == backup_index(it.name)) continue;
+                }
             }
             if (equipped_names()[it.name] && i == backup_index(it.name)) continue; // beste Reserve des Getragenen bleibt
             var sc = gear_score(def, it.level || 0); if (sc <= ws * 1.05 || sc <= 0) continue;
