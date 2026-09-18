@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v150";
+var BOT_VERSION = "v151";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : "priest";
@@ -888,13 +888,14 @@ function init_panel() {
         if (!inside(e)) return;
         var t = e.target; if (!t || (t.tagName != "SELECT" && t.tagName != "INPUT")) return;
         var ws = t.getAttribute("data-wslot"), wl = t.getAttribute("data-wlvl"), wm = t.getAttribute("data-wmax");
+        if (t.getAttribute("data-huntmax")) { var hv = parseFloat(String(t.value).replace(",", ".")); if (isFinite(hv) && hv > 0 && hv <= 100) { hunt_max_danger = hv / 100; try { localStorage.setItem("lp_hunt_max_danger", String(hunt_max_danger)); } catch (x) {} game_log("Jagd-Gefahrgrenze: " + Math.round(hv) + " %"); hunt_skipped = null; last_hunt_check = 0; } try { t.blur(); } catch (x) {} last_panel = 0; return; }
         if (wm) { var mv = parse_mio(t.value), cm = wish_cfg[wm] || { item: wish_item(wm) || "", level: wish_level(wm) }; if (mv > 0) cm.max = mv; else delete cm.max; wish_cfg[wm] = cm; save_wish_cfg(); game_log("Zielbau " + wm + ": Preislimit " + (mv > 0 ? fmt(mv) : "automatisch")); try { t.blur(); } catch (x) {} return; }
         if (ws) { var v = t.value, oldmax = wish_cfg[ws] && wish_cfg[ws].max; if (!v) wish_cfg[ws] = { item: "" }; else wish_cfg[ws] = { item: v, level: default_target_level(G.items[v]) }; if (oldmax) wish_cfg[ws].max = oldmax; save_wish_cfg(); game_log("Zielbau " + ws + ": " + (v ? v + " +" + wish_cfg[ws].level : "kein Ziel")); }
         else if (wl) { var c = wish_cfg[wl] || { item: wish_item(wl) }; c.level = parseInt(t.value); wish_cfg[wl] = c; save_wish_cfg(); game_log("Zielbau " + wl + ": " + c.item + " +" + c.level); }
     };
     win.addEventListener("change", onChange, true);
     var onInput = function (e) { var t = e.target; if (t && t.id == "lp_wiki_q") { wiki.q = t.value; wiki.page = null; render_wiki(); } };
-    var onKeyCap = function (e) { var t = e.target; if (t && (t.id == "lp_wiki_q" || (t.tagName == "INPUT" && inside(e)))) { e.stopPropagation(); if (e.key == "Escape") t.blur(); if (e.key == "Enter" && t.getAttribute("data-wmax") && e.type == "keydown") { try { t.dispatchEvent(new Event("change", { bubbles: true })); } catch (x) {} } } }; // Tasten im Suchfeld nicht ans Spiel/Bot weitergeben
+    var onKeyCap = function (e) { var t = e.target; if (t && (t.id == "lp_wiki_q" || (t.tagName == "INPUT" && inside(e)))) { e.stopPropagation(); if (e.key == "Escape") t.blur(); if (e.key == "Enter" && (t.getAttribute("data-wmax") || t.getAttribute("data-huntmax")) && e.type == "keydown") { try { t.dispatchEvent(new Event("change", { bubbles: true })); } catch (x) {} } } }; // Tasten im Suchfeld nicht ans Spiel/Bot weitergeben
     win.addEventListener("input", onInput, true);
     ["keydown", "keyup", "keypress"].forEach(function (t) { win.addEventListener(t, onKeyCap, true); });
     parent.__lp_panel_h = { down: onDown, move: onMove, up: onUp, click: onClick, change: onChange, input: onInput, key: onKeyCap };
@@ -1094,7 +1095,7 @@ function update_panel() {
       + "<div class='lp_k'>Session " + fmt(sess.xp / sh) + " XP/h · " + fmt(sess.gold / sh) + " G/h · nächstes Level in " + (rate > 0 ? fmt_time((G.levels[character.level] - character.xp) / rate * 3600000) : "-") + "</div></div>";
     h += "<div class='lp_row'><span class='lp_mode'>Modus: " + (manual_spot ? "fest (" + esc(manual_spot) + ")" : "automatisch") + "</span><button data-act='auto'" + (manual_spot ? "" : " class='on'") + ">Auto</button><button data-act='reset'>Neu messen</button><button data-act='worth'" + (only_worth ? " class='on'" : "") + " title='nur die 5 besten nach geschätzten XP/h'>Top 5</button><button data-act='bycatch'" + (bycatch ? " class='on'" : "") + " title='andere sichere Monster in der Nähe mit angreifen'>Beifang</button><button data-act='focus'" + (focus_mode ? " class='on'" : "") + " title='nur farmen/hunten: kein Kuss, Ponty, Markt, Kuchen, keine Ausrüstungsautomatik; Inventar erst unter 3 freien Plätzen bis 20 frei aufräumen (mit Tränken)'>Fokus</button><button data-act='sortinv' title='Inventar sortieren'>Inv ⇅</button></div>"
       + "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Aktionen</span><button data-act='compound' title='Schmuck compounden (getragen + ungetragen)'>Compound</button><button data-act='tidy' title='Schrott verkaufen, Rest in die Bank'>Aufräumen</button><button data-act='bank' title='Schrott aus der Bank holen und verkaufen'>Bank aufräumen</button><button data-act='banksort' title='Bank nach Gruppen sortieren, Reiter lückenlos füllen'>Bank ⇅</button><button data-act='copylog' title='Bot-Log in die Zwischenablage'>Log kopieren</button><button data-act='pauseafter'" + (pause_after ? " class='on'" : "") + " title='Nach Buttons/Tasten pausieren statt weiterfarmen'>Danach: " + (pause_after ? "Pause" : "Farmen") + "</button><button data-act='clearlog' title='Log-Puffer leeren' style='padding:1px 5px'>✕</button></div>";
-    h += "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Hunt: <span style='color:#e6e6e6'>" + esc(mh_txt()) + "</span> · " + tokens() + " Tokens</span><button data-act='hunt'" + (hunt_on ? " class='on'" : "") + " title='Monster Hunt automatisch'>Hunt</button>" + (mh_quest() ? "<button data-act='huntabandon'>Abbrechen</button>" : "") + "</div>";
+    h += "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Hunt: <span style='color:#e6e6e6'>" + esc(mh_txt()) + "</span> · " + tokens() + " Tokens</span><button data-act='hunt'" + (hunt_on ? " class='on'" : "") + " title='Monster Hunt automatisch'>Hunt</button><input data-huntmax='1' value='" + Math.round(hunt_max_danger * 100) + "' title='Jagden nur bis zu dieser Gefahr in % (HP-Anteil je Kill); darüber wird die Jagd übersprungen' style='width:34px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555;text-align:right'><span class='lp_k' style='font-size:11px'>%</span>" + (mh_quest() ? "<button data-act='huntabandon'>Abbrechen</button>" : "") + "</div>";
     h += "<div class='lp_row' style='flex-wrap:wrap;line-height:1.6'><span class='lp_k'>Serverwechsel:</span> <span style='font-size:11px'>" + server_tip_html() + "</span></div>";
     h += arb_html(panel);
     h += team_html();
@@ -1625,7 +1626,10 @@ function mh_quest() { return character.s && character.s.monsterhunt; }
 function mh_txt() { var q = mh_quest(); if (!q) return "keine Jagd"; return q.id + " " + (q.c || 0) + " übrig · " + fmt_time(q.ms || 0); }
 function tokens() { return quantity("monstertoken"); }
 async function daisy() { var pos = find_npc("monsterhunter"); if (!pos) throw "Daisy nicht gefunden"; await travel({ map: pos.map, x: pos.x, y: pos.y }); }
-function hunt_target_ok(id) { return id && G.monsters[id] && is_safe_monster(id) && !hidden_mons[id] && !EXCLUDE[id] && !spot_blocked(id) && team_safe(id); }
+var hunt_max_danger = 0.10; try { var hmd = parseFloat(localStorage.getItem("lp_hunt_max_danger")); if (isFinite(hmd) && hmd > 0) hunt_max_danger = hmd; } catch (e) {} // Jagden nur bis zu dieser Gefahr (Anteil HP je Kill)
+function hunt_danger_ok(id) { var d = G.monsters[id]; return !!d && mon_danger(d) <= hunt_max_danger; }
+function hunt_target_ok(id) { return id && G.monsters[id] && is_safe_monster(id) && hunt_danger_ok(id) && !hidden_mons[id] && !EXCLUDE[id] && !spot_blocked(id) && team_safe(id); }
+function hunt_skip_reason(id) { var d = G.monsters[id]; if (!d) return "unbekannt"; if (!hunt_danger_ok(id)) return Math.round(mon_danger(d) * 100) + " % > " + Math.round(hunt_max_danger * 100) + " %"; if (!is_safe_monster(id)) return "nicht sicher"; if (spot_blocked(id)) return "gesperrt"; if (!team_safe(id)) return "zu stark für den Priester"; return "ausgeblendet"; }
 async function spend_tokens() { // Set-Teile kaufen, günstigstes fehlendes zuerst
     var want = MH_SET.filter(function (n) { var def = G.items[n]; var sl = slot_for_item(def); var worn = character.slots[sl]; return !(worn && worn.name == n) && locate_item(n) < 0; })
         .sort(function (a, b) { return (G.tokens.monstertoken[a] || 99) - (G.tokens.monstertoken[b] || 99); });
@@ -1642,7 +1646,7 @@ async function check_monsterhunt() {
     var q = mh_quest();
     // 1. Jagd läuft, noch Kills offen -> Spot auf Jagdmonster
     if (q && q.c > 0) {
-        if (!hunt_target_ok(q.id)) { if (hunt_spot) { game_log("Jagd auf " + q.id + " nicht sicher/gesperrt – läuft aus, normal farmen"); hunt_reset(0); hunt_cooldown_until = Date.now() + (q.ms || 1800000); } return; } // unsicher -> läuft ab, normal weiterfarmen
+        if (!hunt_target_ok(q.id)) { if (hunt_spot || !hunt_skipped) { hunt_skipped = q.id; game_log("Jagd auf " + q.id + " übersprungen (" + hunt_skip_reason(q.id) + ") – läuft aus, normal farmen"); if (hunt_spot) hunt_reset(0); hunt_cooldown_until = Date.now() + (q.ms || 1800000); } return; } // unsicher -> läuft ab, normal weiterfarmen
         if (q.ms && q.ms < MH_MIN_LEFT_MS && q.c > 3) return; // kaum noch Zeit: nicht mehr wechseln
         if (hunt_spot != q.id) { hunt_spot = q.id; game_log("Monster Hunt: " + q.c + "x " + q.id + " (" + fmt_time(q.ms || 0) + ")"); set_manual_spot(q.id); }
         return;
@@ -1662,7 +1666,7 @@ async function check_monsterhunt() {
             if (hunt_target_ok(q2.id)) { hunt_bad_tries = 0; game_log("Neue Jagd: " + q2.c + "x " + q2.id + " (" + fmt_time(q2.ms || 0) + ")"); }
             else {
                 hunt_bad_tries++;
-                game_log("Jagd auf " + q2.id + " ist nicht sicher – gebe sie auf");
+                game_log("Jagd auf " + q2.id + " übersprungen (" + hunt_skip_reason(q2.id) + ") – gebe sie auf");
                 try { await interact("monsterhunt"); } catch (e) {} await sleep(800);
                 if (mh_quest() && mh_quest().c > 0) { game_log("Aufgeben nicht möglich – Jagd läuft aus, normal weiterfarmen"); hunt_cooldown_until = Date.now() + (mh_quest().ms || 1800000); }
                 else if (hunt_bad_tries >= 3) { hunt_cooldown_until = Date.now() + 10 * 60000; hunt_bad_tries = 0; game_log("3x unsichere Jagd – 10 min Pause"); }
@@ -1674,6 +1678,7 @@ async function check_monsterhunt() {
     hunting = false; busy = false;
     if (!paused) go_to_farm_spot();
 }
+var hunt_skipped = null;
 function hunt_reset(block_ms) { // Jagd-Spot verlassen, zum Nutzer-Modus zurück
     var m = hunt_spot;
     if (m && block_ms) blocked_spots[m] = Date.now() + block_ms;
@@ -3239,7 +3244,7 @@ function start_main() {
   if (main_timer) clearInterval(main_timer);
   main_timer = parent.__lp_main_timer = setInterval(function () {
     heal_logic(); loot();
-    if (character.rip) { if (!rip_counted) { rip_counted = true; day_count("deaths"); game_log("Gestorben (heute " + day.deaths + "x)"); } if (meas) finish_measure(true); respawn(); busy = false; fleeing = false; kissing = false; return; }
+    if (character.rip) { if (!rip_counted) { rip_counted = true; day_count("deaths"); game_log("Gestorben (heute " + day.deaths + "x)"); try { var hq = mh_quest(); if (hq && hq.c > 0 && hunt_spot == hq.id) { game_log("Tod bei der Jagd auf " + hq.id + " – Jagd abgebrochen, Monster 30 min gesperrt"); hunt_reset(30 * 60000); hunt_cooldown_until = Date.now() + (hq.ms || 1800000); } } catch (e) {} } if (meas) finish_measure(true); respawn(); busy = false; fleeing = false; kissing = false; return; }
     rip_counted = false;
     session_tick();
     if (Date.now() - last_panel > 2000) { last_panel = Date.now(); try { update_panel(); update_char_panel(); } catch (e) {} }

@@ -32,13 +32,13 @@
 1. **Gold-Ziel / Fortschritt** – Summe der offenen Zielbau-Kosten minus Gold, geteilt durch aktuelle G/h → „noch X Mio. ≈ Y h farmen". Kleiner Aufwand, sofort spürbar.
 2. **Fokus mit Nachholen** – „Fokus für N h", danach einmal alle Routinen (Kuss, Ponty, Markt, Kuchen, Ausrüstungs-Tick) durchlaufen, aufräumen, zurück in den Fokus. Mittlerer Aufwand.
 3. **Preisgedächtnis Händler** – je Item+Stufe Tiefstpreis/Durchschnitt der letzten 7 Tage speichern; in der Angebotsspalte „Tiefstpreis 7 Tage" und Marker „günstig". Braucht ein paar Tage Daten.
-4. **Tod im Hunt = Monster sperren** – nach Tod am Hunt-Monster sofort 30 min sperren und Jagd wie „alle gelevelt" behandeln. Kleiner Aufwand.
+4. ~~Tod im Hunt = Monster sperren~~ – erledigt v151 (plus Jagd-Gefahrgrenze in %, Feld neben dem Hunt-Knopf).
 5. **Events mitnehmen** – laufende Events (Goo Brawl, Wabbit, Franky, Feiertage) aus `parent.S` erkennen; bei sicherem Event-Monster mit mehr XP/G dorthin wechseln, gleiche Gefahr-Bewertung. Größerer Aufwand, größter XP-Hebel.
 6. **Grad-1-Upgradechancen** (Firestaff & Co.) aus dem Spiel ablesen und eintragen – bisher geschätzt.
 7. **Glück/Gold/XP-Boni** mit kleinen Gewichten in die Item-Bewertung aufnehmen (verändert die Rangfolge im Zielbau-Dropdown).
 8. **Hunt-Server prüfen** – Monster Hunts gelten nur auf dem Server der Annahme (`sn`); bei Abweichung anzeigen, wie abgelaufen behandeln, optional Knopf „zurück nach …“.
 9. **Arbitrage Schritt 2** – Knopf „Arbitrage“: lohnende Angebote kaufen und beim NPC verkaufen, andere Server (kein PVP) per Hin-Kaufen-Verkaufen-Zurück; erst wenn Scan (v138) und Faktor-Messung (v140) belastbar sind.
-10. **Händler-Charakter** (A2) – nach der Hunt-Runde starten: Loader startet Händler mit, Stand + mluck + Loot verkaufen, dann Bank/Nachschub/Upgrades, dann Zielbau-Käufe.
+10. **Händler-Charakter** (A2) – Stufe 1 erledigt v141–v150 (Start per Magier, Stand, mluck, Gold; Priester folgt/heilt/kämpft). Offen: Stufe 2 Loot abholen & am Stand verkaufen, Stufe 3 Bank/Nachschub/Upgrades, Stufe 4 Zielbau-Käufe. Ursprünglicher Plan: Loader startet Händler mit, Stand + mluck + Loot verkaufen, dann Bank/Nachschub/Upgrades, dann Zielbau-Käufe.
 
 ## E) Ideen Panel (Vorschläge vom 18.09., noch nicht beauftragt)
 
