@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v147";
+var BOT_VERSION = "v148";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : "priest";
@@ -326,7 +326,7 @@ function team_inject() { // läuft im Fenster des Teammitglieds nicht unser Skri
 }
 var team_log_seen = {};
 function team_read_logs() { // Händler/Priester schreiben ihr Log in den gemeinsamen Speicher (localStorage), der Magier zeigt es an
-    for (var k in TEAM) { var nm = TEAM[k]; try { var arr = JSON.parse(localStorage.getItem("lp_tlog_" + nm) || "[]"); var seen = team_log_seen[nm] || 0; for (var i = 0; i < arr.length; i++) { var ln = arr[i]; if (ln.t > seen) { team_log_seen[nm] = ln.t; game_log("[" + (k == "merch" ? "Merch" : "Priest") + "] " + ln.m); } } if (!team_log_seen[nm]) team_log_seen[nm] = Date.now(); } catch (e) {} }
+    for (var k in TEAM) { var nm = TEAM[k]; try { if (!team_log_seen[nm]) { team_log_seen[nm] = Date.now() - 3000; continue; } var arr = JSON.parse(localStorage.getItem("lp_tlog_" + nm) || "[]"); var seen = team_log_seen[nm]; for (var i = 0; i < arr.length; i++) { var ln = arr[i]; if (ln.t > seen) { team_log_seen[nm] = ln.t; game_log("[" + (k == "merch" ? "Merch" : "Priest") + "] " + ln.m); } } } catch (e) {} }
 }
 var cm_selftest = 0;
 function team_broadcast() { // alle 5 s: wo bin ich, was mache ich (für Händler und Priester)
@@ -2495,7 +2495,7 @@ function wish_ui_html() { // Zielbau-Tabelle
 
 var WISH_MAX = { harbringer: 4000000, firestaff: 2500000, froststaff: 2500000, wbook1: 5000000, wbook0: 800000, cearring: 2000000, intearring: 800000, t2intamulet: 2500000, intamulet: 800000, intbelt: 800000, orbofint: 2500000, orbg: 500000, cring: 2000000, intring: 500000, ringsj: 300000, mmhat: 1500000, mmarmor: 1500000, mmpants: 1500000, mmgloves: 1500000, mmshoes: 2000000 };
 var HP_JEWELRY = /^(hpamulet|hpbelt)$/;   // nur HP – für Magierschaden wertlos, wird verkauft statt compoundet
-var AUTO_GEAR = true, AUTO_GEAR_INTERVAL = 30 * 60000, last_auto_gear = rt("last_auto_gear", Date.now() - 20 * 60000), WEAPON_SAFE_TARGET = 7, AUTO_ARMOR_MAX = 7;
+var AUTO_GEAR = true, AUTO_GEAR_INTERVAL = 30 * 60000, last_auto_gear = Math.max(rt("last_auto_gear", 0), Date.now() - 20 * 60000), WEAPON_SAFE_TARGET = 7, AUTO_ARMOR_MAX = 7;
 var NONWISH_MAX_PRICE = 400000; // Käufe außerhalb des Zielbaus ("jetzt besser") nur bis zu diesem Preis
 var auto_mode = false; // läuft die Ausrüstungsroutine gerade automatisch?
 var last_best_check = 0;
