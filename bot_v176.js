@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v175";
+var BOT_VERSION = "v176";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : character.ctype == "ranger" || /ranger/i.test(character.name) ? "ranger" : "priest";
@@ -3625,8 +3625,7 @@ async function upgrade_routine_inner(manual) {
     var spares = (function () { var eq = equipped_names(), g = {}; character.items.forEach(function (it) { if (it && G.items[it.name] && G.items[it.name].compound && !eq[it.name] && (it.level || 0) < COMPOUND_SPARE_MAX) { var k = it.name + "|" + (it.level || 0); g[k] = (g[k] || 0) + 1; } }); return Object.keys(g).some(function (k) { return g[k] >= 3; }); })();
     var weapon_todo = character.slots.mainhand && G.items[character.slots.mainhand.name].upgrade && wish_item("mainhand") == character.slots.mainhand.name && (character.slots.mainhand.level || 0) < slot_target("mainhand", is_buyable(character.slots.mainhand.name) ? UPGRADE_TARGET : WEAPON_SAFE_TARGET, 0);
     var wish_todo = wish_status().some(function (x) { return !x.have && x.seen; });
-    var team_todo = !focus_mode && team_build_todo().length > 0;
-    if (!empty && !gear && !spares && !up_slots.length && !stat_slots.length && !comp_slots.length && !weapon_todo && !wish_todo && !team_todo) { if (manual) game_log("Nichts zu tun (oder zu wenig freies Gold: " + fmt(spendable()) + ")"); return; }
+    if (!empty && !gear && !spares && !up_slots.length && !stat_slots.length && !comp_slots.length && !weapon_todo && !wish_todo) { if (manual) game_log("Nichts zu tun (oder zu wenig freies Gold: " + fmt(spendable()) + ")"); return; }
     if (character.esize < 2) { game_log("Upgrade: Inventar zu voll"); return; }
 
     upgrading = true; busy = true; set_message("Upgrade");
@@ -3650,8 +3649,7 @@ async function upgrade_routine_inner(manual) {
         if (mh && G.items[mh.name].upgrade && wish_item("mainhand") == mh.name) { check_pause(); await process_slot("mainhand", slot_target("mainhand", is_buyable(mh.name) ? UPGRADE_TARGET : WEAPON_SAFE_TARGET, 0)); }
         // 2. Rest nach Wert je Aufwand
         await upgrade_by_recommendation();
-        // 2b. Team-Zielbau (Priest/Ranger): kaufen und aufwerten, Übergabe läuft nebenbei
-        try { await team_build_step(); } catch (e) { if (e == "PAUSE") throw e; game_log("Team-Zielbau: " + err_txt(e)); }
+        // Team-Zielbau (Priest/Ranger) läuft NICHT hier mit – nur über den Knopf "Jetzt" (team_build_now)
 
         stat_slots = spendable() >= stat_price ? slots_without_stat().filter(function (sl) { return wish_item(sl) == character.slots[sl].name; }) : [];
         if (stat_slots.length) {
