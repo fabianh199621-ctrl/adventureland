@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v151";
+var BOT_VERSION = "v152";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : "priest";
@@ -253,7 +253,7 @@ function all_leveled_check(farm, seen, valid) {
     if (!leveled_since) { leveled_since = Date.now(); return; }
     if (Date.now() - leveled_since < LEVELED_WAIT_MS) return;
     leveled_since = 0;
-    if (hunt_spot == farm) { game_log("Alle " + farm + " gelevelt – Jagd wird aufgegeben"); hunt_abandon(); return; }
+    if (hunt_spot == farm) { game_log("Alle " + farm + " gelevelt – Jagd wird aufgegeben"); hunt_abandon(true); return; }
     blocked_spots[farm] = Date.now() + LEVELED_BLOCK_MS;
     game_log("Alle " + farm + " gelevelt – Spot 30 min " + (manual_spot == farm ? "ausgesetzt, solange wählt die Automatik" : "gesperrt"));
     need_repick = true; meas = null; current_spot = null; save_state();
@@ -296,7 +296,7 @@ function team_tick() { // fehlende Teammitglieder starten, abgeschaltete stoppen
         else if (!on && running) { try { stop_character(nm); game_log("Team: " + nm + " gestoppt"); } catch (e) {} }
     }
     // Party: Priester einladen, wenn er läuft und nicht dabei ist
-    if (team_on.priest && act[TEAM.priest] && Date.now() - last_party_try > 60000) { var inparty = character.party && parent.party && parent.party[TEAM.priest]; if (!inparty) { last_party_try = Date.now(); try { send_party_invite(TEAM.priest); } catch (e) {} } }
+    if (Date.now() - last_party_try > 60000) { var need = []; if (team_on.priest && act[TEAM.priest]) need.push(TEAM.priest); var ms = team_state[TEAM.merch]; if (team_on.merch && act[TEAM.merch] && ms && /levelt|folgt/.test(ms.state || "")) need.push(TEAM.merch); var missing = need.filter(function (nm) { return !(character.party && parent.party && parent.party[nm]); }); if (missing.length) { last_party_try = Date.now(); missing.forEach(function (nm) { try { send_party_invite(nm); } catch (e) {} }); } }
 }
 var team_inject_t = {};
 function team_windows() { // Fenster der mitgestarteten Charaktere finden (gleiche Herkunft, daher zugreifbar)
@@ -507,10 +507,15 @@ function stats_valid(st) {
 // Geschätztes Potenzial aus Spieldaten: XP pro Kill / nötige Schläge
 function estimate(mon) { return mon_xph_est(G.monsters[mon], mon) / 100; }
 var TEAM_ESCORT_LEVEL = 20; // bis zu diesem Priester-Level nur Spots, die der Priester überlebt
-function team_escort() { // mitlaufender, noch schwacher Priester?
-    if (!team_on.priest) return null; var st = team_state[TEAM.priest];
-    if (!st || Date.now() - st.t > 120000 || !team_running(TEAM.priest)) return null;
-    return st.level < TEAM_ESCORT_LEVEL ? st : null;
+function team_escort() { // mitlaufender, noch schwacher Charakter (Priester unter Lv 20, Händler in der Level-Phase)
+    var weakest = null;
+    [["priest", TEAM_ESCORT_LEVEL], ["merch", 40]].forEach(function (p) {
+        var k = p[0], nm = TEAM[k]; if (!team_on[k]) return; var st = team_state[nm];
+        if (!st || Date.now() - st.t > 120000 || !team_running(nm)) return;
+        if (k == "merch" && !/levelt|folgt/.test(st.state || "")) return; // Händler nur, wenn er gerade mitläuft
+        if (st.level < p[1] && (!weakest || st.level < weakest.level)) weakest = st;
+    });
+    return weakest;
 }
 function team_safe(mon) { // Spot für den Priester tragbar: Monsterlevel nahe seinem Level, Angriff klein gegen seine HP
     var esc = team_escort(); if (!esc) return true;
@@ -1685,7 +1690,7 @@ function hunt_reset(block_ms) { // Jagd-Spot verlassen, zum Nutzer-Modus zurück
     hunt_prev = null; hunt_spot = null;
     manual_spot = user_manual; need_repick = true; current_spot = null; meas = null; save_state();
 }
-async function hunt_abandon() {
+async function hunt_abandon(auto) { // auto: vom Bot selbst ausgelöst (kein "Danach: Pause")
     var q = mh_quest();
     if (!q) { game_log("Keine Jagd aktiv"); hunt_reset(0); return; }
     busy = true;
@@ -1696,7 +1701,7 @@ async function hunt_abandon() {
     if (still && still.c > 0) { hunt_cooldown_until = Date.now() + (still.ms || 1800000); game_log("Aufgeben nicht möglich – Jagd auf " + still.id + " läuft in " + fmt_time(still.ms || 0) + " aus, solange normal farmen"); }
     else { hunt_cooldown_until = Date.now() + 60000; game_log("Jagd aufgegeben"); }
     hunt_reset(LEVELED_BLOCK_MS);
-    after_action("Jagd aufgeben");
+    if (auto) { if (!paused) go_to_farm_spot(); } else after_action("Jagd aufgeben");
 }
 
 // ---------- Tränke kaufen: beste Stufe, die das Gold hergibt ----------
