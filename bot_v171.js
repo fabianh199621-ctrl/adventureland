@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v170";
+var BOT_VERSION = "v171";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : character.ctype == "ranger" || /ranger/i.test(character.name) ? "ranger" : "priest";
@@ -420,6 +420,7 @@ function give_to_team(key) { // ausgewähltes Inventarteil an Priest/Ranger send
     if (!it) { game_log("Geben: erst ein Teil auswählen"); return; }
     var p = get_player(nm); if (!p || p.rip) { game_log("Geben: " + lab + " nicht in Sicht"); return; }
     if (p.map != character.map || distance(character, p) > 350) { game_log("Geben: " + lab + " zu weit weg (" + (p.map != character.map ? "andere Karte" : Math.round(distance(character, p)) + " Einheiten") + ") – er muss neben dir stehen"); return; }
+    var st = team_state[nm]; if (st && typeof st.free == "number" && st.free < 1) { game_log("Geben: " + lab + " hat keinen freien Inventarplatz – er verkauft Reste beim nächsten Stadtgang"); return; }
     var def = G.items[it.name], slot = null; for (var sl in SLOT_TYPES) { if (fits_class(def, TEAM_CTYPE[key], sl)) { slot = sl; break; } }
     if (!slot) { game_log("Geben: " + it.name + " passt nicht zu " + lab); return; }
     try { team_send(nm, { t: "gear", name: it.name, level: it.level || 0, slot: slot, manual: true }); send_item(nm, i, it.q || 1); game_log("[" + lab + "] bekommt " + it.name + "+" + (it.level || 0) + " (manuell, " + slot + ")"); give_sel = -1; last_panel = 0; } catch (e) { game_log("Geben: " + err_txt(e)); }
