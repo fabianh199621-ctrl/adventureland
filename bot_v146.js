@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v145";
+var BOT_VERSION = "v146";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : "priest";
@@ -313,7 +313,16 @@ function team_inject() { // läuft im Fenster des Teammitglieds nicht unser Skri
         try { have = cw && (cw.MERCH_VERSION || cw.PRIEST_VERSION); } catch (e) {}
         if (have == BOT_VERSION) continue;
         team_inject_t[nm] = Date.now();
-        if (!cw) { game_log("Team: " + nm + " – Fenster da, aber noch kein Code-Frame"); continue; }
+        if (!cw) {
+            var keys = [], pk = [];
+            try { for (var kk in w.win) if (/runner|code|slot|start|load_/i.test(kk)) keys.push(kk + ":" + typeof w.win[kk]); } catch (e) {}
+            try { for (var k2 in parent) if (/runner|code|slot/i.test(k2)) pk.push(k2 + ":" + typeof parent[k2]); } catch (e) {}
+            var fr = 0; try { fr = w.win.document.querySelectorAll("iframe").length; } catch (e) {}
+            var cs = null; try { cs = { code: typeof w.win.code, code_slot: w.win.code_slot, code_name: w.win.code_name, runner: typeof w.win.runner }; } catch (e) {}
+            game_log("Team: " + nm + " – Fenster da, aber noch kein Code-Frame (iframes " + fr + "). Schlüssel: " + keys.slice(0, 40).join(",") + " | eigene: " + pk.slice(0, 30).join(",") + " | " + JSON.stringify(cs));
+            try { if (typeof w.win.start_runner == "function") { w.win.start_runner(); game_log("Team: " + nm + " – start_runner() aufgerufen"); } } catch (e) { game_log("Team: start_runner: " + err_txt(e)); }
+            continue;
+        }
         var role = k == "merch" ? "merchant" : "priest";
         game_log("Team: " + nm + " läuft " + (have ? have : "fremden/leeren Code") + " – spiele " + role + "_" + BOT_VERSION + ".js direkt ein");
         (function (nm, cw, role) {
