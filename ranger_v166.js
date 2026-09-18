@@ -1,7 +1,11 @@
 // ===== Adventure Land – LogicPlan Ranger (F4llenRanger) =====
 // Folgt dem Magier, greift dessen Ziel an (Supershot, Hunter's Mark, 3-/5-Shot), versorgt sich selbst mit NPC-Ausrüstung und Tränken.
 // Meldungen gehen per Charakter-Nachricht an den Magier ("[Ranger] …").
-var RANGER_VERSION = "v165";
+var RANGER_VERSION = "v166";
+// Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
+try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
+var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
+
 var MAGE = "F4llen";
 try { localStorage.setItem("lp_tlog_" + character.name, JSON.stringify([{ t: Date.now(), m: "Skript geladen (" + character.ctype + ", Lv " + character.level + ", Server " + (typeof server != "undefined" && server ? (server.region + " " + server.id) : "?") + ")" }])); } catch (e) {}
 var RANGER_ATTACK_LEVEL = 1; // greift von Anfang an mit an (Fernkampf)
@@ -97,7 +101,7 @@ function skill_ready(name) { var sk = G.skills[name]; if (!sk) return false; if 
 function targets_near(n) { var out = []; for (var id in parent.entities) { var m = parent.entities[id]; if (m && m.type == "monster" && !m.dead && is_in_range(m) && (m.target == character.name || m.target == MAGE || (mage && mage.tgt == m.id))) out.push(m); } return out.slice(0, n); }
 async function tick() {
     if (character.rip) { status("tot"); await sleep(15000); try { respawn(); } catch (e) {} await sleep(5000); return; }
-    if (p_paused) { status("Pause"); if (is_moving(character)) { try { stop("move"); stop("smart"); } catch (e) {} } return; }
+    // Pause des Magiers: trotzdem folgen, heilen, verteidigen und sein Ziel mitangreifen (volle Unterstützung beim manuellen Spielen)
     var hpr = character.hp / character.max_hp, mpr = character.mp / character.max_mp;
     if (hpr < HEAL_SELF_BELOW) { if (!use_pot("hpot")) { try { use_skill("regen_hp"); } catch (e) {} } }
     if (mpr < 0.3) { if (!use_pot("mpot")) { try { use_skill("regen_mp"); } catch (e) {} } }
@@ -127,7 +131,8 @@ try { window.on_cm = on_cm; if (typeof on_party_invite == "function") window.on_
 
 // Tod: unabhängig von der Hauptschleife wiederbeleben (falls die irgendwo hängt)
 var __dead_since = 0, __dead_logged = false;
-setInterval(function () {
+(function (g) { var __watch = setInterval(function () {
+    if (window.__lp_gen != g) { clearInterval(__watch); return; }
     try {
         if (character.rip) {
             if (!__dead_since) __dead_since = Date.now();
@@ -135,7 +140,7 @@ setInterval(function () {
             if (Date.now() - __dead_since > 15000) { try { respawn(); } catch (e) {} try { if (Date.now() - __dead_since > 40000 && parent.socket) parent.socket.emit("respawn"); } catch (e) {} }
         } else if (__dead_since) { __dead_since = 0; __dead_logged = false; say("wieder da (Lv " + character.level + ")"); }
     } catch (e) {}
-}, 3000);
+}, 3000); })(MY_GEN);
 try { send_cm(MAGE, { t: "hello", v: RANGER_VERSION }); } catch (e) {}
 say("Ranger " + RANGER_VERSION + " gestartet (Lv " + character.level + ")");
-(async function () { while (true) { try { await tick(); } catch (e) { say_once("err", "Fehler: " + (e && e.message ? e.message : e), 60000); } await sleep(300); } })();
+(async function () { var g = MY_GEN; if (HAD_OLD) { say("neue Version " + (typeof PRIEST_VERSION != "undefined" ? PRIEST_VERSION : RANGER_VERSION) + " übernommen"); await sleep(1500); } while (window.__lp_gen == g) { try { await tick(); } catch (e) { say_once("err", "Fehler: " + (e && e.message ? e.message : e), 60000); } await sleep(300); } })();

@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v165";
+var BOT_VERSION = "v166";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : character.ctype == "ranger" || /ranger/i.test(character.name) ? "ranger" : "priest";
@@ -334,7 +334,7 @@ var cm_selftest = 0;
 function team_broadcast() { // alle 5 s: wo bin ich, was mache ich (für Händler und Priester)
     if (Date.now() - last_team_cast < 5000) return; last_team_cast = Date.now();
     var act = active_chars(), ml = character.s && character.s.mluck;
-    var msg = { t: "me", map: character.map, x: Math.round(character.x), y: Math.round(character.y), level: character.level, hp: character.hp, max_hp: character.max_hp, paused: paused || !bot_running, spot: current_spot, tgt: last_target_id, mluck: ml ? { f: ml.f, ms: ml.ms, strong: !!ml.strong } : null, in: character.in };
+    var msg = { t: "me", map: character.map, x: Math.round(character.x), y: Math.round(character.y), level: character.level, hp: character.hp, max_hp: character.max_hp, paused: paused || !bot_running, spot: current_spot, tgt: (function () { if (!paused) return last_target_id; try { var mt = get_target(); return mt && mt.type == "monster" && !mt.dead ? mt.id : null; } catch (e) { return null; } })(), mluck: ml ? { f: ml.f, ms: ml.ms, strong: !!ml.strong } : null, in: character.in };
     for (var k in TEAM) { var nm = TEAM[k]; if (team_on[k] && act[nm]) { try { send_cm(nm, msg); } catch (e) {} } }
 }
 function team_send(name, data) { try { send_cm(name, data); } catch (e) {} }
@@ -418,7 +418,7 @@ function reload_bot() {
             parent.__lp_resume = { paused: paused, t: Date.now(), timers: { last_ponty: last_ponty, last_market: last_market, shells_retry_at: shells_retry_at, hunt_cooldown_until: hunt_cooldown_until, cake_next: cake_next, last_hunt_check: last_hunt_check, last_global_scan: last_global_scan, last_auto_gear: last_auto_gear } }; // Zustand für die neue Version
             if (main_timer) clearInterval(main_timer); main_timer = null; parent.__lp_main_timer = null;
             stop("smart"); stop("move");
-            try { var ac = active_chars(); TEAM_NAMES.forEach(function (nm) { if (ac[nm]) { try { stop_character(nm); } catch (e) {} } }); parent.__lp_team_restart_after = Date.now() + 15000; } catch (e) {} // Team lädt danach ebenfalls die neue Version (Neustart erst nach dem Abmelden)
+            // Team bleibt eingeloggt und bekommt die neue Version per Einspielen (team_inject), kein Neustart mehr
             try { eval(code); } catch (e) { game_log("Startfehler: " + e); start_main(); }
         })
         .catch(function (e) { game_log("Neu laden fehlgeschlagen: " + e); });

@@ -1,7 +1,11 @@
 // ===== Adventure Land – LogicPlan Händler (F4llenMerch) – Stufe 1 =====
 // Läuft unsichtbar neben dem Magier. Aufgaben: Stand kaufen und öffnen, Loot abholen/verkaufen/einlagern,
 // Startgold vom Magier holen. mluck ist abgeschaltet (braucht Lv 40, Händler levelt praktisch nicht) – USE_MLUCK/LEVEL_MODE. Meldungen gehen per Charakter-Nachricht an den Magier und erscheinen dort als "[Merch] …".
-var MERCH_VERSION = "v165";
+var MERCH_VERSION = "v166";
+// Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
+try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
+var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
+
 var MAGE = "F4llen";
 try { localStorage.setItem("lp_tlog_" + character.name, JSON.stringify([{ t: Date.now(), m: "Skript geladen (" + character.ctype + ", Lv " + character.level + ", Server " + (typeof server != "undefined" && server ? (server.region + " " + server.id) : "?") + ")" }])); } catch (e) {}
 var STAND_ITEM = "stand0";
@@ -164,7 +168,9 @@ async function do_home() {
     if (!stand_open() && locate_item(STAND_ITEM) >= 0) { if (stand_on()) say_once("standopen", "Stand geöffnet", 3600000); }
 }
 async function loop() {
-    while (true) {
+    var g = MY_GEN;
+    if (HAD_OLD) { say("neue Version " + MERCH_VERSION + " übernommen"); await sleep(3000); }
+    while (window.__lp_gen == g) {
         try {
             if (character.rip) { stand_off(); await sleep(15000); respawn(); await sleep(5000); continue; }
             if (m_paused) { if (stand_open()) stand_off(); status("Pause"); await sleep(3000); continue; }
@@ -191,7 +197,8 @@ try { window.on_cm = on_cm; if (typeof on_party_invite == "function") window.on_
 
 // Tod: unabhängig von der Hauptschleife wiederbeleben (falls die irgendwo hängt)
 var __dead_since = 0, __dead_logged = false;
-setInterval(function () {
+(function (g) { var __watch = setInterval(function () {
+    if (window.__lp_gen != g) { clearInterval(__watch); return; }
     try {
         if (character.rip) {
             if (!__dead_since) __dead_since = Date.now();
@@ -199,7 +206,7 @@ setInterval(function () {
             if (Date.now() - __dead_since > 15000) { try { respawn(); } catch (e) {} try { if (Date.now() - __dead_since > 40000 && parent.socket) parent.socket.emit("respawn"); } catch (e) {} }
         } else if (__dead_since) { __dead_since = 0; __dead_logged = false; say("wieder da (Lv " + character.level + ")"); }
     } catch (e) {}
-}, 3000);
+}, 3000); })(MY_GEN);
 try { send_cm(MAGE, { t: "hello", v: MERCH_VERSION }); } catch (e) {}
 say("Händler " + MERCH_VERSION + " gestartet (Lv " + character.level + ", " + character.gold + " Gold" + (locate_item(STAND_ITEM) >= 0 ? ", Stand vorhanden" : ", kein Stand") + ")");
 loop();
