@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v158";
+var BOT_VERSION = "v159";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : "priest";
@@ -353,7 +353,7 @@ try { window.on_cm = on_cm; parent.window.__lp_on_cm = on_cm; } catch (e) {} // 
 setTimeout(function () { try { cm_selftest = 1; send_cm(character.name, { t: "ping" }); setTimeout(function () { if (cm_selftest != 2) game_log("Team: Selbsttest – keine Nachricht angekommen (on_cm greift nicht)"); }, 5000); } catch (e) { game_log("Team: send_cm-Fehler " + err_txt(e)); } }, 3000);
 function team_html() {
     var parts = [];
-    for (var k in TEAM) { var nm = TEAM[k], st = team_state[nm], run = team_running(nm), lab = k == "merch" ? "Merch" : "Priest"; var raw = active_chars()[nm]; parts.push("<span style='color:" + (team_on[k] ? (run ? "#4caf50" : "#ffb74d") : "#9aa3b2") + "'>" + lab + (st && Date.now() - st.t < 60000 ? " Lv " + st.level + " · " + esc(st.state || "") : run ? " (" + esc(String(raw)) + ", keine Meldung)" : team_on[k] ? " (aus/offline)" : "") + "</span> <button data-act='team' data-k='" + k + "'" + (team_on[k] ? " class='on'" : "") + " style='padding:0 5px'>" + (team_on[k] ? "an" : "aus") + "</button>"); }
+    for (var k in TEAM) { var nm = TEAM[k], st = team_state[nm], run = team_running(nm), lab = k == "merch" ? "Merch" : "Priest"; var raw = active_chars()[nm]; try { var pe = get_player(nm); if (pe && pe.rip && st) st.state = "tot"; } catch (e) {} parts.push("<span style='color:" + (team_on[k] ? (run ? "#4caf50" : "#ffb74d") : "#9aa3b2") + "'>" + lab + (st && Date.now() - st.t < 60000 ? " Lv " + st.level + " · " + esc(st.state || "") : run ? " (" + esc(String(raw)) + ", keine Meldung)" : team_on[k] ? " (aus/offline)" : "") + "</span> <button data-act='team' data-k='" + k + "'" + (team_on[k] ? " class='on'" : "") + " style='padding:0 5px'>" + (team_on[k] ? "an" : "aus") + "</button>"); }
     return "<div class='lp_row' style='flex-wrap:wrap;line-height:1.6'><span class='lp_k'>Team:</span> " + parts.join(" · ") + "</div>";
 }
 function team_threat() { // Monster, das ein Teammitglied angreift und in meiner Nähe ist

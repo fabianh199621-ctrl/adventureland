@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Händler (F4llenMerch) – Stufe 1 =====
 // Läuft unsichtbar neben dem Magier. Aufgaben: Stand kaufen und öffnen, dem Magier regelmäßig mluck geben,
 // Startgold vom Magier holen. Meldungen gehen per Charakter-Nachricht an den Magier und erscheinen dort als "[Merch] …".
-var MERCH_VERSION = "v158";
+var MERCH_VERSION = "v159";
 var MAGE = "F4llen";
 try { localStorage.setItem("lp_tlog_" + character.name, JSON.stringify([{ t: Date.now(), m: "Skript geladen (" + character.ctype + ", Lv " + character.level + ", Server " + (typeof server != "undefined" && server ? (server.region + " " + server.id) : "?") + ")" }])); } catch (e) {}
 var STAND_ITEM = "stand0";
@@ -15,7 +15,7 @@ function say(msg) { try { send_cm(MAGE, { t: "log", msg: msg }); } catch (e) {} 
 function say_once(key, msg, every) { if (last_log[key] && Date.now() - last_log[key] < (every || 600000)) return; last_log[key] = Date.now(); say(msg); }
 function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 var last_state = null;
-function status(state) { if (state == last_state && Date.now() - last_status < 30000) return; last_state = state; last_status = Date.now(); try { send_cm(MAGE, { t: "st", level: character.level, state: state, gold: character.gold, stand: !!character.stand, map: character.map, hp: character.hp, max_hp: character.max_hp }); } catch (e) {} }
+function status(state) { if (state == last_state && Date.now() - last_status < 30000) return; last_state = state; last_status = Date.now(); try { send_cm(MAGE, { t: "st", level: character.level, state: character.rip ? "tot" : state, gold: character.gold, stand: !!character.stand, map: character.map, hp: character.hp, max_hp: character.max_hp }); } catch (e) {} }
 function on_cm(name, data) {
     if (name != MAGE || !data) return;
     if (data.t == "me") { mage = data; mage.t = Date.now(); if (typeof data.paused == "boolean") m_paused = data.paused; }
@@ -120,6 +120,18 @@ async function loop() {
     }
 }
 try { window.on_cm = on_cm; if (typeof on_party_invite == "function") window.on_party_invite = on_party_invite; if (typeof on_party_request == "function") window.on_party_request = on_party_request; } catch (e) {}
+
+// Tod: unabhängig von der Hauptschleife wiederbeleben (falls die irgendwo hängt)
+var __dead_since = 0, __dead_logged = false;
+setInterval(function () {
+    try {
+        if (character.rip) {
+            if (!__dead_since) __dead_since = Date.now();
+            if (!__dead_logged) { __dead_logged = true; say("gestorben (" + character.map + " " + Math.round(character.x) + "," + Math.round(character.y) + ") – Wiederbelebung in 15 s"); }
+            if (Date.now() - __dead_since > 15000) { try { respawn(); } catch (e) {} try { if (Date.now() - __dead_since > 40000 && parent.socket) parent.socket.emit("respawn"); } catch (e) {} }
+        } else if (__dead_since) { __dead_since = 0; __dead_logged = false; say("wieder da (Lv " + character.level + ")"); }
+    } catch (e) {}
+}, 3000);
 try { send_cm(MAGE, { t: "hello", v: MERCH_VERSION }); } catch (e) {}
 say("Händler " + MERCH_VERSION + " gestartet (Lv " + character.level + ", " + character.gold + " Gold" + (locate_item(STAND_ITEM) >= 0 ? ", Stand vorhanden" : ", kein Stand") + ")");
 loop();
