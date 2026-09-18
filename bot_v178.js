@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v177";
+var BOT_VERSION = "v178";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : character.ctype == "ranger" || /ranger/i.test(character.name) ? "ranger" : "priest";
@@ -439,19 +439,25 @@ async function team_build_step(only, manual) { // in der Ausrüstungsroutine: bi
         var t = todo[i], c = t.cfg, name = c.item, lab = TEAM_LABEL[t.key];
         if (g0 - character.gold > TEAM_BUILD_BUDGET) { game_log("Team-Zielbau: Budget für diesen Durchlauf (" + fmt(TEAM_BUILD_BUDGET) + ") ausgeschöpft"); break; }
         if (character.esize < 2) { game_log("Team-Zielbau: Inventar zu voll"); break; }
-        if (!tw_copies(name).length) { // beschaffen
-            if (is_buyable(name)) { if (!await buy_items(name, 1)) continue; game_log("Team-Zielbau [" + lab + "]: " + name + " beim NPC gekauft"); }
-            else { var off = tw_market_offer(name); if (!off || off.price > (c.max || TEAM_BUILD_DEFAULT_MAX) || off.price > spendable()) continue; if (!await tw_buy_offer(off)) continue; game_log("Team-Zielbau [" + lab + "]: " + name + "+" + (off.level || 0) + " am Markt gekauft (" + fmt(off.price) + ")"); }
-        }
-        var cp = tw_copies(name)[0]; if (!cp) continue;
-        if (cp.level < c.level) {
+        var rebuys = 0, stopped = false;
+        while (rebuys <= 3) { // bei Zerstörung im selben Durchlauf neu kaufen und weiterbauen
+            check_pause();
+            if (g0 - character.gold > TEAM_BUILD_BUDGET) { game_log("Team-Zielbau: Budget für diesen Durchlauf (" + fmt(TEAM_BUILD_BUDGET) + ") ausgeschöpft"); stopped = true; break; }
+            if (!tw_copies(name).length) { // beschaffen
+                if (is_buyable(name)) { if (!await buy_items(name, 1)) break; game_log("Team-Zielbau [" + lab + "]: " + name + " beim NPC gekauft" + (rebuys ? " (Neukauf " + rebuys + ")" : "")); }
+                else { var off = tw_market_offer(name); if (!off || off.price > (c.max || TEAM_BUILD_DEFAULT_MAX) || off.price > spendable()) break; if (!await tw_buy_offer(off)) break; game_log("Team-Zielbau [" + lab + "]: " + name + "+" + (off.level || 0) + " am Markt gekauft (" + fmt(off.price) + ")"); }
+            }
+            var cp = tw_copies(name)[0]; if (!cp) break;
+            if (cp.level >= c.level) break;
             var lv = Math.min(c.level, TEAM_BUILD_MAX_LEVEL);
             await travel_place("upgrade");
-            game_log("Team-Zielbau [" + lab + "]: " + name + " +" + cp.level + " → +" + lv + " (Chance nächste Stufe " + success_txt("u", cp.level) + ")");
+            game_log("Team-Zielbau [" + lab + "]: " + name + " +" + cp.level + " → +" + lv + " (Chance +" + cp.level + "→+" + (cp.level + 1) + ": " + success_txt("u", cp.level) + ")");
             var r = await upgrade_inv(name, cp.level, lv);
-            if (r.destroyed) { game_log("Team-Zielbau [" + lab + "]: " + name + " zerstört – wird beim nächsten Durchlauf neu gekauft"); }
-            if (r.stopped) break;
+            if (r.stopped) { stopped = true; break; }
+            if (r.destroyed) { rebuys++; if (rebuys > 3) game_log("Team-Zielbau [" + lab + "]: " + name + " 3× zerstört – nächster Versuch beim nächsten Durchlauf"); else game_log("Team-Zielbau [" + lab + "]: " + name + " zerstört – kaufe neu"); continue; }
+            break;
         }
+        if (stopped) break;
         var cp2 = tw_copies(name)[0];
         if (team_wish_stat && cp2 && cp2.level >= c.level) { check_pause(); await tw_apply_stat(t.key, name); }
         done++;
