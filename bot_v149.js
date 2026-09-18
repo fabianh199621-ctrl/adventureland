@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v148";
+var BOT_VERSION = "v149";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : "priest";
@@ -506,9 +506,23 @@ function stats_valid(st) {
 }
 // Geschätztes Potenzial aus Spieldaten: XP pro Kill / nötige Schläge
 function estimate(mon) { return mon_xph_est(G.monsters[mon], mon) / 100; }
+var TEAM_ESCORT_LEVEL = 20; // bis zu diesem Priester-Level nur Spots, die der Priester überlebt
+function team_escort() { // mitlaufender, noch schwacher Priester?
+    if (!team_on.priest) return null; var st = team_state[TEAM.priest];
+    if (!st || Date.now() - st.t > 120000 || !team_running(TEAM.priest)) return null;
+    return st.level < TEAM_ESCORT_LEVEL ? st : null;
+}
+function team_safe(mon) { // Spot für den Priester tragbar: Monsterlevel nahe seinem Level, Angriff klein gegen seine HP
+    var esc = team_escort(); if (!esc) return true;
+    var d = G.monsters[mon]; if (!d) return true;
+    var php = esc.max_hp || (60 + esc.level * 30);
+    return (d.level || 1) <= esc.level + 3 && d.attack * 4 <= php;
+}
+var team_safe_warned = 0;
 function candidate_list() {
     var list = visible_mons().filter(function (m) {
         if (spot_blocked(m)) return false;
+        if (!team_safe(m)) return false;
         var st = farm_stats[m];
         if (st && st.unsafe_until && character.level < st.unsafe_until) return false;
         return true;
@@ -518,7 +532,7 @@ function candidate_list() {
 }
 function choose_spot() {
     var cands = candidate_list();
-    if (!cands.length) return "goo";
+    if (!cands.length) return team_escort() ? "bee" : "goo";
     // 1. noch nicht (oder veraltet) gemessene Spots zuerst
     for (var i = 0; i < cands.length; i++) if (!stats_valid(farm_stats[cands[i]])) { game_log("Messe Spot: " + cands[i]); return cands[i]; }
     // 2. sonst bester Score
@@ -536,7 +550,8 @@ function choose_spot() {
 }
 function pick_farm_monster() {
     if (!has_weapon()) return NO_WEAPON_MONSTER;
-    if (manual_spot && !spot_blocked(manual_spot)) { if (current_spot != manual_spot) { current_spot = manual_spot; need_repick = false; meas = null; save_state(); } return current_spot; }
+    if (manual_spot && !spot_blocked(manual_spot)) { if (current_spot != manual_spot) { current_spot = manual_spot; need_repick = false; meas = null; save_state(); } if (!team_safe(manual_spot) && Date.now() - team_safe_warned > 600000) { team_safe_warned = Date.now(); game_log("Achtung: Spot " + manual_spot + " ist für den Priester (Lv " + team_escort().level + ") zu gefährlich – fester Spot bleibt, aber er wird dort sterben"); } return current_spot; }
+    if (current_spot && !team_safe(current_spot)) { if (Date.now() - team_safe_warned > 600000) { team_safe_warned = Date.now(); game_log("Spot " + current_spot + " für den Priester (Lv " + team_escort().level + ") zu gefährlich – wähle einen leichteren, bis er Lv " + TEAM_ESCORT_LEVEL + " ist"); } need_repick = true; }
     if (!current_spot || need_repick) { current_spot = choose_spot(); need_repick = false; save_state(); }
     return current_spot;
 }
@@ -1610,7 +1625,7 @@ function mh_quest() { return character.s && character.s.monsterhunt; }
 function mh_txt() { var q = mh_quest(); if (!q) return "keine Jagd"; return q.id + " " + (q.c || 0) + " übrig · " + fmt_time(q.ms || 0); }
 function tokens() { return quantity("monstertoken"); }
 async function daisy() { var pos = find_npc("monsterhunter"); if (!pos) throw "Daisy nicht gefunden"; await travel({ map: pos.map, x: pos.x, y: pos.y }); }
-function hunt_target_ok(id) { return id && G.monsters[id] && is_safe_monster(id) && !hidden_mons[id] && !EXCLUDE[id] && !spot_blocked(id); }
+function hunt_target_ok(id) { return id && G.monsters[id] && is_safe_monster(id) && !hidden_mons[id] && !EXCLUDE[id] && !spot_blocked(id) && team_safe(id); }
 async function spend_tokens() { // Set-Teile kaufen, günstigstes fehlendes zuerst
     var want = MH_SET.filter(function (n) { var def = G.items[n]; var sl = slot_for_item(def); var worn = character.slots[sl]; return !(worn && worn.name == n) && locate_item(n) < 0; })
         .sort(function (a, b) { return (G.tokens.monstertoken[a] || 99) - (G.tokens.monstertoken[b] || 99); });
