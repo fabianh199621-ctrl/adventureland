@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v166";
+var BOT_VERSION = "v167";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : character.ctype == "ranger" || /ranger/i.test(character.name) ? "ranger" : "priest";
@@ -357,7 +357,23 @@ setTimeout(function () { try { cm_selftest = 1; send_cm(character.name, { t: "pi
 function team_html() {
     var parts = [];
     for (var k in TEAM) { var nm = TEAM[k], st = team_state[nm], run = team_running(nm), lab = TEAM_LABEL[k]; var raw = active_chars()[nm]; try { var pe = get_player(nm); if (pe && pe.rip && st) st.state = "tot"; } catch (e) {} parts.push("<span style='color:" + (team_on[k] ? (run ? "#4caf50" : "#ffb74d") : "#9aa3b2") + "'>" + lab + (st && Date.now() - st.t < 60000 ? " Lv " + st.level + " · " + esc(st.state || "") : run ? " (" + esc(String(raw)) + ", keine Meldung)" : team_on[k] ? " (aus/offline)" : "") + "</span> <button data-act='team' data-k='" + k + "'" + (team_on[k] ? " class='on'" : "") + " style='padding:0 5px'>" + (team_on[k] ? "an" : "aus") + "</button>"); }
-    return "<div class='lp_row' style='flex-wrap:wrap;line-height:1.6'><span class='lp_k'>Team:</span> " + parts.join(" · ") + "</div>";
+    var give = "";
+    if (team_on.priest || team_on.ranger) { // manuelle Übergabe: Inventarteil auswählen, an Priest/Ranger geben (der legt es an, wenn es besser ist)
+        var opts = "", any = false;
+        for (var gi = 0; gi < character.items.length; gi++) { var git = character.items[gi]; if (!git) continue; var gd = G.items[git.name]; if (!gd || KEEP_ITEMS.test(git.name) || EVENT_ITEMS.test(git.name)) continue; var ok = false; for (var gsl in SLOT_TYPES) { if ((team_on.priest && fits_class(gd, "priest", gsl)) || (team_on.ranger && fits_class(gd, "ranger", gsl))) { ok = true; break; } } if (!ok) continue; any = true; opts += "<option value='" + gi + "'" + (give_sel == gi ? " selected" : "") + ">" + esc((gd.name || git.name) + "+" + (git.level || 0) + (git.q > 1 ? " ×" + git.q : "") + " [" + (gi + 1) + "]") + "</option>"; }
+        if (any) give = "<div class='lp_row' style='flex-wrap:wrap'><span class='lp_k' title='Teil aus dem Inventar an ein Teammitglied geben – es muss neben dir stehen; angelegt wird es dort, wenn es besser ist'>Geben:</span> <select data-give='1' style='font-size:11px;background:#1c2029;color:#eee;border:1px solid #555;max-width:220px'><option value=''" + (give_sel < 0 ? " selected" : "") + ">– Teil wählen –</option>" + opts + "</select>" + (team_on.priest ? " <button data-act='give' data-k='priest' style='padding:0 6px'>→ Priest</button>" : "") + (team_on.ranger ? " <button data-act='give' data-k='ranger' style='padding:0 6px'>→ Ranger</button>" : "") + "</div>";
+    }
+    return "<div class='lp_row' style='flex-wrap:wrap;line-height:1.6'><span class='lp_k'>Team:</span> " + parts.join(" · ") + "</div>" + give;
+}
+var give_sel = -1;
+function give_to_team(key) { // ausgewähltes Inventarteil an Priest/Ranger senden
+    var nm = TEAM[key], lab = TEAM_LABEL[key], i = give_sel, it = i >= 0 ? character.items[i] : null;
+    if (!it) { game_log("Geben: erst ein Teil auswählen"); return; }
+    var p = get_player(nm); if (!p || p.rip) { game_log("Geben: " + lab + " nicht in Sicht"); return; }
+    if (p.map != character.map || distance(character, p) > 350) { game_log("Geben: " + lab + " zu weit weg (" + (p.map != character.map ? "andere Karte" : Math.round(distance(character, p)) + " Einheiten") + ") – er muss neben dir stehen"); return; }
+    var def = G.items[it.name], slot = null; for (var sl in SLOT_TYPES) { if (fits_class(def, TEAM_CTYPE[key], sl)) { slot = sl; break; } }
+    if (!slot) { game_log("Geben: " + it.name + " passt nicht zu " + lab); return; }
+    try { team_send(nm, { t: "gear", name: it.name, level: it.level || 0, slot: slot, manual: true }); send_item(nm, i, it.q || 1); game_log("[" + lab + "] bekommt " + it.name + "+" + (it.level || 0) + " (manuell, " + slot + ")"); give_sel = -1; last_panel = 0; } catch (e) { game_log("Geben: " + err_txt(e)); }
 }
 function team_threat() { // Monster, das ein Teammitglied angreift und in meiner Nähe ist
     var best = null, bd = 260;
@@ -864,6 +880,7 @@ function init_panel() {
         else if (act == "wishist") { var slots_ = b.getAttribute("data-slot") == "*" ? Object.keys(SLOT_TYPES) : [b.getAttribute("data-slot")]; slots_.forEach(function (is_) { var iw = character.slots[is_]; var keep = wish_cfg[is_] && wish_cfg[is_].max; wish_cfg[is_] = iw && G.items[iw.name] ? { item: iw.name, level: iw.level || 0 } : { item: "" }; if (keep) wish_cfg[is_].max = keep; }); save_wish_cfg(); game_log("Zielbau: Ist-Stand übernommen (" + slots_.length + " Slots, Limits bleiben)"); }
         else if (act == "buyoffer") { var bo = offers_for_slot(b.getAttribute("data-slot"))[parseInt(b.getAttribute("data-idx"))]; if (bo) buy_confirm = { key: offer_key(bo), offer: bo, slot: b.getAttribute("data-slot"), t: Date.now() }; }
         else if (act == "buyno") buy_confirm = null;
+        else if (act == "give") give_to_team(b.getAttribute("data-k"));
         else if (act == "team") { var tk = b.getAttribute("data-k"); team_on[tk] = !team_on[tk]; save_team(); last_team_tick = 0; game_log("Team: " + TEAM[tk] + " " + (team_on[tk] ? "an" : "aus")); }
         else if (act == "arbtoggle") { div.__arb = !div.__arb; try { localStorage.setItem("lp_panel_arb", div.__arb ? "1" : "0"); } catch (x) {} }
         else if (act == "buyok") { if (buy_confirm) { var bc = buy_confirm; buy_confirm = null; preempt("Kauf " + bc.offer.name, function () { return buy_offer_now(bc.slot, bc.offer); }); } }
@@ -898,6 +915,7 @@ function init_panel() {
         if (!inside(e)) return;
         var t = e.target; if (!t || (t.tagName != "SELECT" && t.tagName != "INPUT")) return;
         var ws = t.getAttribute("data-wslot"), wl = t.getAttribute("data-wlvl"), wm = t.getAttribute("data-wmax");
+        if (t.getAttribute("data-give")) { give_sel = t.value === "" ? -1 : parseInt(t.value); try { t.blur(); } catch (x) {} return; }
         if (t.getAttribute("data-huntmax")) { var hv = parseFloat(String(t.value).replace(",", ".")); if (isFinite(hv) && hv > 0 && hv <= 100) { hunt_max_danger = hv / 100; try { localStorage.setItem("lp_hunt_max_danger", String(hunt_max_danger)); } catch (x) {} game_log("Jagd-Gefahrgrenze: " + Math.round(hv) + " %"); hunt_skipped = null; last_hunt_check = 0; } try { t.blur(); } catch (x) {} last_panel = 0; return; }
         if (wm) { var mv = parse_mio(t.value), cm = wish_cfg[wm] || { item: wish_item(wm) || "", level: wish_level(wm) }; if (mv > 0) cm.max = mv; else delete cm.max; wish_cfg[wm] = cm; save_wish_cfg(); game_log("Zielbau " + wm + ": Preislimit " + (mv > 0 ? fmt(mv) : "automatisch")); try { t.blur(); } catch (x) {} return; }
         if (ws) { var v = t.value, oldmax = wish_cfg[ws] && wish_cfg[ws].max; if (!v) wish_cfg[ws] = { item: "" }; else wish_cfg[ws] = { item: v, level: default_target_level(G.items[v]) }; if (oldmax) wish_cfg[ws].max = oldmax; save_wish_cfg(); game_log("Zielbau " + ws + ": " + (v ? v + " +" + wish_cfg[ws].level : "kein Ziel")); }
