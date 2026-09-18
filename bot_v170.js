@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v169";
+var BOT_VERSION = "v170";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : character.ctype == "ranger" || /ranger/i.test(character.name) ? "ranger" : "priest";
@@ -384,22 +384,33 @@ function merch_test_tick() {
     if (!merch_test) return; var nm = TEAM.merch, el = Date.now() - merch_test.t;
     if (merch_test.stage == "stopped" && el > 15000) {
         merch_test.stage = "started"; merch_test.t = Date.now();
-        var sv = merch_test.target.region + merch_test.target.id;
-        try { var res = start_character(nm, team_slot(), sv); game_log("Servertest: start_character(" + nm + ", " + team_slot() + ", \"" + sv + "\") aufgerufen"); if (res && typeof res.then == "function") res.then(function (r) { game_log("Servertest: Start-Antwort " + JSON.stringify(r).slice(0, 160)); }, function (e) { game_log("Servertest: Start abgelehnt " + JSON.stringify(e).slice(0, 160)); }); } catch (e) { game_log("Servertest: Start-Fehler " + err_txt(e)); merch_test_finish(); }
-        setTimeout(function () { try { var w = team_windows()[nm]; if (w && w.win) { var fr = null; try { fr = w.win.frameElement; } catch (e) {} game_log("Servertest: Fenster-URL " + String((fr && fr.src) || (w.win.location && w.win.location.href) || "?").slice(0, 160) + " · server_region/identifier " + (w.win.server_region || "?") + "/" + (w.win.server_identifier || "?")); } else game_log("Servertest: kein Fenster für " + nm + " gefunden"); } catch (e) { game_log("Servertest: Fenster-Prüfung " + err_txt(e)); } }, 12000);
+        try { start_char_on_server(nm, merch_test.target.region, merch_test.target.id); game_log("Servertest: eigenes Fenster für " + nm + " auf " + pretty_server(merch_test.target.region + merch_test.target.id) + " angelegt"); } catch (e) { game_log("Servertest: Fenster-Fehler " + err_txt(e)); merch_test_finish(); }
+        setTimeout(function () { try { var w = team_windows()[nm]; if (w && w.win) { var fr = null; try { fr = w.win.frameElement; } catch (e) {} game_log("Servertest: Fenster-URL " + String((fr && fr.src) || "?").slice(0, 160) + " · server_region/identifier " + (w.win.server_region || "?") + "/" + (w.win.server_identifier || "?") + " · aktiv: " + JSON.stringify(active_chars())); } else game_log("Servertest: kein Fenster für " + nm + " gefunden (Fenster lädt noch?)"); } catch (e) { game_log("Servertest: Fenster-Prüfung " + err_txt(e)); } }, 20000);
         return;
     }
     if (merch_test.stage == "started") { try { var wh = JSON.parse(localStorage.getItem("lp_where_" + nm) || "null"); if (wh && wh.t > merch_test.t) { merch_test_result(wh.sv); return; } } catch (e) {} } // Rückmeldung über den gemeinsamen Speicher (Nachrichten gehen nur auf demselben Server)
     if (merch_test.stage == "started" && el > 75000) { game_log("Servertest: keine Meldung vom Händler nach 75 s – Ergebnis unklar (Log prüfen)"); merch_test_finish(); }
 }
+function start_char_on_server(nm, region, id) { // Nebencharakter-Fenster wie das Spiel anlegen, aber mit Wunschserver in der Adresse
+    var doc = parent.document, rid = "ichar" + nm.toLowerCase();
+    var old = doc.getElementById(rid); if (old) { try { old.remove(); } catch (e) {} }
+    var ref = null; try { var wins = team_windows(); for (var k in wins) { if (wins[k].win && wins[k].win.frameElement) { ref = wins[k].win.frameElement; break; } } } catch (e) {}
+    var f = ref ? ref.cloneNode(false) : doc.createElement("iframe");
+    if (!ref) { f.style.display = "none"; }
+    f.id = rid; f.removeAttribute("src");
+    f.src = "https://adventure.land/character/" + encodeURIComponent(nm) + "/in/" + region + "/" + id + "/?no_html=true&is_bot=1&code=1";
+    (ref && ref.parentNode ? ref.parentNode : doc.body).appendChild(f);
+    return f;
+}
 function merch_test_result(sv) {
     var want = (merch_test.target.region + merch_test.target.id).toLowerCase(), got = String(sv || "").replace(/\s+/g, "").toLowerCase();
-    game_log("Servertest: Händler meldet sich von " + (sv ? pretty_server(sv) : "unbekannt") + " → " + (got == want ? "FUNKTIONIERT – Nebencharakter läuft auf einem anderen Server" : "Parameter wirkt nicht (gewollt " + pretty_server(want.toUpperCase()) + ")"));
+    game_log("Servertest: Händler meldet sich von " + (sv ? pretty_server(sv) : "unbekannt") + " → " + (got == want ? "FUNKTIONIERT – Nebencharakter läuft über eigenes Fenster auf einem anderen Server" : "landet trotzdem zuhause (gewollt " + pretty_server(want.toUpperCase()) + ")"));
     merch_test.sv = sv; merch_test.stage = "fertig"; setTimeout(merch_test_finish, 3000);
 }
 function merch_test_finish() {
     if (!merch_test) return; merch_test = null; var nm = TEAM.merch;
     try { if (active_chars()[nm]) stop_character(nm); } catch (e) {}
+    try { var f = parent.document.getElementById("ichar" + nm.toLowerCase()); if (f) f.remove(); } catch (e) {} // unser eigenes Fenster wieder entfernen
     try { parent.__lp_team_restart_after = Date.now() + 20000; } catch (e) {}
     game_log("Servertest beendet – Händler wird in 20 s zuhause neu gestartet"); last_panel = 0;
 }
