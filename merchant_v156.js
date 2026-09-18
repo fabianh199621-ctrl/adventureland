@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Händler (F4llenMerch) – Stufe 1 =====
 // Läuft unsichtbar neben dem Magier. Aufgaben: Stand kaufen und öffnen, dem Magier regelmäßig mluck geben,
 // Startgold vom Magier holen. Meldungen gehen per Charakter-Nachricht an den Magier und erscheinen dort als "[Merch] …".
-var MERCH_VERSION = "v155";
+var MERCH_VERSION = "v156";
 var MAGE = "F4llen";
 try { localStorage.setItem("lp_tlog_" + character.name, JSON.stringify([{ t: Date.now(), m: "Skript geladen (" + character.ctype + ", Lv " + character.level + ", Server " + (typeof server != "undefined" && server ? (server.region + " " + server.id) : "?") + ")" }])); } catch (e) {}
 var STAND_ITEM = "stand0";

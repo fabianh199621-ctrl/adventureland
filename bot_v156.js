@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v155";
+var BOT_VERSION = "v156";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : "priest";
@@ -289,6 +289,7 @@ function team_running(name) { var a = active_chars(); return !!a[name]; }
 function team_tick() { // fehlende Teammitglieder starten, abgeschaltete stoppen; Party pflegen
     if (Date.now() - last_team_tick < 20000) return; last_team_tick = Date.now();
     try { if (parent.__lp_team_restart_after && Date.now() < parent.__lp_team_restart_after) return; } catch (e) {}
+    try { if (server_trip) return; } catch (e) {} // während eines Serverwechsels bleibt das Team zuhause
     var act = active_chars();
     for (var k in TEAM) {
         var nm = TEAM[k], on = !!team_on[k], running = !!act[nm];
@@ -320,7 +321,7 @@ function team_inject() { // läuft im Fenster des Teammitglieds nicht unser Skri
         var role = k == "merch" ? "merchant" : "priest";
         game_log("Team: " + nm + " – spiele " + role + "_" + BOT_VERSION + ".js ein" + (have ? " (bisher " + have + ")" : ""));
         (function (nm, cw, role) {
-            fetch(BOT_BASE + role + "_" + BOT_VERSION + ".js", { cache: "no-store" }).then(function (r) { return r.text(); }).then(function (code) { try { cw.eval(code); game_log("Team: " + nm + " – Skript eingespielt"); } catch (e) { game_log("Team: " + nm + " – Einspielen fehlgeschlagen: " + err_txt(e)); } }).catch(function (e) { game_log("Team: " + nm + " – Laden fehlgeschlagen: " + e); });
+            fetch(BOT_BASE + role + "_" + BOT_VERSION + ".js", { cache: "no-store" }).then(function (r) { if (!r.ok) throw "HTTP " + r.status; return r.text(); }).then(function (code) { if (code.indexOf("// =====") != 0) { game_log("Team: " + nm + " – " + role + "_" + BOT_VERSION + ".js noch nicht abrufbar, neuer Versuch"); return; } try { cw.eval(code); game_log("Team: " + nm + " – Skript eingespielt"); } catch (e) { game_log("Team: " + nm + " – Einspielen fehlgeschlagen: " + err_txt(e)); } }).catch(function (e) { game_log("Team: " + nm + " – Laden fehlgeschlagen: " + e); });
         })(nm, cw, role);
     }
 }
@@ -1181,10 +1182,14 @@ function is_junk(it) { // kaufbare Standardausrüstung ohne Level/Attribut; unge
 // Überzählige Kopien von Ausrüstung: je Name bleibt neben dem getragenen Teil eine Kopie (die beste, bzw. bei kaufbaren Teilen die Reserve).
 // Alle weiteren Kopien bis +DUP_MAX_LEVEL werden verkauft. Kopien in der Bank zählen mit.
 var DUP_MAX_LEVEL = 5, DUP_KEEP = 1;
-function all_copies(name) { // Inventar + Bank, ohne getragene
+var bank_cache = null; try { bank_cache = JSON.parse(localStorage.getItem("lp_bank_cache_" + character.name) || "null"); } catch (e) {}
+function bank_snapshot() { // Bankinhalt merken, solange wir drin stehen – außerhalb der Bank kennt das Spiel ihn nicht
+    if (character.bank && typeof character.bank == "object") { var snap = {}; for (var pack in character.bank) if (pack.indexOf("items") == 0 && Array.isArray(character.bank[pack])) snap[pack] = character.bank[pack].map(function (b) { return b ? { name: b.name, level: b.level, q: b.q } : null; }); bank_cache = snap; try { localStorage.setItem("lp_bank_cache_" + character.name, JSON.stringify(snap)); } catch (e) {} }
+}
+function all_copies(name) { // Inventar + Bank (bzw. letzter Bankstand), ohne getragene
     var out = [];
     for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && it.name == name) out.push({ it: it, where: "inv", i: i }); }
-    var bank = character.bank || {};
+    var bank = character.bank || bank_cache || {};
     for (var pack in bank) { if (pack.indexOf("items") != 0 || !Array.isArray(bank[pack])) continue; for (var k = 0; k < bank[pack].length; k++) { var b = bank[pack][k]; if (b && b.name == name) out.push({ it: b, where: pack, i: k }); } }
     out.sort(function (a, b) { return (b.it.level || 0) - (a.it.level || 0); });
     return out;
@@ -2586,6 +2591,7 @@ async function wish_buy_from_offer(o, buy_fn) { // o: {name, level, price, force
     await sleep(1500);
     if (character.esize >= before) { game_log("Wunschliste: " + o.name + " nicht erhalten"); return false; }
     note_bought(o.name);
+    try { global_offers = global_offers.filter(function (g) { return !(g.name == o.name && g.level == (o.level || 0) && g.price == o.price && g.seller == o.seller); }); if (o.seller) global_offers = global_offers.filter(function (g) { return !(g.seller == o.seller && g.name == o.name && g.price == o.price); }); global_finds = global_finds.filter(function (g) { return !(g.name == o.name && g.price == o.price && g.seller == o.seller); }); server_targets = server_targets.filter(function (g) { return !(g.name == o.name && g.price == o.price && g.seller == o.seller); }); save_server_targets(); last_global_scan = 0; parent.__lp_global_offers = global_offers; } catch (e) {}
     var idx = -1, bl = -1; for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && it.name == o.name && (it.level || 0) > bl) { idx = i; bl = it.level || 0; } }
     if (idx >= 0) {
         var worn_now = character.slots[slot];
@@ -2734,6 +2740,7 @@ var auto_trip = false; try { auto_trip = localStorage.getItem("lp_auto_trip") ==
 function split_server(sv) { var n = String(sv || "").replace(/^SR_/i, ""); var m = n.match(/^(EU|US|ASIA)(.*)$/i); return m ? { region: m[1].toUpperCase(), id: m[2] } : null; }
 function switch_server(region, id) { // wie der Klick auf "Wechseln" im Welt-Fenster
     game_log("Serverwechsel nach " + pretty_server(region + id) + " …");
+    try { var ac0 = active_chars(); TEAM_NAMES.forEach(function (nm) { if (ac0[nm]) { try { stop_character(nm); } catch (e) {} } }); parent.__lp_team_restart_after = Date.now() + 20000; } catch (e) {} // Team bleibt zuhause, wird nach der Rückkehr neu gestartet
     try { if (typeof parent.change_server == "function") { parent.change_server(region, id); return; } } catch (e) {}
     try { parent.location.href = "/character/" + encodeURIComponent(character.name) + "/in/" + region + "/" + id + "/"; } catch (e) { game_log("Serverwechsel fehlgeschlagen: " + err_txt(e)); }
 }
@@ -2746,6 +2753,7 @@ function start_trip(f) { // f: Fund auf anderem Server
 function end_trip(msg) { if (!server_trip) return; var home = server_trip.home; game_log(msg + " – zurück nach " + pretty_server(home.region + home.id)); server_trip.stage = "back"; save_trip(); switch_server(home.region, home.id); }
 function check_trip_on_start() { // nach dem Laden: sind wir unterwegs?
     if (!server_trip) return;
+    if (server_trip.stage == "out") { try { parent.__lp_team_restart_after = Date.now() + 15 * 60000; } catch (e) {} } // auf dem fremden Server kein Team starten
     if (Date.now() - server_trip.t > 20 * 60000) { server_trip = null; save_trip(); return; }
     var mine = my_server();
     if (server_trip.stage == "out" && mine == norm_server(server_trip.target.region + server_trip.target.id)) {
@@ -2754,7 +2762,7 @@ function check_trip_on_start() { // nach dem Laden: sind wir unterwegs?
         pending_buy = Object.assign({}, f, { same: true }); server_after_buy_pause = false; trip_buying = true; paused = false;
         game_log("Angekommen auf " + pretty_server(mine) + " – kaufe " + f.name + "+" + f.level + " bei " + f.seller);
     } else if (server_trip.stage == "back" && mine == norm_server(server_trip.home.region + server_trip.home.id)) {
-        game_log("Zurück auf " + pretty_server(mine) + " – Serverkauf abgeschlossen"); server_trip = null; save_trip(); paused = false;
+        game_log("Zurück auf " + pretty_server(mine) + " – Serverkauf abgeschlossen"); server_trip = null; save_trip(); paused = false; try { parent.__lp_team_restart_after = Date.now() + 10000; } catch (e) {}
     }
 }
 var trip_buying = false;
@@ -2814,7 +2822,7 @@ async function buy_find(f) { // Treffer auf eigenem Server sofort kaufen (innerh
     if (!seller || !seller.slots) { game_log("Händler " + f.seller + " nicht (mehr) hier"); return false; }
     var it = seller.slots[f.tslot];
     if (!it || it.name != f.name || it.price > f.price * 1.05) { game_log("Angebot bei " + f.seller + " nicht mehr da"); return false; }
-    return wish_buy_from_offer({ name: it.name, level: it.level || 0, price: it.price, force: !!f.force, slot: f.slot }, async function () { trade_buy(seller, f.tslot, 1); return true; });
+    return wish_buy_from_offer({ name: it.name, level: it.level || 0, price: it.price, force: !!f.force, slot: f.slot, seller: f.seller }, async function () { trade_buy(seller, f.tslot, 1); return true; });
 }
 async function run_pending_buy() { // zum Händler auf diesem Server laufen und kaufen
     if (!pending_buy || busy || upgrading || kissing || fleeing || paused) return;
@@ -2829,7 +2837,7 @@ async function run_pending_buy() { // zum Händler auf diesem Server laufen und 
         else {
             var it = seller.slots[f.tslot];
             if (!it || it.name != f.name || it.price > f.price * 1.05) { game_log("Angebot bei " + f.seller + " nicht mehr da"); }
-            else await wish_buy_from_offer({ name: it.name, level: it.level || 0, price: it.price, force: !!f.force, slot: f.slot }, async function () { trade_buy(seller, f.tslot, 1); return true; });
+            else await wish_buy_from_offer({ name: it.name, level: it.level || 0, price: it.price, force: !!f.force, slot: f.slot, seller: f.seller }, async function () { trade_buy(seller, f.tslot, 1); return true; });
         }
     } catch (e) { game_log("Händler-Kauf: " + err_txt(e)); }
     busy = false; marketing = false;
@@ -3255,7 +3263,7 @@ function start_main() {
     rip_counted = false;
     session_tick();
     if (Date.now() - last_panel > 2000) { last_panel = Date.now(); try { update_panel(); update_char_panel(); } catch (e) {} }
-    try { team_tick(); team_broadcast(); team_read_logs(); team_inject(); } catch (e) {}
+    try { team_tick(); team_broadcast(); team_read_logs(); team_inject(); bank_snapshot(); } catch (e) {}
     if (paused) return;
     measure_tick();
 
