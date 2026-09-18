@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Händler (F4llenMerch) – Stufe 1 =====
 // Läuft unsichtbar neben dem Magier. Aufgaben: Stand kaufen und öffnen, Loot abholen/verkaufen/einlagern,
 // Startgold vom Magier holen. mluck ist abgeschaltet (braucht Lv 40, Händler levelt praktisch nicht) – USE_MLUCK/LEVEL_MODE. Meldungen gehen per Charakter-Nachricht an den Magier und erscheinen dort als "[Merch] …".
-var MERCH_VERSION = "v188";
+var MERCH_VERSION = "v189";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -138,7 +138,11 @@ async function do_pickup() { // zum Magier, Items entgegennehmen, Tränke/Gold �
 }
 async function process_inventory() { // in der Stadt: verkaufen, an den Stand, in die Bank
     var sell = [], stand = [], bank = [];
-    for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (!it || it.name == STAND_ITEM || /^(hpot|mpot)/.test(it.name)) continue; var a = manifest[item_key(it.name, it.level)] || "bank"; (a == "sell" ? sell : a == "stand" ? stand : bank).push(i); }
+    var silk = 0;
+    for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (!it || it.name == STAND_ITEM || /^(hpot|mpot)/.test(it.name)) continue;
+        if (it.name == "rod" || it.name == "pickaxe" || it.name == "staff" || it.name == "blade") continue; // Werkzeug und Zutaten bleiben
+        if (it.name == "spidersilk") { silk += it.q || 1; if (silk <= 2) continue; }
+        var a = manifest[item_key(it.name, it.level)] || (/^(bronzenugget|coat1|helmet1|pants1|gloves1|shoes1)$/.test(it.name) ? "sell" : "bank"); (a == "sell" ? sell : a == "stand" ? stand : bank).push(i); }
     if (!sell.length && !stand.length && !bank.length) { manifest = {}; return; }
     try {
         if (sell.length) { status("verkauft"); await smart_move("potions"); var g0 = character.gold; for (var s1 = sell.length - 1; s1 >= 0; s1--) { var it1 = character.items[sell[s1]]; if (!it1) continue; try { sell_item(sell[s1], it1.q || 1); } catch (e) {} await sleep(300); } say("Beim NPC verkauft: " + sell.length + " Items (+" + (character.gold - g0) + " Gold)"); }
@@ -161,6 +165,65 @@ async function check_stand_age() { // Ladenhüter nach 24 h vom Stand nehmen und
     if (!old.length) return;
     say("Ladenhüter: " + old.length + " Items vom Stand zum NPC");
     try { for (var k = 0; k < old.length; k++) { try { unequip(old[k]); } catch (e) {} await sleep(400); manifest[item_key(listed[old[k]].name, listed[old[k]].level)] = "sell"; delete listed[old[k]]; } save_listed(); await process_inventory(); } catch (e) { say("Ladenhüter: " + (e && e.message || e)); }
+}
+
+// ---------- Stufe 3a: Angeln und Bergbau in den Wartezeiten (Werkzeuge beim Handwerker selbst bauen) ----------
+var GATHER = true, FISH_SPOTS = [{ map: "main", x: -1368, y: -90 }, { map: "main", x: -1198, y: -288 }], MINE_SPOTS = [{ map: "tunnel", x: -280, y: -10 }, { map: "tunnel", x: -200, y: -50 }];
+var TOOL_RECIPES = { rod: ["staff", "spidersilk"], pickaxe: ["staff", "spidersilk", "blade"] };
+var last_gather_try = {}, gather_fail = {}, gather_busy = false, last_tool_try = 0, last_silk_ask = 0;
+function have_item(n) { for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && it.name == n) return i; } for (var sl in character.slots) { var w = character.slots[sl]; if (w && w.name == n && sl.indexOf("trade") != 0) return -2; } return -1; }
+function skill_cd(name) { try { if (typeof is_on_cooldown == "function") return is_on_cooldown(name); } catch (e) {} try { var t = parent.next_skill && parent.next_skill[name]; return t && new Date(t).getTime() > Date.now(); } catch (e) {} return false; }
+async function ensure_tool(tool) { // Werkzeug vorhanden? sonst Zutaten kaufen/anfordern und beim Handwerker bauen
+    if (have_item(tool) != -1) return true;
+    if (Date.now() - last_tool_try < 5 * 60000) return false; last_tool_try = Date.now();
+    var need = TOOL_RECIPES[tool], missing = need.filter(function (n) { return have_item(n) == -1; });
+    // kaufbare Zutaten (Stab, Klinge) beim NPC holen
+    for (var i = 0; i < missing.length; i++) { var n = missing[i]; var npc = npc_selling(n); if (!npc) continue; var pr = (G.items[n] || {}).g || 0; if (character.gold < pr + GOLD_KEEP) { say_once("toolgold", "Werkzeug " + tool + ": zu wenig Gold für " + n, 1800000); return false; } var pos = npc_pos(npc); if (!pos) continue; await go({ map: pos.map, x: pos.x, y: pos.y + 20 }, 60); try { buy(n, 1); await sleep(600); } catch (e) {} }
+    missing = need.filter(function (n) { return have_item(n) == -1; });
+    if (missing.length) { if (missing.indexOf("spidersilk") >= 0 && Date.now() - last_silk_ask > 10 * 60000) { last_silk_ask = Date.now(); try { send_cm(MAGE, { t: "need", item: "spidersilk", q: 2 }); } catch (e) {} say_once("silk", "Für " + tool + " fehlt Spinnenseide – beim Magier angefragt", 1800000); } else say_once("toolmiss", "Werkzeug " + tool + ": fehlt " + missing.join(", "), 1800000); return false; }
+    var cp = npc_pos("craftsman"); if (!cp) return false;
+    await go({ map: cp.map, x: cp.x, y: cp.y + 20 }, 60);
+    try { if (typeof craft == "function") await craft(tool); else parent.socket.emit("craft", { name: tool }); } catch (e) { say("Handwerker " + tool + ": " + (e && e.reason || e && e.message || JSON.stringify(e).slice(0, 80))); }
+    await sleep(1500);
+    if (have_item(tool) != -1) { say(tool + " beim Handwerker gebaut"); return true; }
+    say("Werkzeug " + tool + " nicht gebaut (Zutaten da: " + need.map(function (n) { return n + (have_item(n) != -1 ? "✓" : "✗"); }).join(" ") + ")"); return false;
+}
+async function gather(kind) { // kind: "fishing" | "mining"
+    var tool = kind == "fishing" ? "rod" : "pickaxe", spots = kind == "fishing" ? FISH_SPOTS : MINE_SPOTS;
+    if (!await ensure_tool(tool)) return false;
+    stand_off(); status(kind == "fishing" ? "angelt" : "baut ab");
+    var ti = have_item(tool), worn = character.slots.mainhand ? character.slots.mainhand.name : null;
+    var start = gather_fail[kind] || 0, ok = false, why = null, g0 = character.gold, n0 = character.items.filter(function (x) { return x; }).length;
+    for (var si = 0; si < spots.length && !ok; si++) {
+        var sp = spots[(start + si) % spots.length];
+        if (!await go(sp, 30)) { why = "Platz nicht erreichbar"; continue; }
+        if (ti >= 0) { try { equip(ti); await sleep(700); } catch (e) {} ti = -2; }
+        try {
+            var r = await use_skill(kind); if (r && r.failed) throw r;
+            for (var w = 0; w < 40; w++) { await sleep(500); if (!(character.c && character.c[kind])) break; }
+            ok = true; gather_fail[kind] = (start + si) % spots.length;
+        } catch (e) { why = e && (e.reason || e.message || (typeof e == "string" ? e : JSON.stringify(e).slice(0, 100))); }
+    }
+    await sleep(1500);
+    var gained = [], n1 = 0; character.items.forEach(function (x) { if (x) n1++; });
+    if (ok) say((kind == "fishing" ? "Geangelt" : "Abgebaut") + ": " + (character.gold - g0 > 0 ? "+" + (character.gold - g0) + " Gold" : "") + (n1 > n0 ? ", " + (n1 - n0) + " neue Items" : "") + ((character.gold - g0 <= 0 && n1 <= n0) ? "nichts gefangen" : ""));
+    else say((kind == "fishing" ? "Angeln" : "Bergbau") + " nicht gelungen: " + (why || "unbekannt") + " (Position " + character.map + " " + Math.round(character.x) + "," + Math.round(character.y) + ")");
+    // Werkzeug wieder ablegen (Händler braucht keine Waffe)
+    try { if (character.slots.mainhand && (character.slots.mainhand.name == "rod" || character.slots.mainhand.name == "pickaxe")) { unequip("mainhand"); await sleep(500); } } catch (e) {}
+    return ok;
+}
+async function gather_tick() { // in der Hauptschleife: bei freiem Cooldown losziehen
+    if (!GATHER || gather_busy || pickup || arb_idle) return false;
+    var kinds = ["mining", "fishing"], did = false;
+    for (var k = 0; k < kinds.length; k++) {
+        var kind = kinds[k];
+        if (skill_cd(kind)) continue;
+        if (Date.now() - (last_gather_try[kind] || 0) < 10 * 60000) continue;
+        last_gather_try[kind] = Date.now(); gather_busy = true;
+        try { await gather(kind); } catch (e) { say("Sammeln " + kind + ": " + (e && e.message || e)); }
+        gather_busy = false; did = true;
+    }
+    return did;
 }
 async function do_home() {
     var h = home_spot();
@@ -233,6 +296,7 @@ async function loop() {
             }
             if (USE_MLUCK && character.level >= MLUCK_LEVEL && mluck_needed() && Date.now() - last_mluck_try > 5 * 60000 && !mage.paused) { status("mluck"); await do_mluck(); continue; }
             if (character.gold < GOLD_MIN && Date.now() - last_gold_ask > 30 * 60000) { status("Gold holen"); await do_mluck(); continue; }
+            if (await gather_tick()) continue;
             status(stand_open() ? "Stand" : "unterwegs");
             await do_home();
             await check_stand_age();

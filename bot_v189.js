@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v188";
+var BOT_VERSION = "v189";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : character.ctype == "ranger" || /ranger/i.test(character.name) ? "ranger" : "priest";
@@ -354,6 +354,7 @@ function team_broadcast() { // alle 5 s: wo bin ich, was mache ich (für Händle
     for (var k in TEAM) { var nm = TEAM[k]; if (team_on[k] && act[nm]) { try { send_cm(nm, msg); } catch (e) {} } }
 }
 function team_send(name, data) { try { send_cm(name, data); } catch (e) {} }
+var merch_needs = {}; // Material, das der Händler angefragt hat (z. B. spidersilk für Werkzeuge)
 function on_cm(name, data) { // Nachrichten der eigenen Charaktere
     if (name == character.name && data && data.t == "ping") { cm_selftest = 2; game_log("Team: Nachrichtenkanal funktioniert (Selbsttest)"); return; }
     if (TEAM_NAMES.indexOf(name) < 0 || !data || typeof data != "object") return;
@@ -364,6 +365,7 @@ function on_cm(name, data) { // Nachrichten der eigenen Charaktere
         else if (data.t == "ready") { if (pickup_state) pickup_state.ready = true; }
         else if (data.t == "delivered") { if (pickup_state) pickup_state.done = true; if (data.pots) game_log("[Merch] Tränke erhalten: " + data.pots); if (data.gold) game_log("[Merch] " + fmt(data.gold) + " Gold Verkaufserlös erhalten"); }
         else if (data.t == "hello") { game_log("[" + who + "] verbunden (" + (data.v || "?") + (data.sv ? ", Server " + pretty_server(data.sv) : "") + ")"); if (merch_test && name == TEAM.merch) merch_test_result(data.sv); team_send(name, { t: "state", paused: paused || !bot_running, spot: current_spot }); team_broadcast(); }
+        else if (data.t == "need") { var np = get_player(name); var ni = locate_item(data.item); if (np && ni >= 0 && distance(character, np) < 400) { var nq = Math.min(data.q || 1, character.items[ni].q || 1); try { send_item(name, ni, nq); game_log("[" + who + "] " + nq + "x " + data.item + " übergeben"); } catch (e) {} } else if (ni < 0) { merch_needs[data.item] = Date.now(); game_log("[" + who + "] braucht " + data.item + " – wird beim nächsten Fund/Abholung mitgegeben"); } }
         else if (data.t == "gold?") { var p = get_player(name); var amt = Math.min(data.amount || 100000, Math.max(0, character.gold - WISH_RESERVE)); if (p && distance(character, p) < 400 && amt >= 1000) { send_gold(name, amt); game_log("[" + who + "] " + fmt(amt) + " Gold übergeben"); } else team_send(name, { t: "nogold", near: !!(p && distance(character, p) < 400) }); }
         else if (data.t == "pots?") { var pp = get_player(name); if (pp && distance(character, pp) < 400) { var gave = 0; [POTS_HP, POTS_MP].forEach(function (list) { var idx = -1, q = 0; for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && list.indexOf(it.name) >= 0 && (it.q || 0) > q) { idx = i; q = it.q; } } if (idx >= 0 && q >= 60) { send_item(name, idx, 25); gave++; } }); if (gave) game_log("[" + who + "] Tränke übergeben"); } }
     } catch (e) { game_log("Team-Nachricht: " + err_txt(e)); }
@@ -1685,6 +1687,7 @@ function handover_plan() { // was der Händler mitnehmen soll: [{i, action}] –
     var out = [], eq = equipped_names(), dups = duplicate_indices();
     for (var i = 0; i < character.items.length; i++) {
         var it = character.items[i]; if (!it || it.name.indexOf("stand") == 0) continue;
+        if (merch_needs[it.name]) { out.push({ i: i, action: "bank", name: it.name, level: it.level || 0, q: it.q || 1 }); continue; } // vom Händler angefragt (behält, was er braucht)
         if (KEEP_ITEMS.test(it.name) || EVENT_ITEMS.test(it.name)) continue;
         var def = G.items[it.name]; if (!def) continue;
         var action = null;
