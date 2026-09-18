@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v185";
+var BOT_VERSION = "v186";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : character.ctype == "ranger" || /ranger/i.test(character.name) ? "ranger" : "priest";
@@ -1197,7 +1197,7 @@ function init_panel() {
         else if (act == "banksort") preempt("Bank sortieren", bank_sort_now);
         else if (act == "copylog") copy_log();
         else if (act == "goal") start_goal(b.getAttribute("data-slot"));
-        else if (act == "focus") { var fs = b.getAttribute("data-slot"); preempt("Slot " + fs, function () { return focus_slot(fs); }); }
+        else if (act == "slotnow") { var fs = b.getAttribute("data-slot"); preempt("Slot " + fs, function () { return focus_slot(fs); }); }
         else if (act == "goalstop") stop_goal("manuell");
         else if (act == "goalskip") { goal_skip[b.getAttribute("data-item")] = Date.now(); save_goal_skip(); goal_cache_t = 0; }
         else if (act == "chartoggle") toggle_char_panel();
@@ -3009,7 +3009,7 @@ function wish_ui_html() { // Zielbau-Tabelle
         var stand = worn ? esc(worn.name) + "+" + (worn.level || 0) : "<span style='color:#ef5350'>leer</span>";
         if (cur && !is_buyable(cur) && G.items[cur].upgrade) stand += " <small style='color:#9aa3b2'>Reserve " + reserve_count(cur) + "/" + RESERVE_COPIES + "</small>";
         if (cur) { var ok = worn && worn.name == cur, done = ok && (worn.level || 0) >= wish_level(slot); stand = "<span style='color:" + (done ? "#4caf50" : ok ? "#8ab4f8" : "#e57373") + "' title='" + esc(cur + " – " + item_tooltip(cur, wish_level(slot))) + "'>" + stand + (done ? " ✓" + (wish_cfg[slot] && wish_cfg[slot].auto ? " <small>(Ist-Stand)</small>" : "") : ok ? " → +" + wish_level(slot) : " → " + esc(cur)) + "</span>"; }
-        h += "<tr><td style='text-align:left'>" + slot + "</td><td style='text-align:left'>" + sel + "</td><td style='text-align:center'>" + lv + "</td><td style='text-align:left'>" + stand + "</td><td style='text-align:left;font-size:11px'>" + (cur ? bvb_html(slot) + farm_html(slot) : "-") + "</td><td style='text-align:left'>" + offers_html(slot) + "</td><td style='text-align:left;font-size:11px'>" + alt_html(slot) + "</td><td style='text-align:center'><button data-act='focus' data-slot='" + slot + "' title='diesen Slot jetzt angehen'>Jetzt</button></td></tr>";
+        h += "<tr><td style='text-align:left'>" + slot + "</td><td style='text-align:left'>" + sel + "</td><td style='text-align:center'>" + lv + "</td><td style='text-align:left'>" + stand + "</td><td style='text-align:left;font-size:11px'>" + (cur ? bvb_html(slot) + farm_html(slot) : "-") + "</td><td style='text-align:left'>" + offers_html(slot) + "</td><td style='text-align:left;font-size:11px'>" + alt_html(slot) + "</td><td style='text-align:center'><button data-act='slotnow' data-slot='" + slot + "' title='diesen Slot jetzt angehen'>Jetzt</button></td></tr>";
     }
     return h + "</table>";
 }
@@ -3091,6 +3091,30 @@ async function wish_buy_from_offer(o, buy_fn) { // o: {name, level, price, force
     }
     return true;
 }
+async function rebuild_with_stat(slot, tgt) { // neue Kopie mit Attribut (Scroll vor dem Sprung auf Qualität 1) bauen, anlegen, altes Teil verkaufen
+    var worn = character.slots[slot], name = worn.name;
+    game_log("Slot " + slot + ": " + name + "+" + (worn.level || 0) + " hat kein " + STAT_TYPE.toUpperCase() + " und nimmt keinen Scroll mehr – baue neue Kopie mit Attribut bis +" + tgt);
+    await travel_place("upgrade");
+    for (var tries = 0; tries < 30; tries++) {
+        check_pause();
+        // Startkopie: beste Kopie ohne Attribut-Konflikt unter Qualität 1 (Reserve), sonst neu kaufen
+        var start = -1, sl = -1;
+        for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && it.name == name && !it.p && (it.stat_type == STAT_TYPE || !it.stat_type) && (it.level || 0) <= grade0_max(name) && (it.level || 0) > sl) { sl = it.level || 0; start = i; } }
+        if (start < 0) { if (!is_buyable(name)) { game_log(name + " nicht nachkaufbar – kein Neubau"); return; } if (!await buy_items(name, 1)) return; sl = 0; }
+        var r = await upgrade_inv(name, sl, tgt, STAT_TYPE);
+        if (r.stopped) return;
+        if (r.destroyed) { game_log(name + " beim Neubau zerstört – nächster Versuch"); continue; }
+        var ni = -1; for (var j = 0; j < character.items.length; j++) { var it2 = character.items[j]; if (it2 && it2.name == name && (it2.level || 0) >= tgt && it2.stat_type == STAT_TYPE) { ni = j; break; } }
+        if (ni < 0) { game_log(name + "+" + tgt + " ohne Attribut geworden – bleibt als Reserve, nächster Versuch"); continue; }
+        equip(ni, slot); await sleep(800);
+        game_log("Slot " + slot + ": " + name + "+" + tgt + " mit " + STAT_TYPE.toUpperCase() + " angelegt");
+        // altes Teil (ohne Attribut, Qualität 1) verkaufen
+        var oi = -1; for (var k = 0; k < character.items.length; k++) { var it3 = character.items[k]; if (it3 && it3.name == name && (it3.level || 0) >= tgt && it3.stat_type != STAT_TYPE) { oi = k; break; } }
+        if (oi >= 0) { await travel_place("potions"); var g0 = character.gold; await sell_measured(oi, 1); game_log("Altes " + name + "+" + tgt + " verkauft (+" + fmt(character.gold - g0) + ")"); }
+        if (backup_index(name) < 0 && is_buyable(name)) { await travel_place("upgrade"); await ensure_backup(name); }
+        return;
+    }
+}
 async function focus_slot(slot) { // Button "Jetzt": diesen Slot sofort verbessern – Wunschliste am Markt/Ponty, sonst getragenes Teil ausbauen
     if (upgrading) { game_log("Upgrade läuft bereits"); return; }
     var worn = character.slots[slot], want = (WISHLIST[slot] || [])[0];
@@ -3114,6 +3138,7 @@ async function focus_slot(slot) { // Button "Jetzt": diesen Slot sofort verbesse
         else if (worn && G.items[worn.name].upgrade) {
             var tgt = slot_target(slot, is_buyable(worn.name) ? UPGRADE_TARGET : (slot == "mainhand" ? WEAPON_SAFE_TARGET : SAFE_TARGET_DROP), 0);
             if ((worn.level || 0) < tgt) { check_pause(); game_log("Slot " + slot + ": " + worn.name + " +" + (worn.level || 0) + " → +" + tgt + " (Chance nächste Stufe " + success_txt("u", worn.level || 0) + ")"); await travel_place("upgrade"); await process_slot(slot, tgt); }
+            else if (wish_item(slot) == worn.name && worn.stat_type != STAT_TYPE && G.items[worn.name].stat && (worn.level || 0) > grade0_max(worn.name)) { check_pause(); await rebuild_with_stat(slot, tgt); }
             else game_log("Slot " + slot + ": " + worn.name + "+" + (worn.level || 0) + " ist schon auf Zielstufe +" + tgt);
         }
         worn = character.slots[slot];
@@ -3243,10 +3268,10 @@ function offers_for_slot(slot) { // beste Angebote aller Server für einen Slot:
     var worn = character.slots[slot], ws = worn ? item_score(worn) * 1.02 : 0;
     var list = global_offers.filter(function (o) { var def = G.items[o.name]; return def && fits_slot(def, slot) && o.score > ws && o.price <= character.gold; }); // bis zum vollen Goldstand anzeigen – gekauft wird automatisch nur innerhalb der Grenze, darüber per Kaufen-Knopf
     list.forEach(function (o) { o.wish = wish_rank(slot, o.name); });
-    list.sort(function (a, b) { if ((b.wish > 0) != (a.wish > 0)) return (b.wish > 0) - (a.wish > 0); if (a.wish > 0 && b.wish > 0 && a.wish != b.wish) return b.wish - a.wish; return (b.score - ws) / b.price - (a.score - ws) / a.price; });
+    list.sort(function (a, b) { if ((b.wish > 0) != (a.wish > 0)) return (b.wish > 0) - (a.wish > 0); if (a.wish > 0 && b.wish > 0 && a.wish != b.wish) return b.wish - a.wish; var sa = a.stat_type == STAT_TYPE, sb = b.stat_type == STAT_TYPE; if (sa != sb) return sb - sa; return (b.score - ws) / b.price - (a.score - ws) / a.price; });
     return list;
 }
-function offer_txt(o) { return o.name + "+" + o.level + " " + fmt(o.price) + " (" + pretty_server(o.server) + (o.same ? " ★" : "") + ", " + o.seller + ")"; }
+function offer_txt(o) { return o.name + "+" + o.level + (o.stat_type ? " [" + o.stat_type + "]" : "") + " " + fmt(o.price) + " (" + pretty_server(o.server) + (o.same ? " ★" : "") + ", " + o.seller + ")"; }
 var buy_confirm = null; // { key, offer, slot, t } – Kaufen-Knopf wartet auf Bestätigung
 function offer_key(o) { return o.name + "|" + o.level + "|" + o.price + "|" + o.seller + "|" + o.server; }
 function offers_html(slot) {
@@ -3257,7 +3282,7 @@ function offers_html(slot) {
         var k = offer_key(o), btn;
         if (buy_confirm && buy_confirm.key == k) btn = "<br><span style='color:#ffb74d'>für " + fmt(o.price) + (o.same ? " hier" : " auf " + esc(pretty_server(o.server)) + " (Serverwechsel)") + " kaufen?</span> <button data-act='buyok' data-slot='" + slot + "' data-idx='" + i + "' class='on'>Ja</button> <button data-act='buyno'>Nein</button>";
         else btn = " <button data-act='buyoffer' data-slot='" + slot + "' data-idx='" + i + "' style='padding:0 5px' title='dieses Angebot kaufen – ohne Preisgrenze, nur Gold muss reichen" + (o.same ? "" : "; auf anderem Server: hin, kaufen, zurück") + "'>" + (o.price > character.gold ? "zu teuer" : "Kaufen") + "</button>";
-        return "<span style='color:" + (o.same ? "#4caf50" : (o.wish > 0 ? "#8ab4f8" : "#e6e6e6")) + "' title='" + esc((o.wish > 0 ? "Wunschliste · " : "Alternative · ") + "Wert " + Math.round(o.score) + " · Händler " + o.seller + " auf " + o.server + (o.same ? " (dieser Server)" : "")) + "'>" + esc(o.name) + "+" + o.level + " " + fmt(o.price) + " <small>" + esc(pretty_server(o.server)) + (o.same ? " ★" : "") + "</small></span>" + btn;
+        return "<span style='color:" + (o.same ? "#4caf50" : (o.wish > 0 ? "#8ab4f8" : "#e6e6e6")) + "' title='" + esc((o.wish > 0 ? "Wunschliste · " : "Alternative · ") + "Wert " + Math.round(o.score) + " · Händler " + o.seller + " auf " + o.server + (o.same ? " (dieser Server)" : "")) + "'>" + esc(o.name) + "+" + o.level + (o.stat_type ? " <b style='color:" + (o.stat_type == STAT_TYPE ? "#4caf50" : "#9aa3b2") + "'>[" + esc(o.stat_type) + "]</b>" : "") + " " + fmt(o.price) + " <small>" + esc(pretty_server(o.server)) + (o.same ? " ★" : "") + "</small></span>" + btn;
     }).join("<br>");
 }
 async function buy_offer_now(slot, o) { // vom Nutzer bestätigter Kauf eines konkreten Angebots (Preisgrenze übersteuert)
@@ -3358,15 +3383,15 @@ async function scan_all_merchants(force, only_slot) {
             var it = m.slots[sl]; if (!it || !it.price || it.b) continue;
             var d0 = G.items[it.name];
             if (d0) { var ao = { name: it.name, level: it.level || 0, price: it.price, q: it.q || 1, seller: m.name, server: m.server || "?", same: norm_server(m.server) == mine, map: m.map, x: m.x, y: m.y, tslot: sl, t: Date.now() }; ao.profit = arb_profit(ao); if (ao.profit > 0) arb.push(ao); }
-            if (d0 && slot_for_item(d0)) all.push({ name: it.name, level: it.level || 0, price: it.price, seller: m.name, server: m.server || "?", same: norm_server(m.server) == mine, map: m.map, x: m.x, y: m.y, tslot: sl, score: gear_score(d0, it.level || 0, it.stat_type), t: Date.now() });
+            if (d0 && slot_for_item(d0)) all.push({ name: it.name, level: it.level || 0, price: it.price, seller: m.name, server: m.server || "?", same: norm_server(m.server) == mine, map: m.map, x: m.x, y: m.y, tslot: sl, stat_type: it.stat_type || null, score: gear_score(d0, it.level || 0, it.stat_type), t: Date.now() });
             if (!on_wishlist(it.name)) continue;
             if (norm_server(m.server) != mine && is_pvp_server(m.server)) continue; // kein Serverwechsel auf PVP-Server
             var slot = wish_wants(it.name, it.level || 0, it.price);
             if (!slot || (only_slot && slot != only_slot)) continue;
-            finds.push({ name: it.name, level: it.level || 0, price: it.price, seller: m.name, server: m.server || "?", map: m.map, x: m.x, y: m.y, slot: slot, tslot: sl, same: norm_server(m.server) == mine, t: Date.now() });
+            finds.push({ name: it.name, level: it.level || 0, price: it.price, seller: m.name, server: m.server || "?", map: m.map, x: m.x, y: m.y, slot: slot, tslot: sl, same: norm_server(m.server) == mine, stat_type: it.stat_type || null, t: Date.now() });
         }
     });
-    finds.sort(function (a, b) { return (b.same - a.same) || (a.price - b.price); });
+    finds.sort(function (a, b) { return (b.same - a.same) || ((b.stat_type == STAT_TYPE) - (a.stat_type == STAT_TYPE)) || (a.price - b.price); }); // hier zuerst, dann mit passendem Attribut, dann Preis
     global_finds = finds; global_offers = all; arb_offers = arb; try { parent.__lp_global_offers = all; parent.__lp_arb_offers = arb; } catch (e) {}
     var al = arb_list(); if (al.length) { var ak = al.slice(0, 3).map(function (o) { return o.name + (o.level ? "+" + o.level : "") + " " + fmt(o.price) + "→" + fmt(Math.round(npc_sell_price(o.name, o.level))) + " (" + pretty_server(o.server) + ")"; }).join(", "); if (!global_logged["arb:" + ak]) { global_logged["arb:" + ak] = true; game_log("Handel: " + al.length + " Angebote unter NPC-Wert, z. B. " + ak); } }
     server_targets = finds.filter(function (f) { return !f.same; }); save_server_targets();
