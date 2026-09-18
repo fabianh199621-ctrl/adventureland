@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Händler (F4llenMerch) – Stufe 1 =====
 // Läuft unsichtbar neben dem Magier. Aufgaben: Stand kaufen und öffnen, Loot abholen/verkaufen/einlagern,
 // Startgold vom Magier holen. mluck ist abgeschaltet (braucht Lv 40, Händler levelt praktisch nicht) – USE_MLUCK/LEVEL_MODE. Meldungen gehen per Charakter-Nachricht an den Magier und erscheinen dort als "[Merch] …".
-var MERCH_VERSION = "v191";
+var MERCH_VERSION = "v192";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -244,7 +244,7 @@ async function orders_tick() {
         var sl = listed_slot_of(name);
         if (sl) { // schon am Stand: Preis prüfen
             var cur = character.slots[sl];
-            if (Math.abs((cur.price || 0) - o.price) > 1000) { try { unequip(sl); await sleep(600); var ix = have_item(name); if (ix >= 0) { var slot2 = free_trade_slot(); if (slot2) { trade(ix, slot2, o.price, cur.q || 1); await sleep(600); listed[slot2] = { name: name, level: 0, t: Date.now(), price: o.price, order: true }; save_listed(); say(name + " am Stand neu bepreist: " + o.price); } } } catch (e) { say("Neu bepreisen " + name + ": " + (e && e.reason || e)); } }
+            if (Math.abs((cur.price || 0) - o.price) > 1000) { try { delete listed[sl]; unequip(sl); await sleep(600); var ix = have_item(name); if (ix >= 0) { var slot2 = free_trade_slot(); if (slot2) { trade(ix, slot2, o.price, cur.q || 1); await sleep(600); listed[slot2] = { name: name, level: 0, t: Date.now(), price: o.price, order: true, gold0: character.gold }; save_listed(); say(name + " am Stand neu bepreist: " + o.price); } } } catch (e) { say("Neu bepreisen " + name + ": " + (e && e.reason || e)); } }
             order_state[name] = "am Stand für " + o.price; continue;
         }
         var ix2 = have_item(name);
@@ -252,10 +252,14 @@ async function orders_tick() {
         if (ix2 < 0) continue;
         await go(home_spot(), 40); if (!stand_open()) stand_on(); await sleep(800);
         var slot = free_trade_slot(); if (!slot) { say("Kein freier Stand-Platz für " + name); continue; }
-        try { trade(ix2, slot, o.price, character.items[ix2].q || 1); await sleep(800); listed[slot] = { name: name, level: 0, t: Date.now(), price: o.price, order: true }; save_listed(); say(name + " am Stand ausgestellt für " + o.price); order_state[name] = "am Stand für " + o.price; did = true; } catch (e) { say("Ausstellen " + name + ": " + (e && e.reason || e)); }
+        try { trade(ix2, slot, o.price, character.items[ix2].q || 1); await sleep(800); listed[slot] = { name: name, level: 0, t: Date.now(), price: o.price, order: true, gold0: character.gold }; save_listed(); say(name + " am Stand ausgestellt für " + o.price); order_state[name] = "am Stand für " + o.price; did = true; } catch (e) { say("Ausstellen " + name + ": " + (e && e.reason || e)); }
     }
     // verkauft? (Eintrag weg, Auftrag noch da)
-    for (var sl3 in listed) { var rec = listed[sl3]; if (rec && rec.order && !character.slots[sl3]) { try { send_cm(MAGE, { t: "sold", name: rec.name, price: rec.price }); } catch (e) {} say("VERKAUFT am Stand: " + rec.name + " für " + rec.price + " Gold"); delete listed[sl3]; save_listed(); delete stand_orders[rec.name]; try { localStorage.setItem("lp_stand_orders_" + character.name, JSON.stringify(stand_orders)); } catch (e) {} } }
+    for (var sl3 in listed) { var rec = listed[sl3]; if (!rec || !rec.order || character.slots[sl3]) continue;
+        var sold = have_item(rec.name) == -1 && (rec.gold0 == null || character.gold >= rec.gold0 + rec.price * 0.9); // wirklich verkauft: Item weg UND Gold entsprechend gestiegen
+        delete listed[sl3]; save_listed();
+        if (sold) { try { send_cm(MAGE, { t: "sold", name: rec.name, price: rec.price }); } catch (e) {} say("VERKAUFT am Stand: " + rec.name + " für " + rec.price + " Gold (Kasse jetzt " + character.gold + ")"); delete stand_orders[rec.name]; try { localStorage.setItem("lp_stand_orders_" + character.name, JSON.stringify(stand_orders)); } catch (e) {} }
+        else say(rec.name + " ist nicht mehr am Stand, aber NICHT verkauft (Gold " + character.gold + ") – stelle es wieder aus"); }
     return did;
 }
 var goldback_req = 0, last_goldback = 0, GOLD_AUTO_BACK = 5000000; // ab 5 M Gold von selbst zum Magier bringen
