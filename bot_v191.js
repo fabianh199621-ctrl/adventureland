@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v190";
+var BOT_VERSION = "v191";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : character.ctype == "ranger" || /ranger/i.test(character.name) ? "ranger" : "priest";
@@ -607,6 +607,7 @@ function event_html() {
 function team_html() {
     var parts = [];
     for (var k in TEAM) { var nm = TEAM[k], st = team_state[nm], run = team_running(nm), lab = TEAM_LABEL[k]; var raw = active_chars()[nm]; try { var pe = get_player(nm); if (pe && pe.rip && st) st.state = "tot"; } catch (e) {} parts.push("<span style='color:" + (team_on[k] ? (run ? "#4caf50" : "#ffb74d") : "#9aa3b2") + "'>" + lab + (st && Date.now() - st.t < 60000 ? " Lv " + st.level + " · " + esc(st.state || "") : run ? " (" + esc(String(raw)) + ", keine Meldung)" : team_on[k] ? " (aus/offline)" : "") + "</span> <button data-act='team' data-k='" + k + "'" + (team_on[k] ? " class='on'" : "") + " style='padding:0 5px'>" + (team_on[k] ? "an" : "aus") + "</button>"); }
+    if (team_on.merch) { var mst = team_state[TEAM.merch]; parts.push("<button data-act='goldback' title='Händler bringt sein Gold (bis auf 150k) zum Magier'>Gold holen" + (mst && mst.gold ? " (" + fmt(mst.gold) + ")" : "") + "</button>"); }
     if (team_on.merch) parts.push("<button data-act='merchtest' title='Testet, ob der Händler auf einen anderen Server gestartet werden kann (Grundlage für Handel im Hintergrund); dauert ca. 1 min, Händler kommt danach zurück'" + (merch_test ? " class='on'" : "") + " style='padding:0 5px'>" + (merch_test ? "Servertest läuft (" + merch_test.stage + ")" : "Merch-Servertest") + "</button>");
     var give = "";
     if (team_on.priest || team_on.ranger) { // manuelle Übergabe: Inventarteil auswählen, an Priest/Ranger geben (der legt es an, wenn es besser ist)
@@ -950,7 +951,7 @@ function finish_measure(died) {
     var st = record_stat(meas.mon, meas.xp / h, meas.gold / h);
     if (died) { st.deaths = (st.deaths || 0) + 1; if (!manual_spot) { st.unsafe_until = character.level + 3; st.xp_h = 0; } }
     save_stats();
-    game_log("Spot " + meas.mon + ": " + Math.round(st.xp_h) + " XP/h, " + Math.round(st.gold_h) + " Gold/h" + (died ? " – GESTORBEN, gesperrt bis Level " + st.unsafe_until : ""));
+    game_log("Spot " + meas.mon + ": " + Math.round(st.xp_h) + " XP/h, " + Math.round(st.gold_h) + " Gold/h" + (died ? (st.unsafe_until ? " – GESTORBEN, gesperrt bis Level " + st.unsafe_until : " – GESTORBEN (fester Spot, nicht gesperrt)") : ""));
     meas = null; need_repick = true; save_state();
 }
 function log_stats() {
@@ -1190,6 +1191,7 @@ function init_panel() {
         else if (act == "buyno") buy_confirm = null;
         else if (act == "give") give_to_team(b.getAttribute("data-k"));
         else if (act == "merchtest") start_merch_test();
+        else if (act == "goldback") { team_send(TEAM.merch, { t: "goldback" }); game_log("Händler: Gold anfordern – er kommt zu dir"); }
         else if (act == "eventon") { event_on = !event_on; try { localStorage.setItem("lp_event_on", event_on ? "1" : "0"); } catch (x) {} game_log("Event-Teilnahme: " + (event_on ? "an" : "aus")); last_event_check = 0; }
         else if (act == "arbtrip") start_arb_trip(b.getAttribute("data-sv"));
         else if (act == "arbauto") { arb_auto = !arb_auto; try { localStorage.setItem("lp_arb_auto", arb_auto ? "1" : "0"); } catch (x) {} game_log("Handelsreisen automatisch: " + (arb_auto ? "an (ab " + fmt(ARB_TRIP_MIN) + " Gewinn)" : "aus")); last_panel = 0; }
@@ -1946,6 +1948,7 @@ async function check_flee() {
     var hp = character.hp / character.max_hp;
     var n = attackers_on_me();
     var strong = false, oneshot = false; for (var sid in parent.entities) { var se = parent.entities[sid]; if (se && se.type == "monster" && !se.dead && se.target == character.name && too_strong(se)) { strong = true; if ((se.attack || (G.monsters[se.mtype] || {}).attack || 0) >= character.max_hp * 0.5) oneshot = true; break; } }
+    if (!strong && !event_mode) { for (var bid2 in parent.entities) { var be = parent.entities[bid2]; if (be && be.type == "monster" && !be.dead && (G.monsters[be.mtype] || {}).boss && distance(character, be) < 350 && (be.attack || (G.monsters[be.mtype] || {}).attack || 0) >= character.max_hp * 0.3) { strong = true; oneshot = true; game_log("Boss " + be.mtype + " in der Nähe – weg hier"); break; } } } // Event-/Weltbosse (Icegolem usw.) nicht abwarten
     if (strong && (hp < 0.8 || oneshot)) {
         fleeing = true; busy = true; if (!event_mode) note_retreat();
         var pr = null; try { pr = team_on.priest ? get_player(TEAM.priest) : null; } catch (e) {}

@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Händler (F4llenMerch) – Stufe 1 =====
 // Läuft unsichtbar neben dem Magier. Aufgaben: Stand kaufen und öffnen, Loot abholen/verkaufen/einlagern,
 // Startgold vom Magier holen. mluck ist abgeschaltet (braucht Lv 40, Händler levelt praktisch nicht) – USE_MLUCK/LEVEL_MODE. Meldungen gehen per Charakter-Nachricht an den Magier und erscheinen dort als "[Merch] …".
-var MERCH_VERSION = "v190";
+var MERCH_VERSION = "v191";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -32,6 +32,7 @@ function on_cm(name, data) {
     if (name != MAGE || !data) return;
     if (data.t == "pickup") { pickup = data; pickup.t = Date.now(); pickup_done = false; manifest = {}; say("Abholung angefordert (" + (data.reason || "") + ", " + (data.items || 0) + " Items" + (data.pots && (data.pots.hp || data.pots.mp) ? ", Tränke " + data.pots.hp + "/" + data.pots.mp : "") + ")"); }
     else if (data.t == "pickup_cancel") { pickup = null; }
+    else if (data.t == "goldback") { goldback_req = Date.now(); }
     else if (data.t == "item") { manifest[item_key(data.name, data.level)] = data.action || "bank"; }
     else if (data.t == "done") { pickup_done = true; }
     else if (data.t == "me") { mage = data; mage.t = Date.now(); if (typeof data.paused == "boolean") m_paused = data.paused; }
@@ -257,6 +258,17 @@ async function orders_tick() {
     for (var sl3 in listed) { var rec = listed[sl3]; if (rec && rec.order && !character.slots[sl3]) { try { send_cm(MAGE, { t: "sold", name: rec.name, price: rec.price }); } catch (e) {} say("VERKAUFT am Stand: " + rec.name + " für " + rec.price + " Gold"); delete listed[sl3]; save_listed(); delete stand_orders[rec.name]; try { localStorage.setItem("lp_stand_orders_" + character.name, JSON.stringify(stand_orders)); } catch (e) {} } }
     return did;
 }
+var goldback_req = 0, last_goldback = 0, GOLD_AUTO_BACK = 5000000; // ab 5 M Gold von selbst zum Magier bringen
+async function do_goldback() { // zum Magier laufen und alles über GOLD_KEEP übergeben
+    goldback_req = 0; last_goldback = Date.now();
+    var amt = character.gold - GOLD_KEEP; if (amt < 1000) { say("Gold übergeben: nichts über der Reserve (" + character.gold + ")"); return; }
+    if (!mage) { say("Gold übergeben: Magier-Position unbekannt"); return; }
+    stand_off(); status("bringt Gold");
+    for (var i = 0; i < 4; i++) { var t = mage_entity(); if (t && character.map == t.map && Math.hypot(character.x - t.x, character.y - t.y) < 200) break; var p = t && character.map == t.map ? { map: t.map, x: t.x, y: t.y } : { map: mage.map, x: mage.x, y: mage.y }; await go(p, 100); }
+    var t2 = mage_entity(); if (!t2 || character.map != t2.map || Math.hypot(character.x - t2.x, character.y - t2.y) > 300) { say("Gold übergeben: Magier nicht erreicht – nächster Versuch später"); return; }
+    var g0 = character.gold; try { send_gold(MAGE, amt); } catch (e) { say("Gold übergeben fehlgeschlagen: " + (e && e.reason || e)); return; }
+    await sleep(800); say("Gold übergeben: " + (g0 - character.gold) + " an " + MAGE + " (behalte " + character.gold + ")");
+}
 async function do_home() {
     var h = home_spot();
     if (dist_to(h) > 60) { say_once("home", "Zurück zum Stand", 300000); await go(h, 40); }
@@ -328,6 +340,7 @@ async function loop() {
             }
             if (USE_MLUCK && character.level >= MLUCK_LEVEL && mluck_needed() && Date.now() - last_mluck_try > 5 * 60000 && !mage.paused) { status("mluck"); await do_mluck(); continue; }
             if (character.gold < GOLD_MIN && Date.now() - last_gold_ask > 30 * 60000) { status("Gold holen"); await do_mluck(); continue; }
+            if (goldback_req || (character.gold > GOLD_AUTO_BACK && Date.now() - last_goldback > 10 * 60000 && mage && Date.now() - mage.t < 30000)) { await do_goldback(); continue; }
             if (await orders_tick()) continue;
             if (await gather_tick()) continue;
             status(stand_open() ? "Stand" : "unterwegs");
