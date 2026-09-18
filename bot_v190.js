@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v189";
+var BOT_VERSION = "v190";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : character.ctype == "ranger" || /ranger/i.test(character.name) ? "ranger" : "priest";
@@ -363,6 +363,7 @@ function on_cm(name, data) { // Nachrichten der eigenen Charaktere
         if (data.t == "log") { /* kommt bereits über den gemeinsamen Speicher */ }
         else if (data.t == "st") { team_state[name] = Object.assign({ t: Date.now() }, data); last_panel = 0; }
         else if (data.t == "ready") { if (pickup_state) pickup_state.ready = true; }
+        else if (data.t == "sold") { game_log("[" + who + "] VERKAUFT: " + data.name + " für " + fmt(data.price) + " Gold – Gold kommt bei der nächsten Abholung/Übergabe"); if (stand_orders[data.name]) { delete stand_orders[data.name]; save_stand_orders(); } }
         else if (data.t == "delivered") { if (pickup_state) pickup_state.done = true; if (data.pots) game_log("[Merch] Tränke erhalten: " + data.pots); if (data.gold) game_log("[Merch] " + fmt(data.gold) + " Gold Verkaufserlös erhalten"); }
         else if (data.t == "hello") { game_log("[" + who + "] verbunden (" + (data.v || "?") + (data.sv ? ", Server " + pretty_server(data.sv) : "") + ")"); if (merch_test && name == TEAM.merch) merch_test_result(data.sv); team_send(name, { t: "state", paused: paused || !bot_running, spot: current_spot }); team_broadcast(); }
         else if (data.t == "need") { var np = get_player(name); var ni = locate_item(data.item); if (np && ni >= 0 && distance(character, np) < 400) { var nq = Math.min(data.q || 1, character.items[ni].q || 1); try { send_item(name, ni, nq); game_log("[" + who + "] " + nq + "x " + data.item + " übergeben"); } catch (e) {} } else if (ni < 0) { merch_needs[data.item] = Date.now(); game_log("[" + who + "] braucht " + data.item + " – wird beim nächsten Fund/Abholung mitgegeben"); } }
@@ -1472,7 +1473,7 @@ function update_panel() {
     h += event_html();
     h += "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Hunt: <span style='color:#e6e6e6'>" + esc(mh_txt()) + "</span> · " + tokens() + " Tokens</span><button data-act='hunt'" + (hunt_on ? " class='on'" : "") + " title='Monster Hunt automatisch'>Hunt</button><input data-huntmax='1' value='" + Math.round(hunt_max_danger * 100) + "' title='Jagden nur bis zu dieser Gefahr in % (HP-Anteil je Kill); darüber wird die Jagd übersprungen' style='width:34px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555;text-align:right'><span class='lp_k' style='font-size:11px'>%</span>" + (mh_quest() ? "<button data-act='huntabandon'>Abbrechen</button>" : "") + "</div>";
     h += "<div class='lp_row' style='flex-wrap:wrap;line-height:1.6'><span class='lp_k'>Serverwechsel:</span> <span style='font-size:11px'>" + server_tip_html() + "</span></div>";
-    h += arb_html(panel) + arb_trip_html();
+    h += arb_html(panel) + arb_trip_html() + watch_html();
     h += team_html();
     h += "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Zielbau " + wish_text() + (AUTO_GEAR ? " · automatisch, Reserve " + fmt(WISH_RESERVE) : "") + "</span><button data-act='wishist' data-slot='*' title='alle Slots auf das setzen, was du gerade trägst – Preislimits bleiben erhalten'>Ist</button><button data-act='wishreset' title='alle Ziele auf das Getragene setzen und alle Limits löschen'>Zielbau = aktuelle Ausrüstung</button><button data-act='wishtoggle'>" + (panel.__wish ? "▾" : "▸") + " Zielbau</button></div>";
     if (panel.__wish) h += wish_ui_html();
@@ -3216,6 +3217,41 @@ function arb_html(panel) {
     list.slice(0, 15).forEach(function (o) { h += "<tr><td>" + esc(o.name) + (o.level ? "+" + o.level : "") + (o.q > 1 ? " ×" + o.q : "") + "</td><td>" + fmt(o.price) + "</td><td>" + fmt(Math.round(npc_sell_price(o.name, o.level))) + "</td><td style='color:#4caf50'>" + fmt(Math.round(o.profit)) + "</td><td style='text-align:left'>" + esc(pretty_server(o.server)) + (o.same ? " ★" : "") + "</td><td style='text-align:left'>" + esc(o.seller) + "</td></tr>"; });
     return h + "</table>";
 }
+// ---------- Wertsachen über den Händlerstand verkaufen (aus der Bank): Preisspiegel aller Server, Preis wird automatisch gesetzt ----------
+var WATCH_ITEMS = { scroll3: true }; // Items, für die Kaufaufträge/Verkaufspreise gesammelt und die der Händler am Stand anbietet
+var watch_prices = {}, watch_logged = {};
+var stand_orders = {}; try { stand_orders = JSON.parse(localStorage.getItem("lp_stand_orders_" + TEAM.merch) || "{}"); } catch (e) {} // name -> { price, t, floor, since }
+function save_stand_orders() { try { localStorage.setItem("lp_stand_orders_" + TEAM.merch, JSON.stringify(stand_orders)); } catch (e) {} }
+function watch_summary(name) { var w = watch_prices[name]; if (!w) return null; var bid = w.bids.slice().sort(function (a, b) { return b.price - a.price; })[0], ask = w.asks.slice().sort(function (a, b) { return a.price - b.price; })[0]; return { bid: bid, ask: ask, n_ask: w.asks.length, n_bid: w.bids.length }; }
+function stand_price_for(name) { // Zielpreis: unter dem günstigsten Verkäufer, deutlich über dem besten Kaufauftrag; sinkt 5 % pro Tag bis zum Boden (bester Kaufauftrag +10 %)
+    var g = (G.items[name] || {}).g || 0, ws = watch_summary(name), bid = ws && ws.bid ? ws.bid.price : 0, ask = ws && ws.ask ? ws.ask.price : 0;
+    var start = ask ? Math.min(ask * 0.97, g) : g * 0.9; if (bid) start = Math.max(start, bid * 1.3);
+    var floor = Math.max(bid * 1.1, g * 0.5);
+    var o = stand_orders[name]; var days = o && o.since ? (Date.now() - o.since) / 86400000 : 0;
+    var price = Math.max(floor, start * Math.pow(0.95, Math.floor(days)));
+    return Math.round(price / 1000000) * 1000000;
+}
+function watch_after_scan() {
+    for (var name in WATCH_ITEMS) {
+        var ws = watch_summary(name), o = stand_orders[name];
+        var txt = name + ": " + (ws && ws.bid ? "bester Kaufauftrag " + fmt(ws.bid.price) + " (" + pretty_server(ws.bid.server) + ", " + ws.bid.seller + ")" : "kein Kaufauftrag") + " · " + (ws && ws.ask ? "günstigster Verkäufer " + fmt(ws.ask.price) + " (" + pretty_server(ws.ask.server) + ", " + ws.ask.seller + ", " + ws.n_ask + " Anbieter)" : "kein Verkäufer");
+        if (watch_logged[name] != txt) { watch_logged[name] = txt; game_log("Preisspiegel " + txt); }
+        // Auftrag an den Händler: Item liegt in der Bank (oder er hat es schon) -> am Stand anbieten
+        var in_bank = false; try { var bk = character.bank || bank_cache || {}; for (var pk in bk) if (pk.indexOf("items") == 0 && Array.isArray(bk[pk])) bk[pk].forEach(function (it) { if (it && it.name == name) in_bank = true; }); } catch (e) {}
+        var ms = team_state[TEAM.merch], merch_has = ms && ms.orders && ms.orders[name];
+        if (in_bank || merch_has || o) {
+            if (!o) { o = stand_orders[name] = { since: Date.now() }; }
+            var np = stand_price_for(name);
+            if (np != o.price) { o.price = np; o.t = Date.now(); save_stand_orders(); game_log("Stand-Auftrag " + name + ": " + fmt(np) + (ws && ws.bid ? " (Kaufauftrag " + fmt(ws.bid.price) + ")" : "") + " – Händler holt es aus der Bank und stellt es aus"); }
+        }
+    }
+}
+function watch_html() {
+    var h = "";
+    for (var name in WATCH_ITEMS) { var ws = watch_summary(name), o = stand_orders[name], ms = team_state[TEAM.merch], st = ms && ms.orders && ms.orders[name]; if (!ws && !o) continue;
+        h += "<div class='lp_row' style='flex-wrap:wrap;line-height:1.6'><span class='lp_k'>" + esc((G.items[name] || {}).name || name) + ":</span> " + (ws && ws.bid ? "Kaufauftrag " + fmt(ws.bid.price) : "kein Kaufauftrag") + " · " + (ws && ws.ask ? "Verkäufer ab " + fmt(ws.ask.price) + " (" + ws.n_ask + ")" : "kein Verkäufer") + (o ? " · <span style='color:#8ab4f8'>Stand: " + fmt(o.price) + (st ? " – " + esc(st) : " – wartet auf Händler") + "</span>" : "") + "</div>"; }
+    return h;
+}
 // ---------- Arbitrage Stufe 2: der Händler reist im Hintergrund (eigenes Fenster auf dem Zielserver) ----------
 var ARB_TRIP_MIN = 100000; try { ARB_TRIP_MIN = parseInt(localStorage.getItem("lp_arb_min") || "0") || 100000; } catch (e) {}
 var arb_auto = true; try { arb_auto = localStorage.getItem("lp_arb_auto") != "0"; } catch (e) {}
@@ -3400,11 +3436,13 @@ async function scan_all_merchants(force, only_slot) {
         try { if (typeof parent.load_merchants == "function") { parent.load_merchants(); await sleep(3000); } collect_merchants(parent.merchants, merchants, 0); } catch (e) {}
     }
     if (!global_debug_done) { global_debug_done = true; try { game_log("Händler-Abfrage: " + merchants.length + " Händler" + (merchants[0] ? ", Felder: " + Object.keys(merchants[0]).slice(0, 14).join(",") : "") + " | Antwort: " + String(raw).slice(0, 220).replace(/\s+/g, " ") + " | parent.merchants: " + (parent.merchants ? (Array.isArray(parent.merchants) ? "Array[" + parent.merchants.length + "]" : "Keys " + Object.keys(parent.merchants).slice(0, 8).join(",")) : "-")); } catch (e) {} }
-    var finds = [], mine = my_server(), all = [], arb = [];
+    var finds = [], mine = my_server(), all = [], arb = []; watch_prices = {};
     merchants.forEach(function (m) {
         for (var sl in m.slots) {
             if (sl.indexOf("trade") != 0) continue;
-            var it = m.slots[sl]; if (!it || !it.price || it.b) continue;
+            var it = m.slots[sl]; if (!it || !it.price) continue;
+            if (WATCH_ITEMS[it.name]) { var wl = (watch_prices[it.name] = watch_prices[it.name] || { asks: [], bids: [], t: Date.now() }); (it.b ? wl.bids : wl.asks).push({ price: it.price, q: it.q || 1, seller: m.name, server: m.server || "?", level: it.level || 0 }); }
+            if (it.b) continue;
             var d0 = G.items[it.name];
             if (d0) { var ao = { name: it.name, level: it.level || 0, price: it.price, q: it.q || 1, seller: m.name, server: m.server || "?", same: norm_server(m.server) == mine, map: m.map, x: m.x, y: m.y, tslot: sl, t: Date.now() }; ao.profit = arb_profit(ao); if (ao.profit > 0) arb.push(ao); }
             if (d0 && slot_for_item(d0)) all.push({ name: it.name, level: it.level || 0, price: it.price, seller: m.name, server: m.server || "?", same: norm_server(m.server) == mine, map: m.map, x: m.x, y: m.y, tslot: sl, stat_type: it.stat_type || null, score: gear_score(d0, it.level || 0, it.stat_type), t: Date.now() });
@@ -3415,6 +3453,7 @@ async function scan_all_merchants(force, only_slot) {
             finds.push({ name: it.name, level: it.level || 0, price: it.price, seller: m.name, server: m.server || "?", map: m.map, x: m.x, y: m.y, slot: slot, tslot: sl, same: norm_server(m.server) == mine, stat_type: it.stat_type || null, t: Date.now() });
         }
     });
+    try { watch_after_scan(); } catch (e) {}
     finds.sort(function (a, b) { return (b.same - a.same) || ((b.stat_type == STAT_TYPE) - (a.stat_type == STAT_TYPE)) || (a.price - b.price); }); // hier zuerst, dann mit passendem Attribut, dann Preis
     global_finds = finds; global_offers = all; arb_offers = arb; try { parent.__lp_global_offers = all; parent.__lp_arb_offers = arb; } catch (e) {}
     var al = arb_list(); if (al.length) { var ak = al.slice(0, 3).map(function (o) { return o.name + (o.level ? "+" + o.level : "") + " " + fmt(o.price) + "→" + fmt(Math.round(npc_sell_price(o.name, o.level))) + " (" + pretty_server(o.server) + ")"; }).join(", "); if (!global_logged["arb:" + ak]) { global_logged["arb:" + ak] = true; game_log("Handel: " + al.length + " Angebote unter NPC-Wert, z. B. " + ak); } }
