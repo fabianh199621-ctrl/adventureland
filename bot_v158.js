@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v157";
+var BOT_VERSION = "v158";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : "priest";
@@ -1445,7 +1445,19 @@ async function check_flee() {
     var hp = character.hp / character.max_hp;
     var n = attackers_on_me();
     var strong = false; for (var sid in parent.entities) { var se = parent.entities[sid]; if (se && se.type == "monster" && !se.dead && se.target == character.name && too_strong(se)) { strong = true; break; } }
-    if (strong && hp < 0.8) { fleeing = true; busy = true; game_log("Zu starker Angreifer – sofortiger Rückzug (HP " + Math.round(hp * 100) + "%)"); try { stop("smart"); change_target(null); await travel_place("town"); while (character.hp < character.max_hp * 0.9 && !character.rip) await sleep(1000); } catch (e) {} fleeing = false; busy = false; return; }
+    if (strong && hp < 0.8) {
+        fleeing = true; busy = true;
+        var pr = null; try { pr = team_on.priest ? get_player(TEAM.priest) : null; } catch (e) {}
+        var pst = team_state[TEAM.priest], priest_ok = pr && !pr.rip && pst && Date.now() - pst.t < 60000 && pr.map == character.map && distance(character, pr) < 400;
+        if (priest_ok) { // Heiler in der Nähe: zu ihm laufen und dort hochheilen lassen, statt in die Stadt
+            game_log("Zu starker Angreifer – Rückzug zum Priester (HP " + Math.round(hp * 100) + "%)");
+            try { stop("smart"); change_target(null); team_send(TEAM.priest, { t: "help" }); var t0 = Date.now(); while (Date.now() - t0 < 15000 && !character.rip && character.hp < character.max_hp * 0.9) { var p2 = get_player(TEAM.priest); if (p2 && p2.map == character.map) { var dx = character.x - p2.x, dy = character.y - p2.y, dd = Math.hypot(dx, dy) || 1; if (dd > 60) move(p2.x + dx / dd * 40, p2.y + dy / dd * 40); } await sleep(400); } } catch (e) {}
+            var still = false; for (var sid2 in parent.entities) { var se2 = parent.entities[sid2]; if (se2 && se2.type == "monster" && !se2.dead && se2.target == character.name && too_strong(se2)) { still = true; break; } }
+            if (character.hp >= character.max_hp * 0.6 && !character.rip) { fleeing = false; busy = false; if (still) { need_repick = true; game_log("Angreifer noch da – Spot wechseln"); } return; }
+            game_log("Priester reicht nicht – Rückzug in die Stadt");
+        } else game_log("Zu starker Angreifer – sofortiger Rückzug (HP " + Math.round(hp * 100) + "%)");
+        try { stop("smart"); change_target(null); await travel_place("town"); while (character.hp < character.max_hp * 0.9 && !character.rip) await sleep(1000); } catch (e) {} fleeing = false; busy = false; return;
+    }
     if (n < FLEE_ATTACKERS || hp > KITE_HP) return;
     fleeing = true; busy = true;
     try {

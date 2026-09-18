@@ -1,12 +1,12 @@
 // ===== Adventure Land – LogicPlan Priester (F4llenPriest) – Stufe 1 =====
 // Folgt dem Magier, heilt ihn und sich, nimmt die Party-Einladung an, greift erst ab PRIEST_ATTACK_LEVEL mit an.
 // Meldungen gehen per Charakter-Nachricht an den Magier ("[Priest] …").
-var PRIEST_VERSION = "v157";
+var PRIEST_VERSION = "v158";
 var MAGE = "F4llen";
 try { localStorage.setItem("lp_tlog_" + character.name, JSON.stringify([{ t: Date.now(), m: "Skript geladen (" + character.ctype + ", Lv " + character.level + ", Server " + (typeof server != "undefined" && server ? (server.region + " " + server.id) : "?") + ")" }])); } catch (e) {}
 var PRIEST_ATTACK_LEVEL = 20;      // vorher nur folgen und heilen
 var FOLLOW_DIST = 120, FOLLOW_MAX = 220;
-var HEAL_MAGE_BELOW = 0.75, HEAL_SELF_BELOW = 0.6, FLEE_BELOW = 0.35;
+var HEAL_MAGE_BELOW = 0.9, HEAL_SELF_BELOW = 0.6, FLEE_BELOW = 0.35, help_until = 0;
 var mage = null, p_paused = false, last_log = {}, last_status = 0, last_move = 0, last_pots_ask = 0, moving = false;
 var GEAR_SLOTS = ["helmet", "chest", "pants", "shoes", "gloves", "mainhand"], POT_MIN = 30, POT_BUY = 80, GOLD_WANT = 100000, GOLD_MIN = 20000;
 var shopping = false, last_shop = 0, last_gold_ask = 0;
@@ -55,6 +55,7 @@ function on_cm(name, data) {
     if (name != MAGE || !data) return;
     if (data.t == "me") { mage = data; mage.t = Date.now(); if (typeof data.paused == "boolean") p_paused = data.paused; }
     else if (data.t == "state") p_paused = !!data.paused;
+    else if (data.t == "help") { help_until = Date.now() + 20000; try { stop("smart"); } catch (e) {} moving = false; }
 }
 function on_party_invite(name) { if (name == MAGE) { try { accept_party_invite(name); say_once("party", "Party mit " + MAGE + " angenommen", 3600000); } catch (e) {} } }
 function on_party_request(name) { if (name == MAGE) { try { accept_party_request(name); } catch (e) {} } }
@@ -91,8 +92,9 @@ async function tick() {
     if (has_pot("hpot") < 0 && character.gold < GOLD_MIN && mage && Date.now() - last_pots_ask > 5 * 60000) { var me = mage_entity(); if (me && character.map == me.map && dist(character, me) < 350) { last_pots_ask = Date.now(); try { send_cm(MAGE, { t: "pots?" }); } catch (e) {} } }
     var att = my_attacker();
     if (att && hpr < FLEE_BELOW) { var me2 = mage_entity(); if (me2) { try { move(me2.x, me2.y); } catch (e) {} } status("flieht"); return; }
-    // Magier heilen
+    // Magier heilen (bei Hilferuf: hinlaufen und Dauerheilung, Angriff hat Pause)
     var t = mage_entity();
+    if (Date.now() < help_until && t && !t.rip) { var dh = dist(character, t), hr = (G.skills.heal && G.skills.heal.range) || 200; if (dh > hr - 20 && !is_moving(character)) { try { move(t.x + (character.x - t.x) * 0.5, t.y + (character.y - t.y) * 0.5); } catch (e) {} } if (dh <= hr && can_use("heal") && character.mp > 30) heal_target(t); status("hilft"); return; }
     if (t && !t.rip && t.hp / t.max_hp < HEAL_MAGE_BELOW && dist(character, t) <= (G.skills.heal && G.skills.heal.range || 200) && can_use("heal") && character.mp > 30) { heal_target(t); status("heilt"); return; }
     // Party-Heilung, wenn beide angeschlagen
     if (t && hpr < 0.7 && t.hp / t.max_hp < 0.7 && can_use("partyheal") && character.mp > 400) { try { use_skill("partyheal"); } catch (e) {} }
