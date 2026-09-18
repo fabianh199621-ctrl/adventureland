@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v163";
+var BOT_VERSION = "v164";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : character.ctype == "ranger" || /ranger/i.test(character.name) ? "ranger" : "priest";
@@ -2643,7 +2643,7 @@ function wish_ui_html() { // Zielbau-Tabelle
         var cands = slot_candidates(slot).slice(0, 60), cur = wish_item(slot), worn = character.slots[slot];
         var sel = "<select data-wslot='" + slot + "' style='max-width:150px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'>";
         sel += "<option value=''" + (!cur ? " selected" : "") + ">– kein Ziel –</option>";
-        cands.forEach(function (c) { sel += "<option value='" + c.name + "'" + (c.name == cur ? " selected" : "") + " title='" + esc(item_tooltip(c.name, c.level)) + "'>" + esc(c.def.name || c.name) + " (" + Math.round(c.score) + ")</option>"; });
+        cands.forEach(function (c) { sel += "<option value='" + c.name + "'" + (c.name == cur ? " selected" : "") + " title='" + esc(item_tooltip(c.name, c.level)) + "'>" + esc((c.def.name && c.def.name != c.name ? c.def.name + " [" + c.name + "]" : c.name)) + " (" + Math.round(c.score) + ")</option>"; });
         sel += "</select>";
         var lv = "";
         if (cur) { var d = G.items[cur], mx = d.compound ? 7 : 12, wl = wish_level(slot); lv = "<select data-wlvl='" + slot + "' style='font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'>"; for (var L = 0; L <= mx; L++) lv += "<option value='" + L + "'" + (L == wl ? " selected" : "") + ">+" + L + "</option>"; lv += "</select>"; }
