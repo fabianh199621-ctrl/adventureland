@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v181";
+var BOT_VERSION = "v182";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : character.ctype == "ranger" || /ranger/i.test(character.name) ? "ranger" : "priest";
@@ -335,7 +335,7 @@ var cm_selftest = 0;
 function team_broadcast() { // alle 5 s: wo bin ich, was mache ich (für Händler und Priester)
     if (Date.now() - last_team_cast < 5000) return; last_team_cast = Date.now();
     var act = active_chars(), ml = character.s && character.s.mluck;
-    var msg = { t: "me", map: character.map, x: Math.round(character.x), y: Math.round(character.y), level: character.level, hp: character.hp, max_hp: character.max_hp, paused: paused || !bot_running, spot: current_spot, tgt: (function () { if (!paused) return last_target_id; try { var mt = get_target(); return mt && mt.type == "monster" && !mt.dead ? mt.id : null; } catch (e) { return null; } })(), mluck: ml ? { f: ml.f, ms: ml.ms, strong: !!ml.strong } : null, in: character.in };
+    var msg = { t: "me", map: character.map, x: Math.round(character.x), y: Math.round(character.y), level: character.level, hp: character.hp, max_hp: character.max_hp, paused: paused || !bot_running, spot: current_spot, event: event_mode, tgt: (function () { if (!paused) return last_target_id; try { var mt = get_target(); return mt && mt.type == "monster" && !mt.dead ? mt.id : null; } catch (e) { return null; } })(), mluck: ml ? { f: ml.f, ms: ml.ms, strong: !!ml.strong } : null, in: character.in };
     for (var k in TEAM) { var nm = TEAM[k]; if (team_on[k] && act[nm]) { try { send_cm(nm, msg); } catch (e) {} } }
 }
 function team_send(name, data) { try { send_cm(name, data); } catch (e) {} }
@@ -528,6 +528,55 @@ function team_wish_html(panel) {
         h += "</table>";
     });
     return h;
+}
+
+// ---------- Server-Event Giga Crab (crabxx): hinspringen, Huge Crabs farmen, Boss von außen anschießen; Team springt mit ----------
+var event_on = true; try { event_on = localStorage.getItem("lp_event_on") != "0"; } catch (e) {}
+var event_mode = null, event_prev = null, last_event_check = 0, event_boss_hits = 0, event_since = 0;
+var EVENT_BOSS_MIN_DIST = 110, EVENT_BOSS_MAX_DIST = 190;
+function event_status() { try { var st = (typeof server != "undefined" && server && server.status) || parent.S || {}; var e = st.crabxx; return e && (e.live !== false) ? e : null; } catch (e) { return null; } }
+function event_boss() { try { for (var id in parent.entities) { var m = parent.entities[id]; if (m && m.type == "monster" && m.mtype == "crabxx" && !m.dead) return m; } } catch (e) {} return null; }
+function event_tick() {
+    if (Date.now() - last_event_check < 10000) return; last_event_check = Date.now();
+    var st = event_status();
+    if (!event_mode) {
+        if (!event_on || !st || paused || busy || upgrading || server_trip || focus_mode || arb_job || merch_test) return;
+        event_prev = { manual_spot: manual_spot, user_manual: user_manual }; event_mode = "crabxx"; event_since = Date.now(); event_boss_hits = 0;
+        manual_spot = "crabx"; user_manual = null; current_spot = "crabx"; need_repick = true; meas = null; if (hunt_spot) { hunt_spot = null; }
+        game_log("Event: Giga Crab läuft (HP " + (st.max_hp ? Math.round((st.hp || 0) / st.max_hp * 100) + " %" : "?") + ") – springe hin, Team folgt"); last_panel = 0;
+        event_join();
+        return;
+    }
+    if (!st) { event_leave("Event vorbei"); return; }
+    if (!event_on) { event_leave("Teilnahme abgeschaltet"); return; }
+    // nicht am Event-Ort (anderer Kartenbereich)? nochmal springen
+    if (st.map && (character.map != st.map || (st.x != null && distance(character, { x: st.x, y: st.y }) > 900)) && !busy && !fleeing) event_join();
+}
+function event_join() {
+    try { var r = join("crabxx"); if (r && typeof r.then == "function") r.then(function () { game_log("Event: angekommen"); }, function (e) { game_log("Event: Sprung fehlgeschlagen: " + JSON.stringify(e).slice(0, 120)); }); } catch (e) { game_log("Event: join-Fehler " + err_txt(e)); }
+    ["priest", "ranger"].forEach(function (k) { if (team_on[k] && team_running(TEAM[k])) team_send(TEAM[k], { t: "join", event: "crabxx" }); });
+}
+function event_leave(why) {
+    game_log("Event: " + why + " – zurück zum normalen Betrieb" + (event_boss_hits ? " (" + event_boss_hits + " Treffer auf Giga Crab)" : ""));
+    if (event_prev) { manual_spot = event_prev.manual_spot; user_manual = event_prev.user_manual; } event_prev = null; event_mode = null;
+    current_spot = null; need_repick = true; meas = null; last_hunt_check = 0; last_panel = 0;
+    stop("smart"); change_target(null); if (!paused) go_to_farm_spot();
+}
+function event_boss_step() { // kein crabx in Sicht: Giga Crab von außerhalb seiner Reichweite anschießen, Abstand halten
+    var bx = event_boss(); if (!bx) return false;
+    if (bx.target && (bx.target == character.name || TEAM_NAMES.indexOf(bx.target) >= 0)) { // Boss hat einen von uns im Visier: weg (16k Schaden = Tod)
+        var dx = character.x - bx.x, dy = character.y - bx.y, len = Math.hypot(dx, dy) || 1; try { move(character.x + dx / len * 200, character.y + dy / len * 200); } catch (e) {} set_message("Boss-Abstand!"); return true;
+    }
+    var d = distance(character, bx);
+    if (d < EVENT_BOSS_MIN_DIST) { var dx2 = character.x - bx.x, dy2 = character.y - bx.y, l2 = Math.hypot(dx2, dy2) || 1; try { move(bx.x + dx2 / l2 * (EVENT_BOSS_MIN_DIST + 30), bx.y + dy2 / l2 * (EVENT_BOSS_MIN_DIST + 30)); } catch (e) {} return true; }
+    var rng = Math.min(character.range || 150, EVENT_BOSS_MAX_DIST);
+    if (d > rng) { var dx3 = character.x - bx.x, dy3 = character.y - bx.y, l3 = Math.hypot(dx3, dy3) || 1, want = Math.max(EVENT_BOSS_MIN_DIST, rng - 15); try { move(bx.x + dx3 / l3 * want, bx.y + dy3 / l3 * want); } catch (e) {} set_message("Zum Boss"); return true; }
+    if (can_attack(bx)) { try { attack(bx); event_boss_hits++; last_target_id = bx.id; set_message("Giga Crab " + fmt(bx.hp) + "/" + fmt(bx.max_hp)); } catch (e) {} }
+    return true;
+}
+function event_html() {
+    var st = event_status(); if (!st && !event_mode) return "";
+    return "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Event: <span style='color:#e6e6e6'>Giga Crab" + (st && st.max_hp ? " " + Math.round((st.hp || 0) / st.max_hp * 100) + " % HP" : "") + (event_mode ? " – dabei seit " + Math.round((Date.now() - event_since) / 60000) + " min, " + event_boss_hits + " Treffer" : "") + "</span></span><button data-act='eventon'" + (event_on ? " class='on'" : "") + " title='am Server-Event teilnehmen (Vorrang vor Jagd)'>Teilnehmen</button></div>";
 }
 function team_html() {
     var parts = [];
@@ -904,6 +953,14 @@ var last_go = 0, roam_logged = false;
 function go_to_farm_spot() {
     if (paused || Date.now() - last_go < 5000) return;
     last_go = Date.now();
+    if (event_mode) { // Event: beim Boss bleiben (Huge Crabs spawnen um ihn herum)
+        var est = event_status(), bx = event_boss();
+        var tp = bx ? { map: character.map, x: bx.x, y: bx.y } : est && est.x != null ? { map: est.map, x: est.x, y: est.y } : null;
+        if (!tp) return;
+        if (character.map != tp.map || distance(character, tp) > 900) { event_join(); return; }
+        if (distance(character, tp) > 300) { busy = true; set_message("Zum Event"); var ang = Math.random() * Math.PI * 2; smart_move({ map: tp.map, x: tp.x + Math.cos(ang) * 180, y: tp.y + Math.sin(ang) * 180 }).catch(function () {}).then(function () { busy = false; }); }
+        return;
+    }
     var mon = pick_farm_monster();
     var areas = spawn_areas(mon);
     // Schon im Spawngebiet, aber nichts in Sicht -> umherstreifen statt Weg neu suchen
@@ -1107,6 +1164,7 @@ function init_panel() {
         else if (act == "buyno") buy_confirm = null;
         else if (act == "give") give_to_team(b.getAttribute("data-k"));
         else if (act == "merchtest") start_merch_test();
+        else if (act == "eventon") { event_on = !event_on; try { localStorage.setItem("lp_event_on", event_on ? "1" : "0"); } catch (x) {} game_log("Event-Teilnahme: " + (event_on ? "an" : "aus")); last_event_check = 0; }
         else if (act == "arbtrip") start_arb_trip(b.getAttribute("data-sv"));
         else if (act == "arbauto") { arb_auto = !arb_auto; try { localStorage.setItem("lp_arb_auto", arb_auto ? "1" : "0"); } catch (x) {} game_log("Handelsreisen automatisch: " + (arb_auto ? "an (ab " + fmt(ARB_TRIP_MIN) + " Gewinn)" : "aus")); last_panel = 0; }
         else if (act == "team") { var tk = b.getAttribute("data-k"); team_on[tk] = !team_on[tk]; save_team(); last_team_tick = 0; game_log("Team: " + TEAM[tk] + " " + (team_on[tk] ? "an" : "aus")); }
@@ -1380,6 +1438,7 @@ function update_panel() {
       + "<div class='lp_k'>Session " + fmt(sess.xp / sh) + " XP/h · " + fmt(sess.gold / sh) + " G/h · nächstes Level in " + (rate > 0 ? fmt_time((G.levels[character.level] - character.xp) / rate * 3600000) : "-") + "</div></div>";
     h += "<div class='lp_row'><span class='lp_mode'>Modus: " + (manual_spot ? "fest (" + esc(manual_spot) + ")" : "automatisch") + "</span><button data-act='auto'" + (manual_spot ? "" : " class='on'") + ">Auto</button><button data-act='reset'>Neu messen</button><button data-act='worth'" + (only_worth ? " class='on'" : "") + " title='nur die 5 besten nach geschätzten XP/h'>Top 5</button><button data-act='bycatch'" + (bycatch ? " class='on'" : "") + " title='andere sichere Monster in der Nähe mit angreifen'>Beifang</button><button data-act='focus'" + (focus_mode ? " class='on'" : "") + " title='nur farmen/hunten: kein Kuss, Ponty, Markt, Kuchen, keine Ausrüstungsautomatik; Inventar erst unter 3 freien Plätzen bis 20 frei aufräumen (mit Tränken)'>Fokus</button><button data-act='sortinv' title='Inventar sortieren'>Inv ⇅</button></div>"
       + "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Aktionen</span><button data-act='compound' title='Schmuck compounden (getragen + ungetragen)'>Compound</button><button data-act='tidy' title='Schrott verkaufen, Rest in die Bank'>Aufräumen</button><button data-act='bank' title='Schrott aus der Bank holen und verkaufen'>Bank aufräumen</button><button data-act='banksort' title='Bank nach Gruppen sortieren, Reiter lückenlos füllen'>Bank ⇅</button><button data-act='copylog' title='Bot-Log in die Zwischenablage'>Log kopieren</button><button data-act='pauseafter'" + (pause_after ? " class='on'" : "") + " title='Nach Buttons/Tasten pausieren statt weiterfarmen'>Danach: " + (pause_after ? "Pause" : "Farmen") + "</button><button data-act='clearlog' title='Log-Puffer leeren' style='padding:1px 5px'>✕</button></div>";
+    h += event_html();
     h += "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Hunt: <span style='color:#e6e6e6'>" + esc(mh_txt()) + "</span> · " + tokens() + " Tokens</span><button data-act='hunt'" + (hunt_on ? " class='on'" : "") + " title='Monster Hunt automatisch'>Hunt</button><input data-huntmax='1' value='" + Math.round(hunt_max_danger * 100) + "' title='Jagden nur bis zu dieser Gefahr in % (HP-Anteil je Kill); darüber wird die Jagd übersprungen' style='width:34px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555;text-align:right'><span class='lp_k' style='font-size:11px'>%</span>" + (mh_quest() ? "<button data-act='huntabandon'>Abbrechen</button>" : "") + "</div>";
     h += "<div class='lp_row' style='flex-wrap:wrap;line-height:1.6'><span class='lp_k'>Serverwechsel:</span> <span style='font-size:11px'>" + server_tip_html() + "</span></div>";
     h += arb_html(panel) + arb_trip_html();
@@ -1843,8 +1902,8 @@ async function check_flee() {
     if (fleeing || paused || upgrading || kissing) return;
     var hp = character.hp / character.max_hp;
     var n = attackers_on_me();
-    var strong = false; for (var sid in parent.entities) { var se = parent.entities[sid]; if (se && se.type == "monster" && !se.dead && se.target == character.name && too_strong(se)) { strong = true; break; } }
-    if (strong && hp < 0.8) {
+    var strong = false, oneshot = false; for (var sid in parent.entities) { var se = parent.entities[sid]; if (se && se.type == "monster" && !se.dead && se.target == character.name && too_strong(se)) { strong = true; if ((se.attack || (G.monsters[se.mtype] || {}).attack || 0) >= character.max_hp * 0.5) oneshot = true; break; } }
+    if (strong && (hp < 0.8 || oneshot)) {
         fleeing = true; busy = true;
         var pr = null; try { pr = team_on.priest ? get_player(TEAM.priest) : null; } catch (e) {}
         var pst = team_state[TEAM.priest], priest_ok = pr && !pr.rip && pst && Date.now() - pst.t < 60000 && pr.map == character.map && distance(character, pr) < 400;
@@ -2062,6 +2121,7 @@ async function spend_tokens() { // Set-Teile kaufen, günstigstes fehlendes zuer
     }
 }
 async function check_monsterhunt() {
+    if (event_mode) return; // Event hat Vorrang
     if (!hunt_on || hunting || busy || upgrading || kissing || fleeing || exchanging || paused || !has_weapon()) return;
     if (Date.now() - last_hunt_check < 15000) return;
     last_hunt_check = Date.now();
@@ -3750,7 +3810,7 @@ function start_main() {
     rip_counted = false;
     session_tick();
     if (Date.now() - last_panel > 2000) { last_panel = Date.now(); try { update_panel(); update_char_panel(); } catch (e) {} }
-    try { merch_test_tick(); arb_tick(); team_tick(); team_broadcast(); team_read_logs(); team_inject(); bank_snapshot(); if (!manual_lock && !paused) { priest_gear_tick(); energize_tick(); team_wish_handover_tick(); } } catch (e) {}
+    try { merch_test_tick(); arb_tick(); event_tick(); team_tick(); team_broadcast(); team_read_logs(); team_inject(); bank_snapshot(); if (!manual_lock && !paused) { priest_gear_tick(); energize_tick(); team_wish_handover_tick(); } } catch (e) {}
     if (paused) return;
     measure_tick();
 
@@ -3796,6 +3856,7 @@ function start_main() {
         if (!target) { // Angreifer nur erledigen, wenn sie nah sind; sonst weiter zum Spot
             for (var id in parent.entities) { var e = parent.entities[id]; if (is_valid_target(e) && e.target == character.name && distance(character, e) < 120) { target = e; break; } }
         }
+        if (!target && event_mode && !fleeing) { if (event_boss_step()) return; }
         if (target) change_target(target); else { go_to_farm_spot(); return; }
     }
 
