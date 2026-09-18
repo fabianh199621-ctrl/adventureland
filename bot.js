@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v152";
+var BOT_VERSION = "v153";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : "priest";
@@ -524,6 +524,7 @@ function team_safe(mon) { // Spot für den Priester tragbar: Monsterlevel nahe s
     return (d.level || 1) <= esc.level + 3 && d.attack * 4 <= php;
 }
 var team_safe_warned = 0;
+function escort_name() { var e = team_escort(); if (!e) return "das Team"; var nm = e.name || ""; for (var k in TEAM) if (team_state[TEAM[k]] === e) nm = (k == "merch" ? "den Händler" : "den Priester"); return nm + " (Lv " + e.level + ")"; }
 function candidate_list() {
     var list = visible_mons().filter(function (m) {
         if (spot_blocked(m)) return false;
@@ -555,8 +556,8 @@ function choose_spot() {
 }
 function pick_farm_monster() {
     if (!has_weapon()) return NO_WEAPON_MONSTER;
-    if (manual_spot && !spot_blocked(manual_spot)) { if (current_spot != manual_spot) { current_spot = manual_spot; need_repick = false; meas = null; save_state(); } if (!team_safe(manual_spot) && Date.now() - team_safe_warned > 600000) { team_safe_warned = Date.now(); game_log("Achtung: Spot " + manual_spot + " ist für den Priester (Lv " + team_escort().level + ") zu gefährlich – fester Spot bleibt, aber er wird dort sterben"); } return current_spot; }
-    if (current_spot && !team_safe(current_spot)) { if (Date.now() - team_safe_warned > 600000) { team_safe_warned = Date.now(); game_log("Spot " + current_spot + " für den Priester (Lv " + team_escort().level + ") zu gefährlich – wähle einen leichteren, bis er Lv " + TEAM_ESCORT_LEVEL + " ist"); } need_repick = true; }
+    if (manual_spot && !spot_blocked(manual_spot)) { if (current_spot != manual_spot) { current_spot = manual_spot; need_repick = false; meas = null; save_state(); } if (!team_safe(manual_spot) && Date.now() - team_safe_warned > 600000) { team_safe_warned = Date.now(); game_log("Achtung: Spot " + manual_spot + " ist für " + escort_name() + " zu gefährlich – fester Spot bleibt, aber er wird dort sterben"); } return current_spot; }
+    if (current_spot && !team_safe(current_spot)) { if (Date.now() - team_safe_warned > 600000) { team_safe_warned = Date.now(); game_log("Spot " + current_spot + " für " + escort_name() + " zu gefährlich – wähle einen leichteren"); } need_repick = true; }
     if (!current_spot || need_repick) { current_spot = choose_spot(); need_repick = false; save_state(); }
     return current_spot;
 }
@@ -856,7 +857,7 @@ function init_panel() {
         else if (act == "buyalt") { var bs = b.getAttribute("data-slot"), bi = b.getAttribute("data-item"); preempt("Zwischenlösung " + bi, function () { return buy_alternative(bs, bi); }); }
         else if (act == "farmwish") { var fm = b.getAttribute("data-mon"); user_manual = fm; preempt("Farmen " + fm, function () { set_manual_spot(fm); }); }
         else if (act == "wishreset") reset_wish_to_worn();
-        else if (act == "wishist") { var is_ = b.getAttribute("data-slot"), iw = character.slots[is_]; var keep = wish_cfg[is_] && wish_cfg[is_].max; wish_cfg[is_] = iw && G.items[iw.name] ? { item: iw.name, level: iw.level || 0 } : { item: "" }; if (keep) wish_cfg[is_].max = keep; save_wish_cfg(); game_log("Zielbau " + is_ + ": Ist-Stand übernommen (" + (iw ? iw.name + "+" + (iw.level || 0) : "leer") + ")"); }
+        else if (act == "wishist") { var slots_ = b.getAttribute("data-slot") == "*" ? Object.keys(SLOT_TYPES) : [b.getAttribute("data-slot")]; slots_.forEach(function (is_) { var iw = character.slots[is_]; var keep = wish_cfg[is_] && wish_cfg[is_].max; wish_cfg[is_] = iw && G.items[iw.name] ? { item: iw.name, level: iw.level || 0 } : { item: "" }; if (keep) wish_cfg[is_].max = keep; }); save_wish_cfg(); game_log("Zielbau: Ist-Stand übernommen (" + slots_.length + " Slots, Limits bleiben)"); }
         else if (act == "buyoffer") { var bo = offers_for_slot(b.getAttribute("data-slot"))[parseInt(b.getAttribute("data-idx"))]; if (bo) buy_confirm = { key: offer_key(bo), offer: bo, slot: b.getAttribute("data-slot"), t: Date.now() }; }
         else if (act == "buyno") buy_confirm = null;
         else if (act == "team") { var tk = b.getAttribute("data-k"); team_on[tk] = !team_on[tk]; save_team(); last_team_tick = 0; game_log("Team: " + TEAM[tk] + " " + (team_on[tk] ? "an" : "aus")); }
@@ -1104,7 +1105,7 @@ function update_panel() {
     h += "<div class='lp_row' style='flex-wrap:wrap;line-height:1.6'><span class='lp_k'>Serverwechsel:</span> <span style='font-size:11px'>" + server_tip_html() + "</span></div>";
     h += arb_html(panel);
     h += team_html();
-    h += "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Zielbau " + wish_text() + (AUTO_GEAR ? " · automatisch, Reserve " + fmt(WISH_RESERVE) : "") + "</span><button data-act='wishreset' title='alle Ziele auf das Getragene setzen'>Zielbau = aktuelle Ausrüstung</button><button data-act='wishtoggle'>" + (panel.__wish ? "▾" : "▸") + " Zielbau</button></div>";
+    h += "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Zielbau " + wish_text() + (AUTO_GEAR ? " · automatisch, Reserve " + fmt(WISH_RESERVE) : "") + "</span><button data-act='wishist' data-slot='*' title='alle Slots auf das setzen, was du gerade trägst – Preislimits bleiben erhalten'>Ist</button><button data-act='wishreset' title='alle Ziele auf das Getragene setzen und alle Limits löschen'>Zielbau = aktuelle Ausrüstung</button><button data-act='wishtoggle'>" + (panel.__wish ? "▾" : "▸") + " Zielbau</button></div>";
     if (panel.__wish) h += wish_ui_html();
     if (!panel.__collapsed) {
         var cols = [["name", "Monster"], ["danger", "Gefahr"], ["ttk", "s/Kill"], ["xpk", "XP/Kill"], ["xpest", "XP/h*"], ["xph", "XP/h"], ["gph", "G/h"], ["ang", "ANG"]];
@@ -2499,7 +2500,7 @@ function farm_html(slot) { // Zielitem als Drop farmbar?
     return "<div style='margin-top:3px'><small style='color:#9aa3b2'>Farmen: " + esc(src.mon) + " " + (src.chance * 100).toFixed(src.chance < 0.001 ? 3 : 2) + " % ≈ " + fmt_time(src.hours * 3600000) + "</small> <button data-act='farmwish' data-mon='" + src.mon + "' title='diesen Spot fest farmen (Automatik über Auto zurück)'>Farmen</button></div>";
 }
 function wish_ui_html() { // Zielbau-Tabelle
-    var h = "<table class='lp_t lp_wish' style='table-layout:fixed;width:100%'><colgroup><col style='width:58px'><col style='width:158px'><col style='width:46px'><col style='width:135px'><col style='width:175px'><col style='width:150px'><col style='width:110px'><col style='width:48px'></colgroup><tr><th style='text-align:left'>Slot</th><th style='text-align:left'>Zielitem (Wert auf eingestellter Stufe)</th><th title='Zielstufe · Ist = auf Getragenes setzen · max = Preislimit in Mio.'>Stufe / Limit</th><th style='text-align:left'>Stand</th><th style='text-align:left'>Bauen oder kaufen?</th><th style='text-align:left'>Angebote alle Server (★ = hier)</th><th style='text-align:left'>Zwischenlösung (nur auf Klick)</th><th></th></tr>";
+    var h = "<table class='lp_t lp_wish' style='table-layout:fixed;width:100%'><colgroup><col style='width:58px'><col style='width:158px'><col style='width:46px'><col style='width:135px'><col style='width:175px'><col style='width:150px'><col style='width:110px'><col style='width:48px'></colgroup><tr><th style='text-align:left'>Slot</th><th style='text-align:left'>Zielitem (Wert auf eingestellter Stufe)</th><th title='Zielstufe · max = Preislimit in Mio.'>Stufe / Limit</th><th style='text-align:left'>Stand</th><th style='text-align:left'>Bauen oder kaufen?</th><th style='text-align:left'>Angebote alle Server (★ = hier)</th><th style='text-align:left'>Zwischenlösung (nur auf Klick)</th><th></th></tr>";
     for (var slot in SLOT_TYPES) {
         var cands = slot_candidates(slot).slice(0, 60), cur = wish_item(slot), worn = character.slots[slot];
         var sel = "<select data-wslot='" + slot + "' style='max-width:150px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'>";
@@ -2508,7 +2509,6 @@ function wish_ui_html() { // Zielbau-Tabelle
         sel += "</select>";
         var lv = "";
         if (cur) { var d = G.items[cur], mx = d.compound ? 7 : 12, wl = wish_level(slot); lv = "<select data-wlvl='" + slot + "' style='font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'>"; for (var L = 0; L <= mx; L++) lv += "<option value='" + L + "'" + (L == wl ? " selected" : "") + ">+" + L + "</option>"; lv += "</select>"; }
-        lv += "<br><button data-act='wishist' data-slot='" + slot + "' style='padding:0 4px;font-size:10px;margin-top:2px' title='Zielitem und Stufe auf das setzen, was du gerade trägst'>Ist</button>";
         if (cur) { var smx = slot_max(slot); lv += "<br><input data-wmax='" + slot + "' value='" + (smx ? fmt_mio(smx) : "") + "' placeholder='max' style='width:40px;font-size:10px;margin-top:2px;background:#1c2029;color:#eee;border:1px solid " + (smx ? "#ffb74d" : "#555") + ";text-align:right' title='Preislimit in Mio. Gold für dieses Zielitem (z. B. 3 oder 1,5) – leer = automatische Grenze" + (smx ? "\naktuell " + fmt(smx) : "") + "'>"; }
         var stand = worn ? esc(worn.name) + "+" + (worn.level || 0) : "<span style='color:#ef5350'>leer</span>";
         if (cur && !is_buyable(cur) && G.items[cur].upgrade) stand += " <small style='color:#9aa3b2'>Reserve " + reserve_count(cur) + "/" + RESERVE_COPIES + "</small>";
