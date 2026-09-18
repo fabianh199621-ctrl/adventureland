@@ -36,6 +36,9 @@
 5. **Events mitnehmen** – laufende Events (Goo Brawl, Wabbit, Franky, Feiertage) aus `parent.S` erkennen; bei sicherem Event-Monster mit mehr XP/G dorthin wechseln, gleiche Gefahr-Bewertung. Größerer Aufwand, größter XP-Hebel.
 6. **Grad-1-Upgradechancen** (Firestaff & Co.) aus dem Spiel ablesen und eintragen – bisher geschätzt.
 7. **Glück/Gold/XP-Boni** mit kleinen Gewichten in die Item-Bewertung aufnehmen (verändert die Rangfolge im Zielbau-Dropdown).
+8. **Hunt-Server prüfen** – Monster Hunts gelten nur auf dem Server der Annahme (`sn`); bei Abweichung anzeigen, wie abgelaufen behandeln, optional Knopf „zurück nach …“.
+9. **Arbitrage Schritt 2** – Knopf „Arbitrage“: lohnende Angebote kaufen und beim NPC verkaufen, andere Server (kein PVP) per Hin-Kaufen-Verkaufen-Zurück; erst wenn Scan (v138) und Faktor-Messung (v140) belastbar sind.
+10. **Händler-Charakter** (A2) – nach der Hunt-Runde starten: Loader startet Händler mit, Stand + mluck + Loot verkaufen, dann Bank/Nachschub/Upgrades, dann Zielbau-Käufe.
 
 ## E) Ideen Panel (Vorschläge vom 18.09., noch nicht beauftragt)
 
