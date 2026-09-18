@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v164";
+var BOT_VERSION = "v165";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : character.ctype == "ranger" || /ranger/i.test(character.name) ? "ranger" : "priest";
@@ -201,7 +201,7 @@ function spendable() { return character.gold - GOLD_RESERVE; }
 function check_pause() { if (aborted()) throw "ABORT"; if (paused) throw "PAUSE"; }
 function clear_flags() { busy = false; upgrading = false; kissing = false; fleeing = false; exchanging = false; pontying = false; marketing = false; shelling = false; hunting = false; bank_cleaning = false; sorting_inv = false; baking = false; }
 // Laufende Routine abbrechen und danach die gewünschte Aktion starten (Tasten/Buttons)
-async function preempt(why, action) {
+async function preempt(why, action, keep_pause) { // keep_pause: reine Inventar-Aktion, Pause bleibt bestehen
     if (busy || routine_running()) {
         game_log("Breche laufende Aktion ab (" + why + ")");
         abort_requested = true; stop("smart"); stop("move");
@@ -211,7 +211,7 @@ async function preempt(why, action) {
         if (busy || routine_running()) clear_flags();
         await new Promise(function (r) { setTimeout(r, 400); });
     }
-    if (paused) unpause(why);
+    if (paused && !keep_pause) unpause(why);
     manual_lock = true;
     var res; try { res = await action(); } finally { manual_lock = false; }
     return res;
@@ -873,7 +873,7 @@ function init_panel() {
         else if (act == "huntabandon") preempt("Jagd aufgeben", hunt_abandon);
         else if (act == "focus") { focus_mode = !focus_mode; try { localStorage.setItem("lp_focus", focus_mode ? "1" : "0"); } catch (x) {} tidy_next = 0; if (focus_mode && pending_upgrade == "auto") pending_upgrade = null; game_log("Fokus-Modus " + (focus_mode ? "an – nur farmen/hunten, Nebenroutinen aus" : "aus – alle Routinen wieder aktiv")); }
         else if (act == "bycatch") { bycatch = !bycatch; try { localStorage.setItem("lp_bycatch", bycatch ? "1" : "0"); } catch (x) {} game_log("Beifang " + (bycatch ? "an" : "aus")); }
-        else if (act == "sortinv") preempt("Inventar sortieren", sort_inventory);
+        else if (act == "sortinv") preempt("Inventar sortieren", sort_inventory, true);
         else if (act == "compound") preempt("Compound", compound_only);
         else if (act == "tidy") preempt("Aufräumen", tidy_now);
         else if (act == "bank") preempt("Bank aufräumen", bank_cleanup_now);
