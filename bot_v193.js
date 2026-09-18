@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v192";
+var BOT_VERSION = "v193";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : character.ctype == "ranger" || /ranger/i.test(character.name) ? "ranger" : "priest";
@@ -608,6 +608,7 @@ function team_html() {
     var parts = [];
     for (var k in TEAM) { var nm = TEAM[k], st = team_state[nm], run = team_running(nm), lab = TEAM_LABEL[k]; var raw = active_chars()[nm]; try { var pe = get_player(nm); if (pe && pe.rip && st) st.state = "tot"; } catch (e) {} parts.push("<span style='color:" + (team_on[k] ? (run ? "#4caf50" : "#ffb74d") : "#9aa3b2") + "'>" + lab + (st && Date.now() - st.t < 60000 ? " Lv " + st.level + " · " + esc(st.state || "") : run ? " (" + esc(String(raw)) + ", keine Meldung)" : team_on[k] ? " (aus/offline)" : "") + "</span> <button data-act='team' data-k='" + k + "'" + (team_on[k] ? " class='on'" : "") + " style='padding:0 5px'>" + (team_on[k] ? "an" : "aus") + "</button>"); }
     if (team_on.merch) { var mst = team_state[TEAM.merch]; parts.push("<button data-act='goldback' title='Händler bringt sein Gold (bis auf 150k) zum Magier'>Gold holen" + (mst && mst.gold ? " (" + fmt(mst.gold) + ")" : "") + "</button>"); }
+    parts.push("<button data-act='teamlogs' title='gespeicherte Logs von Merch/Priest/Ranger (letzte 40 Zeilen je Char) ins Log holen'>Team-Logs</button>");
     if (team_on.merch) parts.push("<button data-act='merchtest' title='Testet, ob der Händler auf einen anderen Server gestartet werden kann (Grundlage für Handel im Hintergrund); dauert ca. 1 min, Händler kommt danach zurück'" + (merch_test ? " class='on'" : "") + " style='padding:0 5px'>" + (merch_test ? "Servertest läuft (" + merch_test.stage + ")" : "Merch-Servertest") + "</button>");
     var give = "";
     if (team_on.priest || team_on.ranger) { // manuelle Übergabe: Inventarteil auswählen, an Priest/Ranger geben (der legt es an, wenn es besser ist)
@@ -1191,6 +1192,7 @@ function init_panel() {
         else if (act == "buyno") buy_confirm = null;
         else if (act == "give") give_to_team(b.getAttribute("data-k"));
         else if (act == "merchtest") start_merch_test();
+        else if (act == "teamlogs") { for (var tk2 in TEAM) { try { var arr = JSON.parse(localStorage.getItem("lp_tlog_" + TEAM[tk2]) || "[]"); game_log("=== " + TEAM_LABEL[tk2] + " – gespeichertes Log (" + arr.length + " Zeilen) ==="); arr.forEach(function (e) { game_log("[" + TEAM_LABEL[tk2] + " " + new Date(e.t).toLocaleTimeString() + "] " + e.m); }); } catch (x) { game_log(TEAM_LABEL[tk2] + ": Log nicht lesbar"); } } var so = null; try { so = localStorage.getItem("lp_stand_orders_" + TEAM.merch); } catch (x) {} game_log("Stand-Aufträge: " + (so || "keine") + " · Händler-Stand (gespeichert): " + (function () { try { return localStorage.getItem("lp_listed_" + TEAM.merch) || "leer"; } catch (x) { return "?"; } })()); }
         else if (act == "goldback") { team_send(TEAM.merch, { t: "goldback" }); game_log("Händler: Gold anfordern – er kommt zu dir"); }
         else if (act == "eventon") { event_on = !event_on; try { localStorage.setItem("lp_event_on", event_on ? "1" : "0"); } catch (x) {} game_log("Event-Teilnahme: " + (event_on ? "an" : "aus")); last_event_check = 0; }
         else if (act == "arbtrip") start_arb_trip(b.getAttribute("data-sv"));
