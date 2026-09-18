@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v172";
+var BOT_VERSION = "v173";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : character.ctype == "ranger" || /ranger/i.test(character.name) ? "ranger" : "priest";
@@ -1716,7 +1716,7 @@ function kiss_round_open() {
     return true;
 }
 async function kiss_routine() {
-    if (kissing || upgrading || fleeing || !kiss_round_open()) return;
+    if (kissing || upgrading || fleeing || busy || marketing || server_trip || !kiss_round_open()) return; // nicht während Kauf/Routine/Serverreise
     var a = anniv(); var round = a.round, name = a.target;
     kissing = true; busy = true;
     game_log("Kuss-Runde " + round + ": laufe zu " + name + " (" + a.map + " " + a.x + "," + a.y + ")");
@@ -3093,15 +3093,21 @@ async function scan_all_merchants(force, only_slot) {
     if (force) game_log("Händlerscan" + (only_slot ? " für " + only_slot : "") + ": " + finds.length + " passende Angebote" + (finds.length ? " (" + finds.filter(function (f) { return f.same; }).length + " auf diesem Server)" : ""));
     return here || null;
 }
+async function locate_offer(f) { // Händler anlaufen und das Angebot in seinen Stand-Slots suchen; null mit Log, wenn nicht da
+    var seller = get_player(f.seller);
+    if (seller && distance(character, seller) > 250) { try { await travel({ map: seller.map || character.map, x: seller.x, y: seller.y + 30 }); } catch (e) {} seller = get_player(f.seller); }
+    if (!seller || !seller.slots) { game_log("Händler " + f.seller + " nicht (mehr) hier" + (seller ? " (keine Stand-Daten, Abstand " + Math.round(distance(character, seller)) + ")" : "")); return null; }
+    var it = seller.slots[f.tslot], slot = f.tslot;
+    if (!it || it.name != f.name || (it.level || 0) != (f.level || 0) || it.price > f.price * 1.05) { it = null; for (var sl in seller.slots) { var c = seller.slots[sl]; if (sl.indexOf("trade") == 0 && c && !c.b && c.name == f.name && (c.level || 0) == (f.level || 0) && c.price <= f.price * 1.05) { it = c; slot = sl; break; } } }
+    if (!it) { var cur = seller.slots[f.tslot]; game_log("Angebot bei " + f.seller + " nicht mehr da (Abstand " + Math.round(distance(character, seller)) + ", Slot " + f.tslot + ": " + (cur ? cur.name + "+" + (cur.level || 0) + " " + fmt(cur.price || 0) : "leer") + ", Stand-Slots: " + Object.keys(seller.slots).filter(function (k) { return k.indexOf("trade") == 0 && seller.slots[k]; }).length + ")"); return null; }
+    return { seller: seller, it: it, slot: slot };
+}
 async function buy_find(f) { // Treffer auf eigenem Server sofort kaufen (innerhalb einer laufenden Routine)
     if (!f || !wish_wants(f.name, f.level, f.price, f.force ? f.slot : null)) return false;
     set_message("Kauf " + f.name);
     if (f.map && f.x != null) await travel({ map: f.map, x: f.x, y: f.y + 30 });
-    var seller = get_player(f.seller);
-    if (!seller || !seller.slots) { game_log("Händler " + f.seller + " nicht (mehr) hier"); return false; }
-    var it = seller.slots[f.tslot];
-    if (!it || it.name != f.name || it.price > f.price * 1.05) { game_log("Angebot bei " + f.seller + " nicht mehr da"); return false; }
-    return wish_buy_from_offer({ name: it.name, level: it.level || 0, price: it.price, force: !!f.force, slot: f.slot, seller: f.seller }, async function () { trade_buy(seller, f.tslot, 1); return true; });
+    var lo = await locate_offer(f); if (!lo) return false; var seller = lo.seller, it = lo.it;
+    return wish_buy_from_offer({ name: it.name, level: it.level || 0, price: it.price, force: !!f.force, slot: f.slot, seller: f.seller }, async function () { trade_buy(seller, lo.slot, 1); return true; });
 }
 async function run_pending_buy() { // zum Händler auf diesem Server laufen und kaufen
     if (!pending_buy || busy || upgrading || kissing || fleeing || paused) return;
@@ -3111,13 +3117,8 @@ async function run_pending_buy() { // zum Händler auf diesem Server laufen und 
     try {
         set_message("Kauf " + f.name);
         if (f.map && f.x != null) await travel({ map: f.map, x: f.x, y: f.y + 30 });
-        var seller = get_player(f.seller);
-        if (!seller || !seller.slots) { game_log("Händler " + f.seller + " nicht (mehr) hier"); }
-        else {
-            var it = seller.slots[f.tslot];
-            if (!it || it.name != f.name || it.price > f.price * 1.05) { game_log("Angebot bei " + f.seller + " nicht mehr da"); }
-            else await wish_buy_from_offer({ name: it.name, level: it.level || 0, price: it.price, force: !!f.force, slot: f.slot, seller: f.seller }, async function () { trade_buy(seller, f.tslot, 1); return true; });
-        }
+        var lo = await locate_offer(f);
+        if (lo) { var seller = lo.seller, it = lo.it; await wish_buy_from_offer({ name: it.name, level: it.level || 0, price: it.price, force: !!f.force, slot: f.slot, seller: f.seller }, async function () { trade_buy(seller, lo.slot, 1); return true; }); }
     } catch (e) { game_log("Händler-Kauf: " + err_txt(e)); }
     busy = false; marketing = false;
     if (trip_buying) { trip_buying = false; server_targets = server_targets.filter(function (x) { return !(x.name == f.name && x.seller == f.seller); }); save_server_targets(); end_trip("Kauf auf " + pretty_server(my_server()) + (locate_item(f.name) >= 0 || (character.slots[f.slot] && character.slots[f.slot].name == f.name) ? " erledigt" : " nicht möglich")); return; }
