@@ -9,10 +9,10 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v162";
+var BOT_VERSION = "v163";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
-        var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : "priest";
+        var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : character.ctype == "ranger" || /ranger/i.test(character.name) ? "ranger" : "priest";
         var base = "https://raw.githubusercontent.com/fabianh199621-ctrl/adventureland/main/";
         game_log("bot.js ist nur für den Magier – lade " + role + "_" + BOT_VERSION + ".js");
         fetch(base + role + "_" + BOT_VERSION + ".js", { cache: "no-store" }).then(function (r) { return r.text(); }).then(function (code) { try { eval(code); } catch (e) { game_log("Startfehler " + role + ": " + e); } }).catch(function (e) { game_log(role + " laden fehlgeschlagen: " + e); });
@@ -277,9 +277,10 @@ function is_valid_target(m) {
 
 
 // ---------- Team: Händler und Priester (laufen unsichtbar im selben Fenster, gestartet vom Magier) ----------
-var TEAM = { merch: "F4llenMerch", priest: "F4llenPriest" };
-var TEAM_NAMES = [TEAM.merch, TEAM.priest];
-var team_on = { merch: true, priest: true }; try { var to = JSON.parse(localStorage.getItem("lp_team") || "null"); if (to) team_on = to; } catch (e) {}
+var TEAM = { merch: "F4llenMerch", priest: "F4llenPriest", ranger: "F4llenRanger" };
+var TEAM_NAMES = [TEAM.merch, TEAM.priest, TEAM.ranger];
+var TEAM_LABEL = { merch: "Merch", priest: "Priest", ranger: "Ranger" }, TEAM_ROLE = { merch: "merchant", priest: "priest", ranger: "ranger" }, TEAM_CTYPE = { merch: "merchant", priest: "priest", ranger: "ranger" };
+var team_on = { merch: true, priest: true, ranger: true }; try { var to = JSON.parse(localStorage.getItem("lp_team") || "null"); if (to) { for (var tk0 in to) team_on[tk0] = to[tk0]; } } catch (e) {}
 function save_team() { try { localStorage.setItem("lp_team", JSON.stringify(team_on)); } catch (e) {} }
 var team_state = {}; // letzte Statusmeldung je Charakter { level, state, t, ... }
 var last_team_tick = 0, last_team_cast = 0, last_party_try = 0, team_start_at = {};
@@ -297,7 +298,7 @@ function team_tick() { // fehlende Teammitglieder starten, abgeschaltete stoppen
         else if (!on && running) { try { stop_character(nm); game_log("Team: " + nm + " gestoppt"); } catch (e) {} }
     }
     // Party: Priester einladen, wenn er läuft und nicht dabei ist
-    if (Date.now() - last_party_try > 60000) { var need = []; if (team_on.priest && act[TEAM.priest]) need.push(TEAM.priest); var ms = team_state[TEAM.merch]; if (team_on.merch && act[TEAM.merch] && ms && /levelt|folgt/.test(ms.state || "")) need.push(TEAM.merch); var missing = need.filter(function (nm) { return !(character.party && parent.party && parent.party[nm]); }); if (missing.length) { last_party_try = Date.now(); missing.forEach(function (nm) { try { send_party_invite(nm); } catch (e) {} }); } }
+    if (Date.now() - last_party_try > 60000) { var need = []; if (team_on.priest && act[TEAM.priest]) need.push(TEAM.priest); if (team_on.ranger && act[TEAM.ranger]) need.push(TEAM.ranger); var ms = team_state[TEAM.merch]; if (team_on.merch && act[TEAM.merch] && ms && /levelt|folgt/.test(ms.state || "")) need.push(TEAM.merch); var missing = need.filter(function (nm) { return !(character.party && parent.party && parent.party[nm]); }); if (missing.length) { last_party_try = Date.now(); missing.forEach(function (nm) { try { send_party_invite(nm); } catch (e) {} }); } }
 }
 var team_inject_t = {};
 function team_windows() { // Fenster der mitgestarteten Charaktere finden (gleiche Herkunft, daher zugreifbar)
@@ -311,14 +312,14 @@ function team_inject() { // läuft im Fenster des Teammitglieds nicht unser Skri
         var nm = TEAM[k], w = wins[nm]; if (!w || !team_on[k]) continue;
         if (Date.now() - (team_inject_t[nm] || 0) < 45000) continue;
         var cw = w.code, have = null;
-        try { have = cw && (cw.MERCH_VERSION || cw.PRIEST_VERSION); } catch (e) {}
+        try { have = cw && (cw.MERCH_VERSION || cw.PRIEST_VERSION || cw.RANGER_VERSION); } catch (e) {}
         if (have == BOT_VERSION) continue;
         team_inject_t[nm] = Date.now();
         if (!cw) { // das Spiel hat für den Charakter noch keinen Code-Frame angelegt: Code-Start anstoßen (läuft dessen eigenen, meist leeren Slot), danach spielen wir unser Skript ein
             try { if (typeof w.win.start_runner == "function") { w.win.start_runner(); game_log("Team: " + nm + " – Code-Start angestoßen"); } else game_log("Team: " + nm + " – kein Code-Frame und kein start_runner"); } catch (e) { game_log("Team: " + nm + " start_runner: " + err_txt(e)); }
             continue;
         }
-        var role = k == "merch" ? "merchant" : "priest";
+        var role = TEAM_ROLE[k];
         game_log("Team: " + nm + " – spiele " + role + "_" + BOT_VERSION + ".js ein" + (have ? " (bisher " + have + ")" : ""));
         (function (nm, cw, role) {
             fetch(BOT_BASE + role + "_" + BOT_VERSION + ".js", { cache: "no-store" }).then(function (r) { if (!r.ok) throw "HTTP " + r.status; return r.text(); }).then(function (code) { if (code.indexOf("// =====") != 0) { game_log("Team: " + nm + " – " + role + "_" + BOT_VERSION + ".js noch nicht abrufbar, neuer Versuch"); return; } try { cw.eval(code); game_log("Team: " + nm + " – Skript eingespielt"); } catch (e) { game_log("Team: " + nm + " – Einspielen fehlgeschlagen: " + err_txt(e)); } }).catch(function (e) { game_log("Team: " + nm + " – Laden fehlgeschlagen: " + e); });
@@ -327,7 +328,7 @@ function team_inject() { // läuft im Fenster des Teammitglieds nicht unser Skri
 }
 var team_log_seen = {};
 function team_read_logs() { // Händler/Priester schreiben ihr Log in den gemeinsamen Speicher (localStorage), der Magier zeigt es an
-    for (var k in TEAM) { var nm = TEAM[k]; try { if (!team_log_seen[nm]) { team_log_seen[nm] = Date.now() - 3000; continue; } var arr = JSON.parse(localStorage.getItem("lp_tlog_" + nm) || "[]"); var seen = team_log_seen[nm]; for (var i = 0; i < arr.length; i++) { var ln = arr[i]; if (ln.t > seen) { team_log_seen[nm] = ln.t; game_log("[" + (k == "merch" ? "Merch" : "Priest") + "] " + ln.m); } } } catch (e) {} }
+    for (var k in TEAM) { var nm = TEAM[k]; try { if (!team_log_seen[nm]) { team_log_seen[nm] = Date.now() - 3000; continue; } var arr = JSON.parse(localStorage.getItem("lp_tlog_" + nm) || "[]"); var seen = team_log_seen[nm]; var lab2 = TEAM_LABEL[k]; for (var i = 0; i < arr.length; i++) { var ln = arr[i]; if (ln.t > seen) { team_log_seen[nm] = ln.t; game_log("[" + lab2 + "] " + ln.m); } } } catch (e) {} }
 }
 var cm_selftest = 0;
 function team_broadcast() { // alle 5 s: wo bin ich, was mache ich (für Händler und Priester)
@@ -340,7 +341,7 @@ function team_send(name, data) { try { send_cm(name, data); } catch (e) {} }
 function on_cm(name, data) { // Nachrichten der eigenen Charaktere
     if (name == character.name && data && data.t == "ping") { cm_selftest = 2; game_log("Team: Nachrichtenkanal funktioniert (Selbsttest)"); return; }
     if (TEAM_NAMES.indexOf(name) < 0 || !data || typeof data != "object") return;
-    var who = name == TEAM.merch ? "Merch" : "Priest";
+    var who = "?"; for (var wk in TEAM) if (TEAM[wk] == name) who = TEAM_LABEL[wk];
     try {
         if (data.t == "log") { /* kommt bereits über den gemeinsamen Speicher */ }
         else if (data.t == "st") { team_state[name] = Object.assign({ t: Date.now() }, data); last_panel = 0; }
@@ -355,7 +356,7 @@ try { window.on_cm = on_cm; parent.window.__lp_on_cm = on_cm; } catch (e) {} // 
 setTimeout(function () { try { cm_selftest = 1; send_cm(character.name, { t: "ping" }); setTimeout(function () { if (cm_selftest != 2) game_log("Team: Selbsttest – keine Nachricht angekommen (on_cm greift nicht)"); }, 5000); } catch (e) { game_log("Team: send_cm-Fehler " + err_txt(e)); } }, 3000);
 function team_html() {
     var parts = [];
-    for (var k in TEAM) { var nm = TEAM[k], st = team_state[nm], run = team_running(nm), lab = k == "merch" ? "Merch" : "Priest"; var raw = active_chars()[nm]; try { var pe = get_player(nm); if (pe && pe.rip && st) st.state = "tot"; } catch (e) {} parts.push("<span style='color:" + (team_on[k] ? (run ? "#4caf50" : "#ffb74d") : "#9aa3b2") + "'>" + lab + (st && Date.now() - st.t < 60000 ? " Lv " + st.level + " · " + esc(st.state || "") : run ? " (" + esc(String(raw)) + ", keine Meldung)" : team_on[k] ? " (aus/offline)" : "") + "</span> <button data-act='team' data-k='" + k + "'" + (team_on[k] ? " class='on'" : "") + " style='padding:0 5px'>" + (team_on[k] ? "an" : "aus") + "</button>"); }
+    for (var k in TEAM) { var nm = TEAM[k], st = team_state[nm], run = team_running(nm), lab = TEAM_LABEL[k]; var raw = active_chars()[nm]; try { var pe = get_player(nm); if (pe && pe.rip && st) st.state = "tot"; } catch (e) {} parts.push("<span style='color:" + (team_on[k] ? (run ? "#4caf50" : "#ffb74d") : "#9aa3b2") + "'>" + lab + (st && Date.now() - st.t < 60000 ? " Lv " + st.level + " · " + esc(st.state || "") : run ? " (" + esc(String(raw)) + ", keine Meldung)" : team_on[k] ? " (aus/offline)" : "") + "</span> <button data-act='team' data-k='" + k + "'" + (team_on[k] ? " class='on'" : "") + " style='padding:0 5px'>" + (team_on[k] ? "an" : "aus") + "</button>"); }
     return "<div class='lp_row' style='flex-wrap:wrap;line-height:1.6'><span class='lp_k'>Team:</span> " + parts.join(" · ") + "</div>";
 }
 function team_threat() { // Monster, das ein Teammitglied angreift und in meiner Nähe ist
@@ -512,7 +513,7 @@ function estimate(mon) { return mon_xph_est(G.monsters[mon], mon) / 100; }
 var TEAM_ESCORT_LEVEL = 20; // bis zu diesem Priester-Level nur Spots, die der Priester überlebt
 function team_escort() { // mitlaufender, noch schwacher Charakter (Priester unter Lv 20, Händler in der Level-Phase)
     var weakest = null;
-    [["priest", TEAM_ESCORT_LEVEL], ["merch", 40]].forEach(function (p) {
+    [["priest", TEAM_ESCORT_LEVEL], ["ranger", TEAM_ESCORT_LEVEL], ["merch", 40]].forEach(function (p) {
         var k = p[0], nm = TEAM[k]; if (!team_on[k]) return; var st = team_state[nm];
         if (!st || Date.now() - st.t > 120000 || !team_running(nm)) return;
         if (k == "merch" && !/levelt|folgt/.test(st.state || "")) return; // Händler nur, wenn er gerade mitläuft
@@ -527,7 +528,7 @@ function team_safe(mon) { // Spot für den Priester tragbar: Monsterlevel nahe s
     return (d.level || 1) <= esc.level + 3 && d.attack * 4 <= php;
 }
 var team_safe_warned = 0;
-function escort_name() { var e = team_escort(); if (!e) return "das Team"; var nm = e.name || ""; for (var k in TEAM) if (team_state[TEAM[k]] === e) nm = (k == "merch" ? "den Händler" : "den Priester"); return nm + " (Lv " + e.level + ")"; }
+function escort_name() { var e = team_escort(); if (!e) return "das Team"; var nm = e.name || ""; for (var k in TEAM) if (team_state[TEAM[k]] === e) nm = (k == "merch" ? "den Händler" : k == "ranger" ? "den Ranger" : "den Priester"); return nm + " (Lv " + e.level + ")"; }
 function candidate_list() {
     var list = visible_mons().filter(function (m) {
         if (spot_blocked(m)) return false;
@@ -1262,14 +1263,15 @@ function fits_class(def, ctype, slot) { // wie fits_slot, für eine andere Klass
     if (t == "offhand") return (cl.offhand || {})[def.type];
     return def.type == t;
 }
-function spare_for_priest() { // [{i, slot, gain}] – Inventarteile, die der Magier entbehren kann und die den Priester verbessern
-    var st = team_state[TEAM.priest]; if (!st || !st.slots) return [];
+function spare_for_priest(key) { // [{i, slot, gain}] – Inventarteile, die der Magier entbehren kann und die das Teammitglied verbessern
+    key = key || "priest"; var ctype = TEAM_CTYPE[key];
+    var st = team_state[TEAM[key]]; if (!st || !st.slots) return [];
     var out = [], used = {};
     var slots = ["mainhand", "offhand", "helmet", "chest", "pants", "shoes", "gloves", "cape", "ring1", "ring2", "earring1", "earring2", "amulet", "belt", "orb"];
     slots.forEach(function (slot) {
         var worn = st.slots[slot], ws = worn && G.items[worn.name] ? gear_score(G.items[worn.name], worn.level || 0) : 0, best = null;
         for (var i = 0; i < character.items.length; i++) {
-            var it = character.items[i]; if (!it || used[i]) continue; var def = G.items[it.name]; if (!def || !fits_class(def, "priest", slot)) continue;
+            var it = character.items[i]; if (!it || used[i]) continue; var def = G.items[it.name]; if (!def || !fits_class(def, ctype, slot)) continue;
             if (KEEP_ITEMS.test(it.name) || EVENT_ITEMS.test(it.name)) continue;
             if (on_wishlist(it.name)) { // Zielbau-Teil des Magiers
                 if (def.compound) { // Schmuck: Kopien nur abgeben, wenn alle Slots mit diesem Teil ihr Ziel erreicht haben (dann ist das Compound-Material übrig)
@@ -1287,12 +1289,22 @@ function spare_for_priest() { // [{i, slot, gain}] – Inventarteile, die der Ma
     });
     return out;
 }
-function priest_gear_tick() { // alle 2 min: steht der Priester neben uns, bekommt er bessere Teile
+var gear_turn = 0;
+function priest_gear_tick() { // alle 2 min: steht Priester/Ranger neben uns, bekommt er bessere Teile (abwechselnd)
     if (Date.now() - last_priest_gear < 2 * 60000 || busy || handing || upgrading || paused) return; last_priest_gear = Date.now();
-    var p = get_player(TEAM.priest); if (!p || p.rip || p.map != character.map || distance(character, p) > 350) return;
-    var list = spare_for_priest(); if (!list.length) return;
+    var keys = ["priest", "ranger"].filter(function (k) { return team_on[k]; }); if (!keys.length) return;
+    var key = keys[gear_turn++ % keys.length], nm = TEAM[key], lab = TEAM_LABEL[key];
+    var p = get_player(nm); if (!p || p.rip || p.map != character.map || distance(character, p) > 350) return;
+    var list = spare_for_priest(key); if (!list.length) return;
     list.sort(function (a, b) { return a.i - b.i; });
-    (async function () { for (var k = list.length - 1; k >= 0; k--) { var g = list[k], it = character.items[g.i]; if (!it) continue; try { team_send(TEAM.priest, { t: "gear", name: it.name, level: it.level || 0, slot: g.slot }); send_item(TEAM.priest, g.i, 1); game_log("[Priest] bekommt " + it.name + "+" + (it.level || 0) + " für " + g.slot + " (+" + Math.round(g.gain) + " Wert)"); } catch (e) { game_log("Priester-Ausrüstung: " + err_txt(e)); } await sleep(400); } })();
+    (async function () { for (var k = list.length - 1; k >= 0; k--) { var g = list[k], it = character.items[g.i]; if (!it) continue; try { team_send(nm, { t: "gear", name: it.name, level: it.level || 0, slot: g.slot }); send_item(nm, g.i, 1); game_log("[" + lab + "] bekommt " + it.name + "+" + (it.level || 0) + " für " + g.slot + " (+" + Math.round(g.gain) + " Wert)"); } catch (e) { game_log("Team-Ausrüstung: " + err_txt(e)); } await sleep(400); } })();
+}
+var last_energize = 0;
+function energize_tick() { // Mana an den Ranger, wenn er leer läuft und wir genug haben
+    if (!team_on.ranger || Date.now() - last_energize < 5000 || character.mp < character.max_mp * 0.5) return;
+    var st = team_state[TEAM.ranger]; if (!st || Date.now() - st.t > 60000 || !(st.mp_pct < 0.35)) return;
+    var r = get_player(TEAM.ranger); if (!r || r.rip || r.map != character.map || distance(character, r) > ((G.skills.energize && G.skills.energize.range) || 320)) return;
+    try { if (can_use("energize")) { last_energize = Date.now(); use_skill("energize", r); } } catch (e) {}
 }
 // ---------- Stufe 2: Händler holt Loot ab (statt Stadtgang des Magiers) ----------
 var handing = false, last_pickup = 0, pickup_state = null; // pickup_state: {t, ready, done}
@@ -3384,7 +3396,7 @@ function start_main() {
     rip_counted = false;
     session_tick();
     if (Date.now() - last_panel > 2000) { last_panel = Date.now(); try { update_panel(); update_char_panel(); } catch (e) {} }
-    try { team_tick(); team_broadcast(); team_read_logs(); team_inject(); bank_snapshot(); if (!manual_lock && !paused) priest_gear_tick(); } catch (e) {}
+    try { team_tick(); team_broadcast(); team_read_logs(); team_inject(); bank_snapshot(); if (!manual_lock && !paused) { priest_gear_tick(); energize_tick(); } } catch (e) {}
     if (paused) return;
     measure_tick();
 
