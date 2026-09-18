@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v160";
+var BOT_VERSION = "v161";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : "priest";
@@ -1252,6 +1252,43 @@ function worth_keeping(it) {
 }
 function should_keep(it) { return (equipped_names()[it.name] && ((it.level || 0) > 0 || !is_buyable(it.name))) || (G.items[it.name] && G.items[it.name].compound && (equipped_names()[it.name] || find_inv_indices(it.name, it.level || 0).length >= 3)) || KEEP_ITEMS.test(it.name) || EVENT_ITEMS.test(it.name) || EVENT_ITEMS.test(G.items[it.name] && G.items[it.name].name || ""); }
 var tidy_next = 0;
+// ---------- Priester ausrüsten: überzählige Teile des Magiers, die für ihn besser sind ----------
+var last_priest_gear = 0;
+function fits_class(def, ctype, slot) { // wie fits_slot, für eine andere Klasse
+    var t = SLOT_TYPES[slot]; if (!t || !def) return false;
+    if (def.class && def.class.indexOf(ctype) < 0) return false;
+    var cl = G.classes[ctype] || {};
+    if (t == "weapon") return !!def.wtype && (cl.mainhand || {})[def.wtype];
+    if (t == "offhand") return (cl.offhand || {})[def.type];
+    return def.type == t;
+}
+function spare_for_priest() { // [{i, slot, gain}] – Inventarteile, die der Magier entbehren kann und die den Priester verbessern
+    var st = team_state[TEAM.priest]; if (!st || !st.slots) return [];
+    var out = [], used = {};
+    var slots = ["mainhand", "offhand", "helmet", "chest", "pants", "shoes", "gloves", "cape", "ring1", "ring2", "earring1", "earring2", "amulet", "belt", "orb"];
+    slots.forEach(function (slot) {
+        var worn = st.slots[slot], ws = worn && G.items[worn.name] ? gear_score(G.items[worn.name], worn.level || 0) : 0, best = null;
+        for (var i = 0; i < character.items.length; i++) {
+            var it = character.items[i]; if (!it || used[i]) continue; var def = G.items[it.name]; if (!def || !fits_class(def, "priest", slot)) continue;
+            if (KEEP_ITEMS.test(it.name) || EVENT_ITEMS.test(it.name)) continue;
+            if (on_wishlist(it.name)) { // Zielbau-Teil des Magiers: nur, wenn mehr als die Reserven da sind (die beste Kopie bleibt)
+                var copies = 0; for (var c = 0; c < character.items.length; c++) if (character.items[c] && character.items[c].name == it.name) copies++; if (copies <= RESERVE_COPIES || i == backup_index(it.name)) continue;
+            }
+            if (equipped_names()[it.name] && i == backup_index(it.name)) continue; // beste Reserve des Getragenen bleibt
+            var sc = gear_score(def, it.level || 0); if (sc <= ws * 1.05 || sc <= 0) continue;
+            if (!best || sc > best.sc) best = { i: i, slot: slot, sc: sc, gain: sc - ws };
+        }
+        if (best) { used[best.i] = true; out.push(best); }
+    });
+    return out;
+}
+function priest_gear_tick() { // alle 2 min: steht der Priester neben uns, bekommt er bessere Teile
+    if (Date.now() - last_priest_gear < 2 * 60000 || busy || handing || upgrading || paused) return; last_priest_gear = Date.now();
+    var p = get_player(TEAM.priest); if (!p || p.rip || p.map != character.map || distance(character, p) > 350) return;
+    var list = spare_for_priest(); if (!list.length) return;
+    list.sort(function (a, b) { return a.i - b.i; });
+    (async function () { for (var k = list.length - 1; k >= 0; k--) { var g = list[k], it = character.items[g.i]; if (!it) continue; try { team_send(TEAM.priest, { t: "gear", name: it.name, level: it.level || 0, slot: g.slot }); send_item(TEAM.priest, g.i, 1); game_log("[Priest] bekommt " + it.name + "+" + (it.level || 0) + " für " + g.slot + " (+" + Math.round(g.gain) + " Wert)"); } catch (e) { game_log("Priester-Ausrüstung: " + err_txt(e)); } await sleep(400); } })();
+}
 // ---------- Stufe 2: Händler holt Loot ab (statt Stadtgang des Magiers) ----------
 var handing = false, last_pickup = 0, pickup_state = null; // pickup_state: {t, ready, done}
 function merchant_available() { // Händler läuft, meldet sich, lebt, ist nicht gerade selbst unterwegs mit einer Abholung
@@ -3342,7 +3379,7 @@ function start_main() {
     rip_counted = false;
     session_tick();
     if (Date.now() - last_panel > 2000) { last_panel = Date.now(); try { update_panel(); update_char_panel(); } catch (e) {} }
-    try { team_tick(); team_broadcast(); team_read_logs(); team_inject(); bank_snapshot(); } catch (e) {}
+    try { team_tick(); team_broadcast(); team_read_logs(); team_inject(); bank_snapshot(); if (!manual_lock && !paused) priest_gear_tick(); } catch (e) {}
     if (paused) return;
     measure_tick();
 

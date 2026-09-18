@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Priester (F4llenPriest) – Stufe 1 =====
 // Folgt dem Magier, heilt ihn und sich, nimmt die Party-Einladung an, greift erst ab PRIEST_ATTACK_LEVEL mit an.
 // Meldungen gehen per Charakter-Nachricht an den Magier ("[Priest] …").
-var PRIEST_VERSION = "v160";
+var PRIEST_VERSION = "v161";
 var MAGE = "F4llen";
 try { localStorage.setItem("lp_tlog_" + character.name, JSON.stringify([{ t: Date.now(), m: "Skript geladen (" + character.ctype + ", Lv " + character.level + ", Server " + (typeof server != "undefined" && server ? (server.region + " " + server.id) : "?") + ")" }])); } catch (e) {}
 var PRIEST_ATTACK_LEVEL = 20;      // vorher nur folgen und heilen
@@ -41,6 +41,9 @@ async function go_shopping() { // in die Stadt: fehlende Ausrüstung und Tränke
                 try { await buy("hpot0", POT_BUY); await buy("mpot0", POT_BUY); await sleep(500); okp = pot_count("hpot") >= POT_MIN; if (okp) say("Tränke gekauft: " + POT_BUY + "/" + POT_BUY); } catch (e) { var pn = npc_selling("hpot0"), pp = pn && npc_pos(pn); say_once("potfail", "Tränke: " + (e && e.reason || e) + (pp && character.map == pp.map ? " (Abstand " + Math.round(Math.hypot(character.x - pp.x, character.y - pp.y)) + ")" : " (Karte " + character.map + ")"), 120000); await sleep(1500); }
             }
         }
+        // ersetzte/überflüssige Ausrüstung beim NPC verkaufen
+        var junk = []; for (var j2 = 0; j2 < character.items.length; j2++) { var ij = character.items[j2]; if (!ij) continue; var dj = G.items[ij.name]; if (!dj || /^(hpot|mpot)/.test(ij.name)) continue; var worn_same = false; for (var sl3 in character.slots) { var ws3 = character.slots[sl3]; if (ws3 && ws3.name == ij.name) worn_same = true; } if ((dj.type && GEAR_SLOTS.indexOf(dj.type) >= 0 || dj.wtype) && !worn_same) junk.push(j2); }
+        if (junk.length) { try { await smart_move("potions"); for (var j3 = junk.length - 1; j3 >= 0; j3--) { var ij3 = character.items[junk[j3]]; if (ij3) { try { sell(junk[j3], ij3.q || 1); } catch (e) {} await sleep(300); } } say("Alte Ausrüstung verkauft: " + junk.length); } catch (e) {} }
         // anlegen
         for (var i2 = 0; i2 < character.items.length; i2++) { var it = character.items[i2]; if (!it) continue; var d = G.items[it.name]; for (var k = 0; k < GEAR_SLOTS.length; k++) { var sl = GEAR_SLOTS[k]; if (!character.slots[sl] && fits(d, sl)) { try { equip(i2); await sleep(400); say(it.name + " angelegt"); } catch (e) {} break; } } }
     } catch (e) { say("Einkauf-Fehler: " + (e && e.message ? e.message : e)); }
@@ -50,12 +53,24 @@ function say(msg) { try { send_cm(MAGE, { t: "log", msg: msg }); } catch (e) {} 
 function say_once(key, msg, every) { if (last_log[key] && Date.now() - last_log[key] < (every || 600000)) return; last_log[key] = Date.now(); say(msg); }
 function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 var last_state = null;
-function status(state) { if (state == last_state && Date.now() - last_status < 30000) return; last_state = state; last_status = Date.now(); try { send_cm(MAGE, { t: "st", level: character.level, state: character.rip ? "tot" : state, hp: character.hp, max_hp: character.max_hp, map: character.map }); } catch (e) {} }
+function worn_summary() { var o = {}; for (var sl in character.slots) { var it = character.slots[sl]; if (it && sl.indexOf("trade") != 0) o[sl] = { name: it.name, level: it.level || 0 }; } return o; }
+function status(state) { if (state == last_state && Date.now() - last_status < 30000) return; last_state = state; last_status = Date.now(); try { send_cm(MAGE, { t: "st", level: character.level, state: character.rip ? "tot" : state, hp: character.hp, max_hp: character.max_hp, map: character.map, slots: worn_summary() }); } catch (e) {} }
+var gear_incoming = [];
+async function equip_incoming() { // vom Magier erhaltene Teile anlegen, ersetzte Teile beim nächsten Einkauf verkaufen
+    while (gear_incoming.length) {
+        var g = gear_incoming.shift(); var idx = -1;
+        for (var w = 0; w < 10 && idx < 0; w++) { for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && it.name == g.name && (it.level || 0) == g.level) { idx = i; break; } } if (idx < 0) await sleep(500); }
+        if (idx < 0) { say("Teil " + g.name + " nicht angekommen"); continue; }
+        try { equip(idx, g.slot); await sleep(600); say(g.name + "+" + g.level + " angelegt (" + g.slot + ")"); } catch (e) { say("Anlegen " + g.name + ": " + (e && e.reason || e)); }
+    }
+    try { send_cm(MAGE, { t: "st", level: character.level, state: last_state || "bei dir", hp: character.hp, max_hp: character.max_hp, map: character.map, slots: worn_summary() }); } catch (e) {}
+}
 function on_cm(name, data) {
     if (name != MAGE || !data) return;
     if (data.t == "me") { mage = data; mage.t = Date.now(); if (typeof data.paused == "boolean") p_paused = data.paused; }
     else if (data.t == "state") p_paused = !!data.paused;
     else if (data.t == "help") { help_until = Date.now() + 20000; try { stop("smart"); } catch (e) {} moving = false; }
+    else if (data.t == "gear") { gear_incoming.push(data); if (gear_incoming.length == 1) setTimeout(equip_incoming, 800); }
 }
 function on_party_invite(name) { if (name == MAGE) { try { accept_party_invite(name); say_once("party", "Party mit " + MAGE + " angenommen", 3600000); } catch (e) {} } }
 function on_party_request(name) { if (name == MAGE) { try { accept_party_request(name); } catch (e) {} } }
