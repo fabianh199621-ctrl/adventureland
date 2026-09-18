@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v182";
+var BOT_VERSION = "v183";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : character.ctype == "ranger" || /ranger/i.test(character.name) ? "ranger" : "priest";
@@ -532,7 +532,7 @@ function team_wish_html(panel) {
 
 // ---------- Server-Event Giga Crab (crabxx): hinspringen, Huge Crabs farmen, Boss von außen anschießen; Team springt mit ----------
 var event_on = true; try { event_on = localStorage.getItem("lp_event_on") != "0"; } catch (e) {}
-var event_mode = null, event_prev = null, last_event_check = 0, event_boss_hits = 0, event_since = 0;
+var event_mode = null, event_prev = null, last_event_check = 0, event_boss_hits = 0, event_since = 0, event_empty_since = 0;
 var EVENT_BOSS_MIN_DIST = 110, EVENT_BOSS_MAX_DIST = 190;
 function event_status() { try { var st = (typeof server != "undefined" && server && server.status) || parent.S || {}; var e = st.crabxx; return e && (e.live !== false) ? e : null; } catch (e) { return null; } }
 function event_boss() { try { for (var id in parent.entities) { var m = parent.entities[id]; if (m && m.type == "monster" && m.mtype == "crabxx" && !m.dead) return m; } } catch (e) {} return null; }
@@ -541,14 +541,21 @@ function event_tick() {
     var st = event_status();
     if (!event_mode) {
         if (!event_on || !st || paused || busy || upgrading || server_trip || focus_mode || arb_job || merch_test) return;
-        event_prev = { manual_spot: manual_spot, user_manual: user_manual }; event_mode = "crabxx"; event_since = Date.now(); event_boss_hits = 0;
+        if (st.hp != null && st.hp <= 0) return; // Boss schon tot, Meldung hängt nach
+        event_prev = { manual_spot: manual_spot, user_manual: user_manual }; event_mode = "crabxx"; event_since = Date.now(); event_boss_hits = 0; event_empty_since = 0;
         manual_spot = "crabx"; user_manual = null; current_spot = "crabx"; need_repick = true; meas = null; if (hunt_spot) { hunt_spot = null; }
-        game_log("Event: Giga Crab läuft (HP " + (st.max_hp ? Math.round((st.hp || 0) / st.max_hp * 100) + " %" : "?") + ") – springe hin, Team folgt"); last_panel = 0;
+        game_log("Event: Giga Crab läuft (HP " + (st.max_hp ? Math.round((st.hp || 0) / st.max_hp * 100) + " %" : "?") + ", Status " + JSON.stringify(st).slice(0, 120) + ") – springe hin, Team folgt"); last_panel = 0;
         event_join();
         return;
     }
     if (!st) { event_leave("Event vorbei"); return; }
     if (!event_on) { event_leave("Teilnahme abgeschaltet"); return; }
+    if (st.hp != null && st.hp <= 0) { event_leave("Giga Crab besiegt"); return; }
+    // am Event-Ort, aber weder Boss noch Huge Crabs in Sicht: nach 60 s aufgeben (Meldung hängt nach)
+    var near = st.map && character.map == st.map && st.x != null && distance(character, { x: st.x, y: st.y }) < 600;
+    var seen = !!event_boss() || !!get_nearest_monster({ type: "crabx" });
+    if (near && !seen) { if (!event_empty_since) event_empty_since = Date.now(); else if (Date.now() - event_empty_since > 60000) { event_leave("am Event-Ort nichts mehr zu sehen"); return; } }
+    else event_empty_since = 0;
     // nicht am Event-Ort (anderer Kartenbereich)? nochmal springen
     if (st.map && (character.map != st.map || (st.x != null && distance(character, { x: st.x, y: st.y }) > 900)) && !busy && !fleeing) event_join();
 }
