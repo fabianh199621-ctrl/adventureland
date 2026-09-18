@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v183";
+var BOT_VERSION = "v184";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : character.ctype == "ranger" || /ranger/i.test(character.name) ? "ranger" : "priest";
@@ -1905,13 +1905,23 @@ function attackers_on_me() {
     for (var id in parent.entities) { var e = parent.entities[id]; if (e && e.type == "monster" && !e.dead && e.target == character.name) n++; }
     return n;
 }
+var flee_log = {}; // Spot -> Zeitpunkte der Rückzüge (für die Sperre)
+function note_retreat() { // >3 Rückzüge am selben Spot in 10 min -> Spot 30 min sperren (Jagd: übersprungen)
+    var m = pick_farm_monster(); if (!m) return;
+    var now = Date.now(), arr = (flee_log[m] || []).filter(function (t) { return now - t < 10 * 60000; }); arr.push(now); flee_log[m] = arr;
+    if (arr.length <= 3) return;
+    flee_log[m] = [];
+    if (hunt_spot == m) { game_log("4 Rückzüge bei " + m + " in 10 min – Jagd wird übersprungen, Monster 30 min gesperrt"); hunt_skipped = m; hunt_reset(LEVELED_BLOCK_MS); try { var q = mh_quest(); hunt_cooldown_until = Date.now() + ((q && q.ms) || 1800000); } catch (e) {} return; }
+    blocked_spots[m] = now + LEVELED_BLOCK_MS; need_repick = true; meas = null;
+    game_log("4 Rückzüge bei " + m + " in 10 min – Spot 30 min " + (manual_spot == m ? "ausgesetzt, solange wählt die Automatik" : "gesperrt"));
+}
 async function check_flee() {
     if (fleeing || paused || upgrading || kissing) return;
     var hp = character.hp / character.max_hp;
     var n = attackers_on_me();
     var strong = false, oneshot = false; for (var sid in parent.entities) { var se = parent.entities[sid]; if (se && se.type == "monster" && !se.dead && se.target == character.name && too_strong(se)) { strong = true; if ((se.attack || (G.monsters[se.mtype] || {}).attack || 0) >= character.max_hp * 0.5) oneshot = true; break; } }
     if (strong && (hp < 0.8 || oneshot)) {
-        fleeing = true; busy = true;
+        fleeing = true; busy = true; if (!event_mode) note_retreat();
         var pr = null; try { pr = team_on.priest ? get_player(TEAM.priest) : null; } catch (e) {}
         var pst = team_state[TEAM.priest], priest_ok = pr && !pr.rip && pst && Date.now() - pst.t < 60000 && pr.map == character.map && distance(character, pr) < 400;
         if (priest_ok) { // Heiler in der Nähe: zu ihm laufen und dort hochheilen lassen, statt in die Stadt
@@ -1924,7 +1934,7 @@ async function check_flee() {
         try { stop("smart"); change_target(null); await travel_place("town"); while (character.hp < character.max_hp * 0.9 && !character.rip) await sleep(1000); } catch (e) {} fleeing = false; busy = false; return;
     }
     if (n < FLEE_ATTACKERS || hp > KITE_HP) return;
-    fleeing = true; busy = true;
+    fleeing = true; busy = true; if (!event_mode) note_retreat();
     try {
         if (hp > FLEE_HP) {
             // Kiten: vom Schwarm wegziehen, heilen, zurück
