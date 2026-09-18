@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v146";
+var BOT_VERSION = "v147";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : "priest";
@@ -313,18 +313,12 @@ function team_inject() { // läuft im Fenster des Teammitglieds nicht unser Skri
         try { have = cw && (cw.MERCH_VERSION || cw.PRIEST_VERSION); } catch (e) {}
         if (have == BOT_VERSION) continue;
         team_inject_t[nm] = Date.now();
-        if (!cw) {
-            var keys = [], pk = [];
-            try { for (var kk in w.win) if (/runner|code|slot|start|load_/i.test(kk)) keys.push(kk + ":" + typeof w.win[kk]); } catch (e) {}
-            try { for (var k2 in parent) if (/runner|code|slot/i.test(k2)) pk.push(k2 + ":" + typeof parent[k2]); } catch (e) {}
-            var fr = 0; try { fr = w.win.document.querySelectorAll("iframe").length; } catch (e) {}
-            var cs = null; try { cs = { code: typeof w.win.code, code_slot: w.win.code_slot, code_name: w.win.code_name, runner: typeof w.win.runner }; } catch (e) {}
-            game_log("Team: " + nm + " – Fenster da, aber noch kein Code-Frame (iframes " + fr + "). Schlüssel: " + keys.slice(0, 40).join(",") + " | eigene: " + pk.slice(0, 30).join(",") + " | " + JSON.stringify(cs));
-            try { if (typeof w.win.start_runner == "function") { w.win.start_runner(); game_log("Team: " + nm + " – start_runner() aufgerufen"); } } catch (e) { game_log("Team: start_runner: " + err_txt(e)); }
+        if (!cw) { // das Spiel hat für den Charakter noch keinen Code-Frame angelegt: Code-Start anstoßen (läuft dessen eigenen, meist leeren Slot), danach spielen wir unser Skript ein
+            try { if (typeof w.win.start_runner == "function") { w.win.start_runner(); game_log("Team: " + nm + " – Code-Start angestoßen"); } else game_log("Team: " + nm + " – kein Code-Frame und kein start_runner"); } catch (e) { game_log("Team: " + nm + " start_runner: " + err_txt(e)); }
             continue;
         }
         var role = k == "merch" ? "merchant" : "priest";
-        game_log("Team: " + nm + " läuft " + (have ? have : "fremden/leeren Code") + " – spiele " + role + "_" + BOT_VERSION + ".js direkt ein");
+        game_log("Team: " + nm + " – spiele " + role + "_" + BOT_VERSION + ".js ein" + (have ? " (bisher " + have + ")" : ""));
         (function (nm, cw, role) {
             fetch(BOT_BASE + role + "_" + BOT_VERSION + ".js", { cache: "no-store" }).then(function (r) { return r.text(); }).then(function (code) { try { cw.eval(code); game_log("Team: " + nm + " – Skript eingespielt"); } catch (e) { game_log("Team: " + nm + " – Einspielen fehlgeschlagen: " + err_txt(e)); } }).catch(function (e) { game_log("Team: " + nm + " – Laden fehlgeschlagen: " + e); });
         })(nm, cw, role);
@@ -347,7 +341,7 @@ function on_cm(name, data) { // Nachrichten der eigenen Charaktere
     if (TEAM_NAMES.indexOf(name) < 0 || !data || typeof data != "object") return;
     var who = name == TEAM.merch ? "Merch" : "Priest";
     try {
-        if (data.t == "log") game_log("[" + who + "] " + data.msg);
+        if (data.t == "log") { /* kommt bereits über den gemeinsamen Speicher */ }
         else if (data.t == "st") { team_state[name] = Object.assign({ t: Date.now() }, data); last_panel = 0; }
         else if (data.t == "hello") { game_log("[" + who + "] verbunden (" + (data.v || "?") + ")"); team_send(name, { t: "state", paused: paused || !bot_running, spot: current_spot }); team_broadcast(); }
         else if (data.t == "gold?") { var p = get_player(name); var amt = Math.min(data.amount || 100000, Math.max(0, character.gold - WISH_RESERVE)); if (p && distance(character, p) < 400 && amt >= 1000) { send_gold(name, amt); game_log("[" + who + "] " + fmt(amt) + " Gold übergeben"); } else team_send(name, { t: "nogold", near: !!(p && distance(character, p) < 400) }); }
