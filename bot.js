@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v144";
+var BOT_VERSION = "v145";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : "priest";
@@ -297,6 +297,29 @@ function team_tick() { // fehlende Teammitglieder starten, abgeschaltete stoppen
     }
     // Party: Priester einladen, wenn er läuft und nicht dabei ist
     if (team_on.priest && act[TEAM.priest] && Date.now() - last_party_try > 60000) { var inparty = character.party && parent.party && parent.party[TEAM.priest]; if (!inparty) { last_party_try = Date.now(); try { send_party_invite(TEAM.priest); } catch (e) {} } }
+}
+var team_inject_t = {};
+function team_windows() { // Fenster der mitgestarteten Charaktere finden (gleiche Herkunft, daher zugreifbar)
+    var out = {};
+    try { var fr = parent.document.querySelectorAll("iframe"); for (var i = 0; i < fr.length; i++) { try { var cw = fr[i].contentWindow; var nm = cw && cw.character && cw.character.name; if (nm && TEAM_NAMES.indexOf(nm) >= 0) { var ci = cw.document && cw.document.querySelector("iframe"); out[nm] = { win: cw, code: ci && ci.contentWindow }; } } catch (e) {} } } catch (e) {}
+    return out;
+}
+function team_inject() { // läuft im Fenster des Teammitglieds nicht unser Skript (falscher Code-Slot), spielen wir es direkt ein
+    var wins = team_windows();
+    for (var k in TEAM) {
+        var nm = TEAM[k], w = wins[nm]; if (!w || !team_on[k]) continue;
+        if (Date.now() - (team_inject_t[nm] || 0) < 45000) continue;
+        var cw = w.code, have = null;
+        try { have = cw && (cw.MERCH_VERSION || cw.PRIEST_VERSION); } catch (e) {}
+        if (have == BOT_VERSION) continue;
+        team_inject_t[nm] = Date.now();
+        if (!cw) { game_log("Team: " + nm + " – Fenster da, aber noch kein Code-Frame"); continue; }
+        var role = k == "merch" ? "merchant" : "priest";
+        game_log("Team: " + nm + " läuft " + (have ? have : "fremden/leeren Code") + " – spiele " + role + "_" + BOT_VERSION + ".js direkt ein");
+        (function (nm, cw, role) {
+            fetch(BOT_BASE + role + "_" + BOT_VERSION + ".js", { cache: "no-store" }).then(function (r) { return r.text(); }).then(function (code) { try { cw.eval(code); game_log("Team: " + nm + " – Skript eingespielt"); } catch (e) { game_log("Team: " + nm + " – Einspielen fehlgeschlagen: " + err_txt(e)); } }).catch(function (e) { game_log("Team: " + nm + " – Laden fehlgeschlagen: " + e); });
+        })(nm, cw, role);
+    }
 }
 var team_log_seen = {};
 function team_read_logs() { // Händler/Priester schreiben ihr Log in den gemeinsamen Speicher (localStorage), der Magier zeigt es an
@@ -3202,7 +3225,7 @@ function start_main() {
     rip_counted = false;
     session_tick();
     if (Date.now() - last_panel > 2000) { last_panel = Date.now(); try { update_panel(); update_char_panel(); } catch (e) {} }
-    try { team_tick(); team_broadcast(); team_read_logs(); } catch (e) {}
+    try { team_tick(); team_broadcast(); team_read_logs(); team_inject(); } catch (e) {}
     if (paused) return;
     measure_tick();
 
