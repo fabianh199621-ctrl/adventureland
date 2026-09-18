@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v167";
+var BOT_VERSION = "v168";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : character.ctype == "ranger" || /ranger/i.test(character.name) ? "ranger" : "priest";
@@ -347,7 +347,7 @@ function on_cm(name, data) { // Nachrichten der eigenen Charaktere
         else if (data.t == "st") { team_state[name] = Object.assign({ t: Date.now() }, data); last_panel = 0; }
         else if (data.t == "ready") { if (pickup_state) pickup_state.ready = true; }
         else if (data.t == "delivered") { if (pickup_state) pickup_state.done = true; if (data.pots) game_log("[Merch] Tränke erhalten: " + data.pots); if (data.gold) game_log("[Merch] " + fmt(data.gold) + " Gold Verkaufserlös erhalten"); }
-        else if (data.t == "hello") { game_log("[" + who + "] verbunden (" + (data.v || "?") + ")"); team_send(name, { t: "state", paused: paused || !bot_running, spot: current_spot }); team_broadcast(); }
+        else if (data.t == "hello") { game_log("[" + who + "] verbunden (" + (data.v || "?") + (data.sv ? ", Server " + pretty_server(data.sv) : "") + ")"); if (merch_test && name == TEAM.merchant) merch_test_result(data.sv); team_send(name, { t: "state", paused: paused || !bot_running, spot: current_spot }); team_broadcast(); }
         else if (data.t == "gold?") { var p = get_player(name); var amt = Math.min(data.amount || 100000, Math.max(0, character.gold - WISH_RESERVE)); if (p && distance(character, p) < 400 && amt >= 1000) { send_gold(name, amt); game_log("[" + who + "] " + fmt(amt) + " Gold übergeben"); } else team_send(name, { t: "nogold", near: !!(p && distance(character, p) < 400) }); }
         else if (data.t == "pots?") { var pp = get_player(name); if (pp && distance(character, pp) < 400) { var gave = 0; [POTS_HP, POTS_MP].forEach(function (list) { var idx = -1, q = 0; for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && list.indexOf(it.name) >= 0 && (it.q || 0) > q) { idx = i; q = it.q; } } if (idx >= 0 && q >= 60) { send_item(name, idx, 25); gave++; } }); if (gave) game_log("[" + who + "] Tränke übergeben"); } }
     } catch (e) { game_log("Team-Nachricht: " + err_txt(e)); }
@@ -357,6 +357,7 @@ setTimeout(function () { try { cm_selftest = 1; send_cm(character.name, { t: "pi
 function team_html() {
     var parts = [];
     for (var k in TEAM) { var nm = TEAM[k], st = team_state[nm], run = team_running(nm), lab = TEAM_LABEL[k]; var raw = active_chars()[nm]; try { var pe = get_player(nm); if (pe && pe.rip && st) st.state = "tot"; } catch (e) {} parts.push("<span style='color:" + (team_on[k] ? (run ? "#4caf50" : "#ffb74d") : "#9aa3b2") + "'>" + lab + (st && Date.now() - st.t < 60000 ? " Lv " + st.level + " · " + esc(st.state || "") : run ? " (" + esc(String(raw)) + ", keine Meldung)" : team_on[k] ? " (aus/offline)" : "") + "</span> <button data-act='team' data-k='" + k + "'" + (team_on[k] ? " class='on'" : "") + " style='padding:0 5px'>" + (team_on[k] ? "an" : "aus") + "</button>"); }
+    if (team_on.merchant) parts.push("<button data-act='merchtest' title='Testet, ob der Händler auf einen anderen Server gestartet werden kann (Grundlage für Handel im Hintergrund); dauert ca. 1 min, Händler kommt danach zurück'" + (merch_test ? " class='on'" : "") + " style='padding:0 5px'>" + (merch_test ? "Servertest läuft (" + merch_test.stage + ")" : "Merch-Servertest") + "</button>");
     var give = "";
     if (team_on.priest || team_on.ranger) { // manuelle Übergabe: Inventarteil auswählen, an Priest/Ranger geben (der legt es an, wenn es besser ist)
         var opts = "", any = false;
@@ -364,6 +365,43 @@ function team_html() {
         if (any) give = "<div class='lp_row' style='flex-wrap:wrap'><span class='lp_k' title='Teil aus dem Inventar an ein Teammitglied geben – es muss neben dir stehen; angelegt wird es dort, wenn es besser ist'>Geben:</span> <select data-give='1' style='font-size:11px;background:#1c2029;color:#eee;border:1px solid #555;max-width:220px'><option value=''" + (give_sel < 0 ? " selected" : "") + ">– Teil wählen –</option>" + opts + "</select>" + (team_on.priest ? " <button data-act='give' data-k='priest' style='padding:0 6px'>→ Priest</button>" : "") + (team_on.ranger ? " <button data-act='give' data-k='ranger' style='padding:0 6px'>→ Ranger</button>" : "") + "</div>";
     }
     return "<div class='lp_row' style='flex-wrap:wrap;line-height:1.6'><span class='lp_k'>Team:</span> " + parts.join(" · ") + "</div>" + give;
+}
+// ---------- Test: kann ein Nebencharakter auf einem anderen Server gestartet werden? ----------
+var merch_test = null; // { stage: "stopped"|"started", t, target: {region, id}, sv }
+function other_server() { var me = split_server(my_server().toUpperCase()); if (!me) return null; var id = me.id.toUpperCase() == "I" ? "II" : "I"; return { region: me.region, id: id }; }
+function start_merch_test() {
+    if (merch_test) { game_log("Servertest läuft schon (" + merch_test.stage + ")"); return; }
+    var tgt = other_server(); if (!tgt) { game_log("Servertest: eigenen Server nicht erkannt (" + my_server() + ")"); return; }
+    try { game_log("Servertest: start_character = " + String(start_character).replace(/\s+/g, " ").slice(0, 160)); } catch (e) {}
+    try { var r = parent.start_character_runner; game_log("Servertest: start_character_runner = " + (r ? String(r).replace(/\s+/g, " ").slice(0, 400) : "nicht vorhanden")); } catch (e) {}
+    var nm = TEAM.merchant;
+    try { if (active_chars()[nm]) stop_character(nm); } catch (e) {}
+    try { parent.__lp_team_restart_after = Date.now() + 120000; } catch (e) {}
+    merch_test = { stage: "stopped", t: Date.now(), target: tgt, sv: null };
+    game_log("Servertest: Händler gestoppt, Start auf " + pretty_server(tgt.region + tgt.id) + " in 15 s"); last_panel = 0;
+}
+function merch_test_tick() {
+    if (!merch_test) return; var nm = TEAM.merchant, el = Date.now() - merch_test.t;
+    if (merch_test.stage == "stopped" && el > 15000) {
+        merch_test.stage = "started"; merch_test.t = Date.now();
+        var sv = merch_test.target.region + merch_test.target.id;
+        try { var res = start_character(nm, team_slot(), sv); game_log("Servertest: start_character(" + nm + ", " + team_slot() + ", \"" + sv + "\") aufgerufen"); if (res && typeof res.then == "function") res.then(function (r) { game_log("Servertest: Start-Antwort " + JSON.stringify(r).slice(0, 160)); }, function (e) { game_log("Servertest: Start abgelehnt " + JSON.stringify(e).slice(0, 160)); }); } catch (e) { game_log("Servertest: Start-Fehler " + err_txt(e)); merch_test_finish(); }
+        setTimeout(function () { try { var w = team_windows()[nm]; if (w && w.win) { var fr = null; try { fr = w.win.frameElement; } catch (e) {} game_log("Servertest: Fenster-URL " + String((fr && fr.src) || (w.win.location && w.win.location.href) || "?").slice(0, 160) + " · server_region/identifier " + (w.win.server_region || "?") + "/" + (w.win.server_identifier || "?")); } else game_log("Servertest: kein Fenster für " + nm + " gefunden"); } catch (e) { game_log("Servertest: Fenster-Prüfung " + err_txt(e)); } }, 12000);
+        return;
+    }
+    if (merch_test.stage == "started") { try { var wh = JSON.parse(localStorage.getItem("lp_where_" + nm) || "null"); if (wh && wh.t > merch_test.t) { merch_test_result(wh.sv); return; } } catch (e) {} } // Rückmeldung über den gemeinsamen Speicher (Nachrichten gehen nur auf demselben Server)
+    if (merch_test.stage == "started" && el > 75000) { game_log("Servertest: keine Meldung vom Händler nach 75 s – Ergebnis unklar (Log prüfen)"); merch_test_finish(); }
+}
+function merch_test_result(sv) {
+    var want = (merch_test.target.region + merch_test.target.id).toLowerCase(), got = String(sv || "").replace(/\s+/g, "").toLowerCase();
+    game_log("Servertest: Händler meldet sich von " + (sv ? pretty_server(sv) : "unbekannt") + " → " + (got == want ? "FUNKTIONIERT – Nebencharakter läuft auf einem anderen Server" : "Parameter wirkt nicht (gewollt " + pretty_server(want.toUpperCase()) + ")"));
+    merch_test.sv = sv; merch_test.stage = "fertig"; setTimeout(merch_test_finish, 3000);
+}
+function merch_test_finish() {
+    if (!merch_test) return; merch_test = null; var nm = TEAM.merchant;
+    try { if (active_chars()[nm]) stop_character(nm); } catch (e) {}
+    try { parent.__lp_team_restart_after = Date.now() + 20000; } catch (e) {}
+    game_log("Servertest beendet – Händler wird in 20 s zuhause neu gestartet"); last_panel = 0;
 }
 var give_sel = -1;
 function give_to_team(key) { // ausgewähltes Inventarteil an Priest/Ranger senden
@@ -881,6 +919,7 @@ function init_panel() {
         else if (act == "buyoffer") { var bo = offers_for_slot(b.getAttribute("data-slot"))[parseInt(b.getAttribute("data-idx"))]; if (bo) buy_confirm = { key: offer_key(bo), offer: bo, slot: b.getAttribute("data-slot"), t: Date.now() }; }
         else if (act == "buyno") buy_confirm = null;
         else if (act == "give") give_to_team(b.getAttribute("data-k"));
+        else if (act == "merchtest") start_merch_test();
         else if (act == "team") { var tk = b.getAttribute("data-k"); team_on[tk] = !team_on[tk]; save_team(); last_team_tick = 0; game_log("Team: " + TEAM[tk] + " " + (team_on[tk] ? "an" : "aus")); }
         else if (act == "arbtoggle") { div.__arb = !div.__arb; try { localStorage.setItem("lp_panel_arb", div.__arb ? "1" : "0"); } catch (x) {} }
         else if (act == "buyok") { if (buy_confirm) { var bc = buy_confirm; buy_confirm = null; preempt("Kauf " + bc.offer.name, function () { return buy_offer_now(bc.slot, bc.offer); }); } }
@@ -3414,7 +3453,7 @@ function start_main() {
     rip_counted = false;
     session_tick();
     if (Date.now() - last_panel > 2000) { last_panel = Date.now(); try { update_panel(); update_char_panel(); } catch (e) {} }
-    try { team_tick(); team_broadcast(); team_read_logs(); team_inject(); bank_snapshot(); if (!manual_lock && !paused) { priest_gear_tick(); energize_tick(); } } catch (e) {}
+    try { merch_test_tick(); team_tick(); team_broadcast(); team_read_logs(); team_inject(); bank_snapshot(); if (!manual_lock && !paused) { priest_gear_tick(); energize_tick(); } } catch (e) {}
     if (paused) return;
     measure_tick();
 

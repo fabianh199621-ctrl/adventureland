@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Händler (F4llenMerch) – Stufe 1 =====
 // Läuft unsichtbar neben dem Magier. Aufgaben: Stand kaufen und öffnen, Loot abholen/verkaufen/einlagern,
 // Startgold vom Magier holen. mluck ist abgeschaltet (braucht Lv 40, Händler levelt praktisch nicht) – USE_MLUCK/LEVEL_MODE. Meldungen gehen per Charakter-Nachricht an den Magier und erscheinen dort als "[Merch] …".
-var MERCH_VERSION = "v167";
+var MERCH_VERSION = "v168";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -207,6 +207,7 @@ var __dead_since = 0, __dead_logged = false;
         } else if (__dead_since) { __dead_since = 0; __dead_logged = false; say("wieder da (Lv " + character.level + ")"); }
     } catch (e) {}
 }, 3000); })(MY_GEN);
-try { send_cm(MAGE, { t: "hello", v: MERCH_VERSION }); } catch (e) {}
+try { localStorage.setItem("lp_where_" + character.name, JSON.stringify({ sv: (typeof server != "undefined" && server ? server.region + server.id : ""), t: Date.now(), v: MERCH_VERSION })); } catch (e) {} // für den Magier lesbar, auch wenn wir auf einem anderen Server sind (Nachrichten gehen dann nicht)
+try { send_cm(MAGE, { t: "hello", v: MERCH_VERSION, sv: (typeof server != "undefined" && server ? server.region + server.id : "") }); } catch (e) {}
 say("Händler " + MERCH_VERSION + " gestartet (Lv " + character.level + ", " + character.gold + " Gold" + (locate_item(STAND_ITEM) >= 0 ? ", Stand vorhanden" : ", kein Stand") + ")");
 loop();
