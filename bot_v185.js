@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v184";
+var BOT_VERSION = "v185";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : character.ctype == "ranger" || /ranger/i.test(character.name) ? "ranger" : "priest";
@@ -366,6 +366,7 @@ async function tw_apply_stat(key, name) { // Attribut-Scroll auf die fertige Tea
     var cp = tw_copies(name)[0]; if (!cp) return; var it = character.items[cp.i]; if (!it || it.stat_type) return;
     var scroll = tw_stat_type(key) + "scroll", price = (G.items[scroll] || {}).g || 0, k = name + "+" + cp.level;
     if (tw_stat_failed[k] || !price) return;
+    if (!stat_possible(it)) { tw_stat_failed[k] = true; game_log("Team-Zielbau [" + TEAM_LABEL[key] + "]: " + name + "+" + cp.level + " – Attribut nicht möglich (" + (G.items[name].stat ? "schon Qualität 1, Scroll nur bis +" + grade0_max(name) : "Teil hat keinen Attributwert") + ") – wird ohne übergeben"); return; }
     if (spendable() < price) { game_log("Team-Zielbau: Attribut-Scroll – Reserve erreicht"); return; }
     await travel_place("scrolls");
     if (quantity(scroll) < 1) { buy(scroll, 1); await sleep(600); }
@@ -426,7 +427,7 @@ function tw_status(key, slot) { // {state, text}
     var st = team_state[TEAM[key]], worn = st && st.slots && st.slots[slot];
     if (worn && worn.name == c.item && (worn.level || 0) >= c.level) return { state: "fertig", text: "fertig ✓" };
     var cp = tw_copies(c.item)[0];
-    if (cp && cp.level >= c.level) { var ci = character.items[cp.i]; if (team_wish_stat && ci && !ci.stat_type && !tw_stat_failed[c.item + "+" + cp.level] && (G.items[tw_stat_type(key) + "scroll"] || {}).g) return { state: "stat", text: "Attribut " + tw_stat_type(key).toUpperCase() + " (+" + cp.level + " liegt bereit)" }; return { state: "handover", text: "übergeben (+" + cp.level + " liegt bereit)" }; }
+    if (cp && cp.level >= c.level) { var ci = character.items[cp.i]; if (team_wish_stat && ci && stat_possible(ci) && !tw_stat_failed[c.item + "+" + cp.level] && (G.items[tw_stat_type(key) + "scroll"] || {}).g) return { state: "stat", text: "Attribut " + tw_stat_type(key).toUpperCase() + " (+" + cp.level + " liegt bereit)" }; return { state: "handover", text: "übergeben (+" + cp.level + " liegt bereit)" }; }
     if (cp) return { state: "build", text: "bauen +" + cp.level + " → +" + c.level };
     if (tw_overlap(c.item) && c.level <= BACKUP_LEVEL) return { state: "wait", text: "wartet auf Reserve-Überschuss des Magiers (Ziel ≤ +" + BACKUP_LEVEL + ")" };
     if (is_buyable(c.item)) return { state: "buy", text: "kaufen (NPC " + fmt(G.items[c.item].g || 0) + ")" };
@@ -460,7 +461,7 @@ async function team_build_step(only, manual) { // in der Ausrüstungsroutine: bi
             var lv = Math.min(c.level, TEAM_BUILD_MAX_LEVEL);
             await travel_place("upgrade");
             game_log("Team-Zielbau [" + lab + "]: " + name + " +" + cp.level + " → +" + lv + " (Chance +" + cp.level + "→+" + (cp.level + 1) + ": " + success_txt("u", cp.level) + ")");
-            var r = await upgrade_inv(name, cp.level, lv);
+            var r = await upgrade_inv(name, cp.level, lv, team_wish_stat ? tw_stat_type(t.key) : null);
             if (r.stopped) { stopped = true; break; }
             if (r.destroyed) { rebuys++; game_log("Team-Zielbau [" + lab + "]: " + name + " zerstört (" + rebuys + ". Mal) – kaufe neu"); continue; }
             break;
@@ -2241,8 +2242,9 @@ function equipped_slots(kind) {
 function slots_to_upgrade(manual) {
     return equipped_slots("upgrade").filter(function (s) { var it = character.slots[s]; return (it.level || 0) < target_level(it.name, manual) || (is_buyable(it.name) && backup_index(it.name) < 0); });
 }
+var stat_impossible_logged = {};
 function slots_without_stat() {
-    return equipped_slots("upgrade").filter(function (s) { return character.slots[s].stat_type != STAT_TYPE; });
+    return equipped_slots("upgrade").filter(function (s) { var it = character.slots[s]; if (it.stat_type == STAT_TYPE) return false; var d = G.items[it.name]; var ok = d && d.stat && (it.level || 0) <= grade0_max(it.name); if (!ok) { var k = it.name + "+" + (it.level || 0); if (!stat_impossible_logged[k]) { stat_impossible_logged[k] = true; game_log(it.name + "+" + (it.level || 0) + ": Attribut nicht möglich (" + (d && d.stat ? "Qualität 1 ab +" + (grade0_max(it.name) + 1) + ", Scroll nur davor" : "kein Attributwert") + ")"); } } return !!ok; });
 }
 function inv_count(name, level) { return find_inv_indices(name, level).length; }
 function base_equiv(name) { var sum = 0; for (var l = 0; l < COMPOUND_TARGET; l++) sum += inv_count(name, l) * Math.pow(3, l); return sum; }
@@ -3548,11 +3550,29 @@ async function compound_spares() {
 
 // ---------- Upgrade + Attribut + Compound ----------
 // Ein Inventar-Item (name, level) schrittweise bis target upgraden. Rückgabe: {level, destroyed}
-async function upgrade_inv(name, level, target) {
+function grade0_max(name) { var g = (G.items[name] || {}).grades; return g && g.length ? g[0] - 1 : 99; } // höchste Stufe, auf der ein Teil noch Qualität 0 hat (Attribut-Scroll möglich)
+function stat_possible(it) { var d = G.items[it.name]; return !!(d && d.stat && !it.stat_type && (it.level || 0) <= grade0_max(it.name)); }
+var stat_scroll_failed = {};
+async function apply_stat_scroll(idx, st) { // Attribut-Scroll auf ein Inventarteil (muss noch Qualität 0 sein)
+    var it = character.items[idx]; if (!it || !st || !stat_possible(it)) return false;
+    var scroll = st + "scroll", price = (G.items[scroll] || {}).g || 0, key = it.name + "+" + (it.level || 0);
+    if (stat_scroll_failed[key] || !price || spendable() < price) return false;
+    if (quantity(scroll) < 1) { buy(scroll, 1); await sleep(600); }
+    var sc = locate_item(scroll); if (sc < 0) { game_log(scroll + " nicht gekauft"); return false; }
+    var nm = it.name, lv = it.level || 0;
+    set_message(nm + " +" + st.toUpperCase());
+    try { await upgrade(idx, sc); } catch (e) {}
+    await wait_queue("upgrade");
+    var i2 = find_inv_index(nm, lv), it2 = i2 >= 0 ? character.items[i2] : null;
+    if (it2 && it2.stat_type == st) { game_log(nm + "+" + lv + " hat jetzt " + st.toUpperCase() + " (vor dem Schritt auf Qualität 1)"); return true; }
+    stat_scroll_failed[key] = true; game_log(nm + "+" + lv + ": Attribut-Scroll nicht angenommen"); return false;
+}
+async function upgrade_inv(name, level, target, stat_want) { // stat_want: Attribut, das vor dem Sprung auf Qualität 1 gesetzt wird
     while (level < target) {
         check_pause();
         var idx = find_inv_index(name, level);
         if (idx < 0) return { level: level, destroyed: true };
+        if (stat_want && level == grade0_max(name)) { try { await apply_stat_scroll(idx, stat_want); } catch (e) {} idx = find_inv_index(name, level); if (idx < 0) return { level: level, destroyed: true }; } // letzter Schritt mit Qualität 0: Attribut jetzt oder nie
         var scroll = "scroll" + best_scroll_grade(G.items[name], level, "u", cost_to_reach(name, level));
         if (spendable() < G.items[scroll].g) { game_log("Reserve erreicht – Upgrade gestoppt"); return { level: level, destroyed: false, stopped: true }; }
         if (quantity(scroll) < 1) { buy(scroll, 1); await sleep(600); }
@@ -3675,7 +3695,7 @@ async function process_slot_inner(slot, goal) {
         if (buyable && backup_index(name) < 0) { if (!await ensure_backup(name)) { game_log(name + ": keine Reserve möglich – kein Risiko-Upgrade"); break; } }
         if (lvl >= goal) break;
         unequip(slot); await sleep(600);
-        var r = await upgrade_inv(name, lvl, goal);
+        var r = await upgrade_inv(name, lvl, goal, wish_item(slot) == name ? STAT_TYPE : null);
         if (r.destroyed) { rebuys++; continue; } // Schleifenanfang legt Reserve an / baut neu
         var best = -1, bl = -1;
         for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && it.name == name && (it.level || 0) > bl) { best = i; bl = it.level || 0; } }
@@ -3711,7 +3731,7 @@ async function upgrade_by_recommendation() {
                 var c5 = step_cost(iv.name, lv2); if (c5 > spendable()) { skipped["inv" + iv.name] = true; continue; }
                 game_log("Nächster Schritt (Inventar): " + iv.name + " +" + lv2 + " → +" + (lv2 + 1) + " (~" + fmt(c5) + ")");
                 await travel_place("upgrade");
-                var r5 = await upgrade_inv(iv.name, lv2, lv2 + 1);
+                var r5 = await upgrade_inv(iv.name, lv2, lv2 + 1, wish_item(sl2) == iv.name ? STAT_TYPE : null);
                 if (r5.stopped) skipped["inv" + iv.name] = true;
                 var bi = -1, bl = -1; for (var j = 0; j < character.items.length; j++) { var it2 = character.items[j]; if (it2 && it2.name == iv.name && (it2.level || 0) > bl) { bi = j; bl = it2.level || 0; } }
                 if (bi >= 0 && item_score(character.items[bi]) > item_score(character.slots[sl2])) { equip(bi, sl2); await sleep(600); game_log(iv.name + " +" + bl + " ist jetzt besser – angelegt"); }
