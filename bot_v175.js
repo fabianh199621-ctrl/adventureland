@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v174";
+var BOT_VERSION = "v175";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : character.ctype == "ranger" || /ranger/i.test(character.name) ? "ranger" : "priest";
@@ -406,14 +406,14 @@ function tw_status(key, slot) { // {state, text}
     var off = tw_market_offer(c.item); if (off && off.price <= (c.max || TEAM_BUILD_DEFAULT_MAX)) return { state: "buy", text: "kaufen (Markt " + fmt(off.price) + ", " + off.seller + ")" };
     return { state: "wait", text: "kein Angebot" + (team_wish_mode < 2 ? " (nicht beim NPC)" : "") };
 }
-function team_build_todo() { // offene Aufträge in Reihenfolge
+function team_build_todo(only) { // offene Aufträge in Reihenfolge
     var out = [];
-    ["priest", "ranger"].forEach(function (key) { if (!team_on[key]) return; TEAM_WISH_SLOTS.forEach(function (slot) { var s = tw_status(key, slot); if (s && (s.state == "buy" || s.state == "build")) out.push({ key: key, slot: slot, cfg: tw_cfg(key, slot), state: s.state }); }); });
+    ["priest", "ranger"].forEach(function (key) { if (!team_on[key] || (only && key != only)) return; TEAM_WISH_SLOTS.forEach(function (slot) { var s = tw_status(key, slot); if (s && (s.state == "buy" || s.state == "build")) out.push({ key: key, slot: slot, cfg: tw_cfg(key, slot), state: s.state }); }); });
     return out;
 }
-async function team_build_step() { // in der Ausrüstungsroutine: bis zu 2 Team-Teile kaufen/aufwerten, Budget je Durchlauf begrenzt
-    if (focus_mode) return;
-    var todo = team_build_todo(); if (!todo.length) return;
+async function team_build_step(only, manual) { // in der Ausrüstungsroutine: bis zu 2 Team-Teile kaufen/aufwerten, Budget je Durchlauf begrenzt
+    if (focus_mode && !manual) return;
+    var todo = team_build_todo(only); if (!todo.length) { if (manual) game_log("Team-Zielbau" + (only ? " " + TEAM_LABEL[only] : "") + ": nichts zu tun"); return; }
     var g0 = character.gold, done = 0;
     for (var i = 0; i < todo.length && done < 2; i++) {
         check_pause();
@@ -445,6 +445,18 @@ async function tw_buy_offer(o) { // Marktangebot auf diesem Server direkt kaufen
         return tw_copies(o.name).length > n0;
     } catch (e) { game_log("Team-Zielbau Marktkauf: " + err_txt(e)); return false; }
 }
+async function team_build_now(key) { // Knopf: nur den Team-Zielbau eines Mitglieds abarbeiten (ohne die restliche Ausrüstungsroutine)
+    if (upgrading) { game_log("Upgrade läuft bereits"); return; }
+    var saved_reserve = GOLD_RESERVE; GOLD_RESERVE = Math.max(GOLD_RESERVE, WISH_RESERVE);
+    upgrading = true; busy = true; set_message("Zielbau " + TEAM_LABEL[key]);
+    game_log("Team-Zielbau " + TEAM_LABEL[key] + ": starte (frei: " + fmt(spendable()) + " Gold)");
+    try { await team_build_step(key, true); }
+    catch (e) { if (e == "PAUSE") game_log("Team-Zielbau durch Pause abgebrochen"); else game_log("Team-Zielbau: " + err_txt(e)); }
+    finally { GOLD_RESERVE = saved_reserve; upgrading = false; busy = false; }
+    try { last_tw_handover = 0; team_wish_handover_tick(); } catch (e) {}
+    game_log("Team-Zielbau " + TEAM_LABEL[key] + " beendet (Gold: " + fmt(character.gold) + ")");
+    after_action("Zielbau " + TEAM_LABEL[key]);
+}
 var last_tw_handover = 0;
 function team_wish_handover_tick() { // fertige Teile übergeben, sobald der Kollege neben uns steht
     if (Date.now() - last_tw_handover < 20000 || busy || upgrading || handing) return; last_tw_handover = Date.now();
@@ -465,7 +477,7 @@ function team_wish_html(panel) {
         if (!team_on[key]) return;
         var lab = TEAM_LABEL[key], open = panel["__tw_" + key], st = team_state[TEAM[key]], cfgs = team_wish[key] || {}, n = 0, done = 0;
         TEAM_WISH_SLOTS.forEach(function (sl) { var c = cfgs[sl]; if (c && c.item) { n++; var s = tw_status(key, sl); if (s && s.state == "fertig") done++; } });
-        h += "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Zielbau " + lab + (n ? " " + done + "/" + n : "") + (st && st.slots ? "" : " <small>(keine Statusmeldung)</small>") + "</span><button data-act='twtoggle' data-k='" + key + "'>" + (open ? "▾" : "▸") + " Zielbau</button>" + (open ? "<button data-act='twist' data-k='" + key + "' title='alle Slots auf das setzen, was er gerade trägt'>Ist</button><button data-act='twmode'" + (team_wish_mode >= 2 ? " class='on'" : "") + " title='Stufe 1: nur NPC-Teile · Stufe 2: auch Marktangebote auf diesem Server unter dem Preislimit'>leicht: " + (team_wish_mode >= 2 ? "NPC + Markt" : "nur NPC") + "</button><button data-act='twclear' data-k='" + key + "' title='alle Ziele löschen'>✕</button>" : "") + "</div>";
+        h += "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Zielbau " + lab + (n ? " " + done + "/" + n : "") + (st && st.slots ? "" : " <small>(keine Statusmeldung)</small>") + "</span><button data-act='twtoggle' data-k='" + key + "'>" + (open ? "▾" : "▸") + " Zielbau</button>" + (open ? "<button data-act='twnow' data-k='" + key + "' class='on' title='Zielbau jetzt abarbeiten: kaufen, aufwerten, übergeben'>Jetzt</button><button data-act='twist' data-k='" + key + "' title='alle Slots auf das setzen, was er gerade trägt'>Ist</button><button data-act='twmode'" + (team_wish_mode >= 2 ? " class='on'" : "") + " title='Stufe 1: nur NPC-Teile · Stufe 2: auch Marktangebote auf diesem Server unter dem Preislimit'>leicht: " + (team_wish_mode >= 2 ? "NPC + Markt" : "nur NPC") + "</button><button data-act='twclear' data-k='" + key + "' title='alle Ziele löschen'>✕</button>" : "") + "</div>";
         if (!open) return;
         h += "<table class='lp_t' style='font-size:11px'><tr><th style='text-align:left'>Slot</th><th style='text-align:left'>getragen</th><th style='text-align:left'>Ziel</th><th>Stufe</th><th>Limit</th><th style='text-align:left'>Stand</th></tr>";
         TEAM_WISH_SLOTS.forEach(function (sl) {
@@ -1065,6 +1077,7 @@ function init_panel() {
         else if (act == "team") { var tk = b.getAttribute("data-k"); team_on[tk] = !team_on[tk]; save_team(); last_team_tick = 0; game_log("Team: " + TEAM[tk] + " " + (team_on[tk] ? "an" : "aus")); }
         else if (act == "arbtoggle") { div.__arb = !div.__arb; try { localStorage.setItem("lp_panel_arb", div.__arb ? "1" : "0"); } catch (x) {} }
         else if (act == "buyok") { if (buy_confirm) { var bc = buy_confirm; buy_confirm = null; preempt("Kauf " + bc.offer.name, function () { return buy_offer_now(bc.slot, bc.offer); }); } }
+        else if (act == "twnow") { var nk = b.getAttribute("data-k"); preempt("Zielbau " + TEAM_LABEL[nk], function () { return team_build_now(nk); }); }
         else if (act == "twtoggle") { var tk = b.getAttribute("data-k"); div["__tw_" + tk] = !div["__tw_" + tk]; }
         else if (act == "twmode") { team_wish_mode = team_wish_mode >= 2 ? 1 : 2; try { localStorage.setItem("lp_teamwish_mode", String(team_wish_mode)); } catch (x) {} game_log("Team-Zielbau: " + (team_wish_mode >= 2 ? "NPC + Marktangebote" : "nur NPC-Teile")); }
         else if (act == "twclear") { team_wish[b.getAttribute("data-k")] = {}; save_team_wish(); }
