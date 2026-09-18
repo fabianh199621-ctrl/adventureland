@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v154";
+var BOT_VERSION = "v155";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : "priest";
@@ -2576,8 +2576,10 @@ function wish_html() {
     });
     return parts.join(" · ");
 }
-async function wish_buy_from_offer(o, buy_fn) { // o: {name, level, price, ...}; buy_fn: async -> true bei Erfolg
-    var slot = wish_wants(o.name, o.level, o.price); if (!slot || character.esize < 2) return false;
+async function wish_buy_from_offer(o, buy_fn) { // o: {name, level, price, force?, slot?}; buy_fn: async -> true bei Erfolg
+    var slot = wish_wants(o.name, o.level, o.price, o.force ? o.slot : null);
+    if (!slot) { game_log("Kauf " + o.name + "+" + (o.level || 0) + " abgelehnt: " + (o.price > character.gold ? "nicht genug Gold" : "über Preisgrenze")); return false; }
+    if (character.esize < 2) { game_log("Kauf " + o.name + ": Inventar voll"); return false; }
     game_log("Wunschliste: kaufe " + o.name + "+" + (o.level || 0) + " für " + slot + " (" + fmt(o.price) + " Gold)");
     var before = character.esize;
     try { if (!await buy_fn()) return false; } catch (e) { game_log("Wunschliste: Kauf fehlgeschlagen – " + err_txt(e)); return false; }
@@ -2812,7 +2814,7 @@ async function buy_find(f) { // Treffer auf eigenem Server sofort kaufen (innerh
     if (!seller || !seller.slots) { game_log("Händler " + f.seller + " nicht (mehr) hier"); return false; }
     var it = seller.slots[f.tslot];
     if (!it || it.name != f.name || it.price > f.price * 1.05) { game_log("Angebot bei " + f.seller + " nicht mehr da"); return false; }
-    return wish_buy_from_offer({ name: it.name, level: it.level || 0, price: it.price }, async function () { trade_buy(seller, f.tslot, 1); return true; });
+    return wish_buy_from_offer({ name: it.name, level: it.level || 0, price: it.price, force: !!f.force, slot: f.slot }, async function () { trade_buy(seller, f.tslot, 1); return true; });
 }
 async function run_pending_buy() { // zum Händler auf diesem Server laufen und kaufen
     if (!pending_buy || busy || upgrading || kissing || fleeing || paused) return;
@@ -2827,7 +2829,7 @@ async function run_pending_buy() { // zum Händler auf diesem Server laufen und 
         else {
             var it = seller.slots[f.tslot];
             if (!it || it.name != f.name || it.price > f.price * 1.05) { game_log("Angebot bei " + f.seller + " nicht mehr da"); }
-            else await wish_buy_from_offer({ name: it.name, level: it.level || 0, price: it.price }, async function () { trade_buy(seller, f.tslot, 1); return true; });
+            else await wish_buy_from_offer({ name: it.name, level: it.level || 0, price: it.price, force: !!f.force, slot: f.slot }, async function () { trade_buy(seller, f.tslot, 1); return true; });
         }
     } catch (e) { game_log("Händler-Kauf: " + err_txt(e)); }
     busy = false; marketing = false;
