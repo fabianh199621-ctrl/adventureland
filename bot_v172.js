@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v171";
+var BOT_VERSION = "v172";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : character.ctype == "ranger" || /ranger/i.test(character.name) ? "ranger" : "priest";
@@ -294,6 +294,7 @@ function team_tick() { // fehlende Teammitglieder starten, abgeschaltete stoppen
     var act = active_chars();
     for (var k in TEAM) {
         var nm = TEAM[k], on = !!team_on[k], running = !!act[nm];
+        if (nm == TEAM.merch && (arb_job || merch_test)) continue; // Händler ist auf Reise/Test: nicht neu starten
         if (on && !running) { if (Date.now() - (team_start_at[nm] || 0) > 60000) { team_start_at[nm] = Date.now(); try { var res = start_character(nm, team_slot()); game_log("Team: starte " + nm + " (Code-Slot " + team_slot() + ") – aktiv: " + JSON.stringify(act)); if (res && typeof res.then == "function") (function (who) { res.then(function (r) { game_log("Team: " + who + " Start-Antwort: " + JSON.stringify(r).slice(0, 120)); }, function (e) { game_log("Team: " + who + " Start abgelehnt: " + JSON.stringify(e).slice(0, 160)); }); })(nm); } catch (e) { game_log("Team: " + nm + " konnte nicht gestartet werden – " + err_txt(e)); } } }
         else if (!on && running) { try { stop_character(nm); game_log("Team: " + nm + " gestoppt"); } catch (e) {} }
     }
@@ -481,7 +482,7 @@ function reload_bot() {
             return fetch(BOT_BASE + "bot_" + v + ".js", { cache: "no-store" }).then(function (r) { if (!r.ok) throw "HTTP " + r.status + " bei bot_" + v + ".js"; return r.text(); });
         })
         .then(function (code) {
-            parent.__lp_resume = { paused: paused, t: Date.now(), timers: { last_ponty: last_ponty, last_market: last_market, shells_retry_at: shells_retry_at, hunt_cooldown_until: hunt_cooldown_until, cake_next: cake_next, last_hunt_check: last_hunt_check, last_global_scan: last_global_scan, last_auto_gear: last_auto_gear } }; // Zustand für die neue Version
+            parent.__lp_resume = { paused: paused, t: Date.now(), timers: { last_ponty: last_ponty, last_market: last_market, shells_retry_at: shells_retry_at, hunt_cooldown_until: hunt_cooldown_until, cake_next: cake_next, last_hunt_check: last_hunt_check, last_global_scan: last_global_scan, last_auto_gear: last_auto_gear, last_arb_trip: last_arb_trip } }; // Zustand für die neue Version
             if (main_timer) clearInterval(main_timer); main_timer = null; parent.__lp_main_timer = null;
             stop("smart"); stop("move");
             // Team bleibt eingeloggt und bekommt die neue Version per Einspielen (team_inject), kein Neustart mehr
@@ -932,6 +933,8 @@ function init_panel() {
         else if (act == "buyno") buy_confirm = null;
         else if (act == "give") give_to_team(b.getAttribute("data-k"));
         else if (act == "merchtest") start_merch_test();
+        else if (act == "arbtrip") start_arb_trip(b.getAttribute("data-sv"));
+        else if (act == "arbauto") { arb_auto = !arb_auto; try { localStorage.setItem("lp_arb_auto", arb_auto ? "1" : "0"); } catch (x) {} game_log("Handelsreisen automatisch: " + (arb_auto ? "an (ab " + fmt(ARB_TRIP_MIN) + " Gewinn)" : "aus")); last_panel = 0; }
         else if (act == "team") { var tk = b.getAttribute("data-k"); team_on[tk] = !team_on[tk]; save_team(); last_team_tick = 0; game_log("Team: " + TEAM[tk] + " " + (team_on[tk] ? "an" : "aus")); }
         else if (act == "arbtoggle") { div.__arb = !div.__arb; try { localStorage.setItem("lp_panel_arb", div.__arb ? "1" : "0"); } catch (x) {} }
         else if (act == "buyok") { if (buy_confirm) { var bc = buy_confirm; buy_confirm = null; preempt("Kauf " + bc.offer.name, function () { return buy_offer_now(bc.slot, bc.offer); }); } }
@@ -966,6 +969,7 @@ function init_panel() {
         if (!inside(e)) return;
         var t = e.target; if (!t || (t.tagName != "SELECT" && t.tagName != "INPUT")) return;
         var ws = t.getAttribute("data-wslot"), wl = t.getAttribute("data-wlvl"), wm = t.getAttribute("data-wmax");
+        if (t.getAttribute("data-arbmin")) { var am = parse_mio(t.value); if (am > 0) { ARB_TRIP_MIN = am; try { localStorage.setItem("lp_arb_min", String(am)); } catch (x) {} game_log("Handelsreise ab " + fmt(am) + " Gewinn"); } try { t.blur(); } catch (x) {} last_panel = 0; return; }
         if (t.getAttribute("data-give")) { give_sel = t.value === "" ? -1 : parseInt(t.value); try { t.blur(); } catch (x) {} return; }
         if (t.getAttribute("data-huntmax")) { var hv = parseFloat(String(t.value).replace(",", ".")); if (isFinite(hv) && hv > 0 && hv <= 100) { hunt_max_danger = hv / 100; try { localStorage.setItem("lp_hunt_max_danger", String(hunt_max_danger)); } catch (x) {} game_log("Jagd-Gefahrgrenze: " + Math.round(hv) + " %"); hunt_skipped = null; last_hunt_check = 0; } try { t.blur(); } catch (x) {} last_panel = 0; return; }
         if (wm) { var mv = parse_mio(t.value), cm = wish_cfg[wm] || { item: wish_item(wm) || "", level: wish_level(wm) }; if (mv > 0) cm.max = mv; else delete cm.max; wish_cfg[wm] = cm; save_wish_cfg(); game_log("Zielbau " + wm + ": Preislimit " + (mv > 0 ? fmt(mv) : "automatisch")); try { t.blur(); } catch (x) {} return; }
@@ -974,7 +978,7 @@ function init_panel() {
     };
     win.addEventListener("change", onChange, true);
     var onInput = function (e) { var t = e.target; if (t && t.id == "lp_wiki_q") { wiki.q = t.value; wiki.page = null; render_wiki(); } };
-    var onKeyCap = function (e) { var t = e.target; if (t && (t.id == "lp_wiki_q" || (t.tagName == "INPUT" && inside(e)))) { e.stopPropagation(); if (e.key == "Escape") t.blur(); if (e.key == "Enter" && (t.getAttribute("data-wmax") || t.getAttribute("data-huntmax")) && e.type == "keydown") { try { t.dispatchEvent(new Event("change", { bubbles: true })); } catch (x) {} } } }; // Tasten im Suchfeld nicht ans Spiel/Bot weitergeben
+    var onKeyCap = function (e) { var t = e.target; if (t && (t.id == "lp_wiki_q" || (t.tagName == "INPUT" && inside(e)))) { e.stopPropagation(); if (e.key == "Escape") t.blur(); if (e.key == "Enter" && (t.getAttribute("data-wmax") || t.getAttribute("data-huntmax") || t.getAttribute("data-arbmin")) && e.type == "keydown") { try { t.dispatchEvent(new Event("change", { bubbles: true })); } catch (x) {} } } }; // Tasten im Suchfeld nicht ans Spiel/Bot weitergeben
     win.addEventListener("input", onInput, true);
     ["keydown", "keyup", "keypress"].forEach(function (t) { win.addEventListener(t, onKeyCap, true); });
     parent.__lp_panel_h = { down: onDown, move: onMove, up: onUp, click: onClick, change: onChange, input: onInput, key: onKeyCap };
@@ -1176,7 +1180,7 @@ function update_panel() {
       + "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Aktionen</span><button data-act='compound' title='Schmuck compounden (getragen + ungetragen)'>Compound</button><button data-act='tidy' title='Schrott verkaufen, Rest in die Bank'>Aufräumen</button><button data-act='bank' title='Schrott aus der Bank holen und verkaufen'>Bank aufräumen</button><button data-act='banksort' title='Bank nach Gruppen sortieren, Reiter lückenlos füllen'>Bank ⇅</button><button data-act='copylog' title='Bot-Log in die Zwischenablage'>Log kopieren</button><button data-act='pauseafter'" + (pause_after ? " class='on'" : "") + " title='Nach Buttons/Tasten pausieren statt weiterfarmen'>Danach: " + (pause_after ? "Pause" : "Farmen") + "</button><button data-act='clearlog' title='Log-Puffer leeren' style='padding:1px 5px'>✕</button></div>";
     h += "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Hunt: <span style='color:#e6e6e6'>" + esc(mh_txt()) + "</span> · " + tokens() + " Tokens</span><button data-act='hunt'" + (hunt_on ? " class='on'" : "") + " title='Monster Hunt automatisch'>Hunt</button><input data-huntmax='1' value='" + Math.round(hunt_max_danger * 100) + "' title='Jagden nur bis zu dieser Gefahr in % (HP-Anteil je Kill); darüber wird die Jagd übersprungen' style='width:34px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555;text-align:right'><span class='lp_k' style='font-size:11px'>%</span>" + (mh_quest() ? "<button data-act='huntabandon'>Abbrechen</button>" : "") + "</div>";
     h += "<div class='lp_row' style='flex-wrap:wrap;line-height:1.6'><span class='lp_k'>Serverwechsel:</span> <span style='font-size:11px'>" + server_tip_html() + "</span></div>";
-    h += arb_html(panel);
+    h += arb_html(panel) + arb_trip_html();
     h += team_html();
     h += "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Zielbau " + wish_text() + (AUTO_GEAR ? " · automatisch, Reserve " + fmt(WISH_RESERVE) : "") + "</span><button data-act='wishist' data-slot='*' title='alle Slots auf das setzen, was du gerade trägst – Preislimits bleiben erhalten'>Ist</button><button data-act='wishreset' title='alle Ziele auf das Getragene setzen und alle Limits löschen'>Zielbau = aktuelle Ausrüstung</button><button data-act='wishtoggle'>" + (panel.__wish ? "▾" : "▸") + " Zielbau</button></div>";
     if (panel.__wish) h += wish_ui_html();
@@ -1378,7 +1382,7 @@ function energize_tick() { // Mana an den Ranger, wenn er leer läuft und wir ge
 // ---------- Stufe 2: Händler holt Loot ab (statt Stadtgang des Magiers) ----------
 var handing = false, last_pickup = 0, pickup_state = null; // pickup_state: {t, ready, done}
 function merchant_available() { // Händler läuft, meldet sich, lebt, ist nicht gerade selbst unterwegs mit einer Abholung
-    if (!team_on.merch || !team_running(TEAM.merch)) return false;
+    if (!team_on.merch || !team_running(TEAM.merch) || arb_job) return false;
     var st = team_state[TEAM.merch]; if (!st || Date.now() - st.t > 90000) return false;
     if (st.state == "tot" || /Abholung|verkauft|Bank/.test(st.state || "")) return false;
     return Date.now() - last_pickup > 3 * 60000;
@@ -2878,6 +2882,78 @@ function arb_html(panel) {
     list.slice(0, 15).forEach(function (o) { h += "<tr><td>" + esc(o.name) + (o.level ? "+" + o.level : "") + (o.q > 1 ? " ×" + o.q : "") + "</td><td>" + fmt(o.price) + "</td><td>" + fmt(Math.round(npc_sell_price(o.name, o.level))) + "</td><td style='color:#4caf50'>" + fmt(Math.round(o.profit)) + "</td><td style='text-align:left'>" + esc(pretty_server(o.server)) + (o.same ? " ★" : "") + "</td><td style='text-align:left'>" + esc(o.seller) + "</td></tr>"; });
     return h + "</table>";
 }
+// ---------- Arbitrage Stufe 2: der Händler reist im Hintergrund (eigenes Fenster auf dem Zielserver) ----------
+var ARB_TRIP_MIN = 100000; try { ARB_TRIP_MIN = parseInt(localStorage.getItem("lp_arb_min") || "0") || 100000; } catch (e) {}
+var arb_auto = true; try { arb_auto = localStorage.getItem("lp_arb_auto") != "0"; } catch (e) {}
+var arb_job = null; try { arb_job = JSON.parse(localStorage.getItem("lp_arb_job_" + TEAM.merch) || "null"); if (arb_job && arb_job.done) arb_job = null; } catch (e) {}
+var arb_hist = []; try { arb_hist = JSON.parse(localStorage.getItem("lp_arb_hist") || "[]"); } catch (e) {}
+var last_arb_trip = rt("last_arb_trip", 0), last_arb_check = 0;
+function arb_save_job() { try { if (arb_job) localStorage.setItem("lp_arb_job_" + TEAM.merch, JSON.stringify(arb_job)); else localStorage.removeItem("lp_arb_job_" + TEAM.merch); } catch (e) {} }
+function arb_by_server() { // lohnende Angebote je fremdem Server (kein PVP), nach Gewinn sortiert
+    var by = {};
+    arb_list().forEach(function (o) { if (o.same || is_pvp_server(o.server)) return; var k = norm_server(o.server); if (!by[k]) by[k] = { key: k, server: o.server, offers: [], profit: 0 }; by[k].offers.push(o); by[k].profit += o.profit; });
+    return Object.keys(by).map(function (k) { return by[k]; }).sort(function (a, b) { return b.profit - a.profit; });
+}
+function arb_blocked() { // warum gerade keine Reise möglich ist (null = möglich)
+    if (!team_on.merch) return "Händler aus";
+    if (arb_job) return "Reise läuft";
+    if (merch_test) return "Servertest läuft";
+    if (server_trip) return "Magier auf Serverreise";
+    if (handing || pickup_state) return "Abholung läuft";
+    if (Date.now() - last_arb_trip < 15 * 60000) return "Pause bis " + Math.ceil((15 * 60000 - (Date.now() - last_arb_trip)) / 60000) + " min";
+    return null;
+}
+function start_arb_trip(server_key) {
+    var why = arb_blocked(); if (why) { game_log("Handelsreise nicht möglich: " + why); return; }
+    var g = arb_by_server().filter(function (x) { return x.key == server_key; })[0]; if (!g) { game_log("Handelsreise: keine Angebote für " + server_key); return; }
+    var sp = split_server(norm_server(g.server).toUpperCase()); if (!sp) { game_log("Handelsreise: Server unbekannt (" + g.server + ")"); return; }
+    var nm = TEAM.merch, ms = team_state[nm], gold = ms && ms.gold || 0;
+    arb_job = { id: Date.now(), server: g.server, region: sp.region, sid: sp.id, offers: g.offers.slice(0, 20).map(function (o) { return { name: o.name, level: o.level, price: o.price, q: o.q, seller: o.seller, map: o.map, x: o.x, y: o.y, tslot: o.tslot, profit: Math.round(o.profit) }; }), t: Date.now(), stage: "stopped", profit: Math.round(g.profit) };
+    arb_save_job(); try { localStorage.removeItem("lp_arb_result_" + nm); } catch (e) {}
+    last_arb_trip = Date.now();
+    try { if (active_chars()[nm]) stop_character(nm); } catch (e) {}
+    try { parent.__lp_team_restart_after = Date.now() + 12 * 60000; } catch (e) {}
+    game_log("Handelsreise: Händler fährt nach " + pretty_server(g.server) + " (" + g.offers.length + " Angebote, Gewinn ~" + fmt(g.profit) + (gold ? ", Kapital " + fmt(gold) : "") + ")"); last_panel = 0;
+}
+function arb_tick() {
+    if (!arb_job) {
+        if (arb_auto && Date.now() - last_arb_check > 30000) { last_arb_check = Date.now(); if (!arb_blocked()) { var g = arb_by_server()[0]; if (g && g.profit >= ARB_TRIP_MIN) start_arb_trip(g.key); } }
+        return;
+    }
+    var nm = TEAM.merch, el = Date.now() - arb_job.t;
+    if (arb_job.stage == "stopped" && el > 15000) {
+        try { start_char_on_server(nm, arb_job.region, arb_job.sid); arb_job.stage = "away"; arb_job.t = Date.now(); arb_save_job(); game_log("Handelsreise: Händler-Fenster auf " + pretty_server(arb_job.server) + " angelegt"); } catch (e) { game_log("Handelsreise: Fenster-Fehler " + err_txt(e)); arb_finish(null, "Fenster-Fehler"); }
+        return;
+    }
+    if (arb_job.stage == "away") {
+        var res = null; try { res = JSON.parse(localStorage.getItem("lp_arb_result_" + nm) || "null"); } catch (e) {}
+        if (res && res.id == arb_job.id) { arb_job.res = res; if (res.done) { arb_finish(res); return; } }
+        if (el > 10 * 60000) { arb_finish(res, "Zeitüberschreitung"); }
+    }
+}
+function arb_finish(res, why) {
+    var nm = TEAM.merch, sv = arb_job.server;
+    if (res && res.wrong_server) game_log("Handelsreise: Händler ist auf " + (res.server || "?").toUpperCase() + " gelandet statt " + pretty_server(sv) + " – abgebrochen");
+    else if (res && res.done) game_log("Handelsreise " + pretty_server(sv) + ": " + res.bought + " gekauft (" + fmt(res.spent) + "), " + res.sold + " verkauft (" + fmt(res.earned) + ") → Gewinn " + fmt(res.profit || 0) + (res.skipped ? ", " + res.skipped + " übersprungen" : "") + " · Händler hat jetzt " + fmt(res.gold || 0) + " Gold");
+    else game_log("Handelsreise " + pretty_server(sv) + " abgebrochen: " + (why || "keine Rückmeldung") + (res && res.log ? " – zuletzt: " + res.log.slice(-2).join(" | ") : ""));
+    arb_hist.push({ t: Date.now(), server: sv, profit: res && res.done ? (res.profit || 0) : null, bought: res ? res.bought || 0 : 0, why: why || null }); if (arb_hist.length > 20) arb_hist = arb_hist.slice(-20); try { localStorage.setItem("lp_arb_hist", JSON.stringify(arb_hist)); } catch (e) {}
+    try { var f = parent.document.getElementById("ichar" + nm.toLowerCase()); if (f) f.remove(); } catch (e) {}
+    try { if (active_chars()[nm]) stop_character(nm); } catch (e) {}
+    try { parent.__lp_team_restart_after = Date.now() + 20000; } catch (e) {}
+    arb_offers = arb_offers.filter(function (o) { return norm_server(o.server) != norm_server(sv); }); try { parent.__lp_arb_offers = arb_offers; } catch (e) {}
+    arb_job = null; arb_save_job(); last_panel = 0;
+}
+function arb_trip_html() {
+    var h = "";
+    if (arb_job) { var el = Math.round((Date.now() - arb_job.t) / 1000), r = arb_job.res; h += "<div class='lp_row'><span class='lp_k'>Handelsreise:</span> <span style='color:#8ab4f8'>" + esc(pretty_server(arb_job.server)) + " – " + (arb_job.stage == "stopped" ? "Händler wird abgemeldet" : r ? r.bought + "/" + arb_job.offers.length + " gekauft" + (r.sold ? ", " + r.sold + " verkauft" : "") + (r.log && r.log.length ? " · " + esc(r.log[r.log.length - 1]) : "") : "unterwegs") + " (" + el + " s)</span></div>"; }
+    else {
+        var groups = arb_by_server(), bl = arb_blocked();
+        h += "<div class='lp_row' style='flex-wrap:wrap'><span class='lp_k'>Handelsreise:</span> <button data-act='arbauto'" + (arb_auto ? " class='on'" : "") + " title='Händler fährt automatisch, sobald ein Server diesen Gewinn hergibt'>Auto</button> ab <input data-arbmin='1' value='" + esc(fmt_mio(ARB_TRIP_MIN)) + "' style='width:52px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'> Gewinn" + (bl ? " <span style='color:#9aa3b2'>(" + esc(bl) + ")</span>" : "") + (groups.length ? " · " + groups.slice(0, 4).map(function (g) { return esc(pretty_server(g.server)) + " ~" + fmt(Math.round(g.profit)) + " <button data-act='arbtrip' data-sv='" + esc(g.key) + "' style='padding:0 5px'" + (bl ? " disabled" : "") + ">Reise</button>"; }).join(" · ") : " <span style='color:#9aa3b2'>keine lohnenden Server</span>");
+        var last = arb_hist[arb_hist.length - 1]; if (last) h += " <small style='color:#6b7280'>· letzte: " + esc(pretty_server(last.server)) + " " + (last.profit != null ? (last.profit >= 0 ? "+" : "") + fmt(last.profit) : "abgebrochen") + "</small>";
+        h += "</div>";
+    }
+    return h;
+}
 function offers_for_slot(slot) { // beste Angebote aller Server für einen Slot: Wunschliste zuerst, dann nach Wert je Gold; nur besser als getragen und bezahlbar
     var worn = character.slots[slot], ws = worn ? item_score(worn) * 1.02 : 0;
     var list = global_offers.filter(function (o) { var def = G.items[o.name]; return def && fits_slot(def, slot) && o.score > ws && o.price <= character.gold; }); // bis zum vollen Goldstand anzeigen – gekauft wird automatisch nur innerhalb der Grenze, darüber per Kaufen-Knopf
@@ -2949,6 +3025,7 @@ function switch_server(region, id) { // wie der Klick auf "Wechseln" im Welt-Fen
 function start_trip(f) { // f: Fund auf anderem Server
     var home = { region: parent.server_region, id: parent.server_identifier }, tgt = split_server(f.server);
     if (!home.region || !tgt) { game_log("Serverwechsel: Server unbekannt"); return; }
+    if (arb_job) { game_log("Serverwechsel verschoben: Händler ist gerade auf Handelsreise"); return; }
     server_trip = { home: home, target: tgt, find: f, t: Date.now(), stage: "out" }; save_trip();
     switch_server(tgt.region, tgt.id);
 }
@@ -3465,7 +3542,7 @@ function start_main() {
     rip_counted = false;
     session_tick();
     if (Date.now() - last_panel > 2000) { last_panel = Date.now(); try { update_panel(); update_char_panel(); } catch (e) {} }
-    try { merch_test_tick(); team_tick(); team_broadcast(); team_read_logs(); team_inject(); bank_snapshot(); if (!manual_lock && !paused) { priest_gear_tick(); energize_tick(); } } catch (e) {}
+    try { merch_test_tick(); arb_tick(); team_tick(); team_broadcast(); team_read_logs(); team_inject(); bank_snapshot(); if (!manual_lock && !paused) { priest_gear_tick(); energize_tick(); } } catch (e) {}
     if (paused) return;
     measure_tick();
 

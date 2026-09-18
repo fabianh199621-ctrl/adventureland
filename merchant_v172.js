@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Händler (F4llenMerch) – Stufe 1 =====
 // Läuft unsichtbar neben dem Magier. Aufgaben: Stand kaufen und öffnen, Loot abholen/verkaufen/einlagern,
 // Startgold vom Magier holen. mluck ist abgeschaltet (braucht Lv 40, Händler levelt praktisch nicht) – USE_MLUCK/LEVEL_MODE. Meldungen gehen per Charakter-Nachricht an den Magier und erscheinen dort als "[Merch] …".
-var MERCH_VERSION = "v171";
+var MERCH_VERSION = "v172";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -167,11 +167,58 @@ async function do_home() {
     if (dist_to(h) > 60) { say_once("home", "Zurück zum Stand", 300000); await go(h, 40); }
     if (!stand_open() && locate_item(STAND_ITEM) >= 0) { if (stand_on()) say_once("standopen", "Stand geöffnet", 3600000); }
 }
+// ---------- Arbitrage-Reise: der Magier startet uns auf einem fremden Server mit einem Auftrag im gemeinsamen Speicher ----------
+function my_sv() { try { return String(server.region + server.id).replace(/\s+/g, "").toLowerCase(); } catch (e) { return ""; } }
+function norm_sv(sv) { return String(sv || "").replace(/^SR_/i, "").replace(/\s+/g, "").toLowerCase(); }
+var arb_job = null, arb_res = null, arb_idle = false;
+try { arb_job = JSON.parse(localStorage.getItem("lp_arb_job_" + character.name) || "null"); } catch (e) {}
+function arb_save() { try { localStorage.setItem("lp_arb_result_" + character.name, JSON.stringify(arb_res)); } catch (e) {} }
+function arb_log(m) { say("Reise: " + m); if (arb_res) { arb_res.log.push(m); if (arb_res.log.length > 30) arb_res.log = arb_res.log.slice(-30); arb_res.t = Date.now(); arb_save(); } }
+function count_item(name, level) { var n = 0; for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && it.name == name && (it.level || 0) == (level || 0)) n += it.q || 1; } return n; }
+async function run_arbitrage(job) {
+    arb_res = { id: job.id, t: Date.now(), server: my_sv(), bought: 0, sold: 0, spent: 0, earned: 0, skipped: 0, log: [], done: false }; arb_save();
+    var t0 = Date.now(), bought = {};
+    try {
+        stand_off(); status("Reise");
+        arb_log("auf " + my_sv().toUpperCase() + " mit " + job.offers.length + " Angeboten, " + character.gold + " Gold");
+        var offers = job.offers.slice().sort(function (a, b) { return b.profit - a.profit; });
+        for (var i = 0; i < offers.length; i++) {
+            var o = offers[i]; if (Date.now() - t0 > 6 * 60000) { arb_log("Zeitlimit erreicht"); break; }
+            if (character.esize < 2) { arb_log("Inventar voll"); break; }
+            if (character.gold < o.price) { arb_res.skipped++; arb_log(o.name + "+" + o.level + ": zu wenig Gold (" + o.price + ")"); continue; }
+            if (o.map && o.x != null) { var ok = await go({ map: o.map, x: o.x, y: o.y + 30 }, 120); if (!ok) { arb_res.skipped++; arb_log(o.seller + " nicht erreichbar"); continue; } }
+            var seller = null; try { seller = get_player(o.seller); } catch (e) {}
+            if (!seller || !seller.slots) { arb_res.skipped++; arb_log("Händler " + o.seller + " nicht (mehr) hier"); continue; }
+            var it = seller.slots[o.tslot];
+            if (!it || it.name != o.name || (it.level || 0) != (o.level || 0) || it.price > o.price * 1.02) { arb_res.skipped++; arb_log(o.name + "+" + o.level + " bei " + o.seller + " nicht mehr da/teurer"); continue; }
+            var n0 = count_item(o.name, o.level), g0 = character.gold;
+            try { trade_buy(seller, o.tslot, 1); } catch (e) { try { parent.socket.emit("trade_buy", { slot: o.tslot, id: seller.id, q: "1", rid: it.rid }); } catch (e2) {} }
+            await sleep(1200);
+            if (count_item(o.name, o.level) > n0) { arb_res.bought++; arb_res.spent += g0 - character.gold; bought[item_key(o.name, o.level)] = (bought[item_key(o.name, o.level)] || 0) + 1; arb_log("gekauft " + o.name + "+" + o.level + " für " + (g0 - character.gold)); }
+            else { arb_res.skipped++; arb_log("Kauf " + o.name + "+" + o.level + " nicht gelungen"); }
+            arb_save();
+        }
+        if (arb_res.bought) { // beim NPC verkaufen
+            status("verkauft"); await smart_move("potions"); await sleep(500);
+            var ge = character.gold;
+            for (var k in bought) { var left = bought[k]; for (var j = character.items.length - 1; j >= 0 && left > 0; j--) { var it2 = character.items[j]; if (it2 && item_key(it2.name, it2.level) == k) { try { sell_item(j, 1); } catch (e) {} left--; arb_res.sold++; await sleep(400); } } }
+            arb_res.earned = character.gold - ge;
+            arb_log("verkauft " + arb_res.sold + " Items für " + arb_res.earned + " Gold – Gewinn " + (arb_res.earned - arb_res.spent));
+        } else arb_log("nichts gekauft");
+    } catch (e) { arb_log("Fehler: " + (e && e.message ? e.message : e)); }
+    arb_res.done = true; arb_res.profit = arb_res.earned - arb_res.spent; arb_res.gold = character.gold; arb_save();
+    arb_idle = true; status("Reise fertig");
+}
 async function loop() {
     var g = MY_GEN;
     if (HAD_OLD) { say("neue Version " + MERCH_VERSION + " übernommen"); await sleep(3000); }
+    if (arb_job && !arb_job.done) { // Auftrag vorhanden: nur ausführen, wenn wir wirklich auf dem Zielserver sind
+        if (norm_sv(arb_job.server) == my_sv()) { await sleep(1500); await run_arbitrage(arb_job); }
+        else if (Date.now() - (arb_job.t || 0) < 15 * 60000) { arb_res = { id: arb_job.id, t: Date.now(), server: my_sv(), done: true, wrong_server: true, log: ["auf " + my_sv().toUpperCase() + " statt " + norm_sv(arb_job.server).toUpperCase() + " gelandet"] }; arb_save(); say("Reise: falscher Server (" + my_sv().toUpperCase() + "), Auftrag verworfen"); }
+    }
     while (window.__lp_gen == g) {
         try {
+            if (arb_idle) { if (character.rip) { await sleep(15000); respawn(); } await sleep(3000); continue; } // Reise fertig: warten, bis der Magier uns zuhause neu startet
             if (character.rip) { stand_off(); await sleep(15000); respawn(); await sleep(5000); continue; }
             if (m_paused) { if (stand_open()) stand_off(); status("Pause"); await sleep(3000); continue; }
             if (locate_item(STAND_ITEM) < 0) { status("kein Stand"); await do_buy_stand(); if (locate_item(STAND_ITEM) < 0 && mage && character.gold < (G.items[STAND_ITEM].g || 0) && Date.now() - last_gold_ask > 120000) { await do_mluck(); } await sleep(5000); continue; }
