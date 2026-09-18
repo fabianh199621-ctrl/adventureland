@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v159";
+var BOT_VERSION = "v160";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : "priest";
@@ -344,6 +344,8 @@ function on_cm(name, data) { // Nachrichten der eigenen Charaktere
     try {
         if (data.t == "log") { /* kommt bereits über den gemeinsamen Speicher */ }
         else if (data.t == "st") { team_state[name] = Object.assign({ t: Date.now() }, data); last_panel = 0; }
+        else if (data.t == "ready") { if (pickup_state) pickup_state.ready = true; }
+        else if (data.t == "delivered") { if (pickup_state) pickup_state.done = true; if (data.pots) game_log("[Merch] Tränke erhalten: " + data.pots); if (data.gold) game_log("[Merch] " + fmt(data.gold) + " Gold Verkaufserlös erhalten"); }
         else if (data.t == "hello") { game_log("[" + who + "] verbunden (" + (data.v || "?") + ")"); team_send(name, { t: "state", paused: paused || !bot_running, spot: current_spot }); team_broadcast(); }
         else if (data.t == "gold?") { var p = get_player(name); var amt = Math.min(data.amount || 100000, Math.max(0, character.gold - WISH_RESERVE)); if (p && distance(character, p) < 400 && amt >= 1000) { send_gold(name, amt); game_log("[" + who + "] " + fmt(amt) + " Gold übergeben"); } else team_send(name, { t: "nogold", near: !!(p && distance(character, p) < 400) }); }
         else if (data.t == "pots?") { var pp = get_player(name); if (pp && distance(character, pp) < 400) { var gave = 0; [POTS_HP, POTS_MP].forEach(function (list) { var idx = -1, q = 0; for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && list.indexOf(it.name) >= 0 && (it.q || 0) > q) { idx = i; q = it.q; } } if (idx >= 0 && q >= 60) { send_item(name, idx, 25); gave++; } }); if (gave) game_log("[" + who + "] Tränke übergeben"); } }
@@ -1063,7 +1065,7 @@ function update_panel() {
     if (!panel || !panel.parentNode) panel = init_panel();
     var hp = Math.round(character.hp / character.max_hp * 100), mp = Math.round(character.mp / character.max_mp * 100);
     var state = panel.querySelector("#lp_state");
-    var st_txt = !bot_running ? "AUS" : paused ? "PAUSE" : upgrading ? "Upgrade" : pending_upgrade ? "Upgrade wartet" : kissing ? "Kuss" : fleeing ? "Rückzug" : exchanging ? "Tausch" : pontying ? "Ponty" : marketing ? "Markt" : hunting ? "Daisy" : busy ? "unterwegs" : "farmt"; if (focus_mode && bot_running && !paused) st_txt += " (Fokus)";
+    var st_txt = !bot_running ? "AUS" : paused ? "PAUSE" : handing ? "Übergabe" : upgrading ? "Upgrade" : pending_upgrade ? "Upgrade wartet" : kissing ? "Kuss" : fleeing ? "Rückzug" : exchanging ? "Tausch" : pontying ? "Ponty" : marketing ? "Markt" : hunting ? "Daisy" : busy ? "unterwegs" : "farmt"; if (focus_mode && bot_running && !paused) st_txt += " (Fokus)";
     state.textContent = st_txt; state.className = "lp_state" + ((paused || !bot_running) ? " pause" : (upgrading || pending_upgrade || kissing || fleeing || exchanging || busy) ? " busy" : "");
     panel.querySelector("#lp_toggle").textContent = panel.__collapsed ? "▸" : "▾";
     var mini_b = panel.querySelector("#lp_mini"); if (mini_b) { mini_b.textContent = panel.__mini ? "▣" : "▭"; mini_b.title = panel.__mini ? "Fenster vergrößern" : "Fenster verkleinern"; }
@@ -1250,10 +1252,74 @@ function worth_keeping(it) {
 }
 function should_keep(it) { return (equipped_names()[it.name] && ((it.level || 0) > 0 || !is_buyable(it.name))) || (G.items[it.name] && G.items[it.name].compound && (equipped_names()[it.name] || find_inv_indices(it.name, it.level || 0).length >= 3)) || KEEP_ITEMS.test(it.name) || EVENT_ITEMS.test(it.name) || EVENT_ITEMS.test(G.items[it.name] && G.items[it.name].name || ""); }
 var tidy_next = 0;
+// ---------- Stufe 2: Händler holt Loot ab (statt Stadtgang des Magiers) ----------
+var handing = false, last_pickup = 0, pickup_state = null; // pickup_state: {t, ready, done}
+function merchant_available() { // Händler läuft, meldet sich, lebt, ist nicht gerade selbst unterwegs mit einer Abholung
+    if (!team_on.merch || !team_running(TEAM.merch)) return false;
+    var st = team_state[TEAM.merch]; if (!st || Date.now() - st.t > 90000) return false;
+    if (st.state == "tot" || /Abholung|verkauft|Bank/.test(st.state || "")) return false;
+    return Date.now() - last_pickup > 3 * 60000;
+}
+function handover_plan() { // was der Händler mitnehmen soll: [{i, action}] – sell / bank / stand
+    var out = [], eq = equipped_names(), dups = duplicate_indices();
+    for (var i = 0; i < character.items.length; i++) {
+        var it = character.items[i]; if (!it || it.name.indexOf("stand") == 0) continue;
+        if (KEEP_ITEMS.test(it.name) || EVENT_ITEMS.test(it.name)) continue;
+        var def = G.items[it.name]; if (!def) continue;
+        var action = null;
+        if (is_junk(it) || (!worth_keeping(it) && !eq[it.name]) || dups.indexOf(i) >= 0) action = "sell";
+        else if (!should_keep(it)) action = "bank";
+        else if (bankable_extra(it, i)) action = "bank";
+        if (!action) continue;
+        if (action == "sell" && !on_wishlist(it.name) && npc_value(it.name, it.level) >= 15000 && (def.upgrade || def.compound)) action = "stand"; // Wertvolles am Stand zu Spielerpreisen anbieten
+        out.push({ i: i, action: action, name: it.name, level: it.level || 0, q: it.q || 1 });
+    }
+    return out;
+}
+async function merchant_pickup(reason) { // Händler rufen, Items übergeben, Tränke entgegennehmen; false = nicht geklappt (dann alter Stadtgang)
+    if (handing) return false;
+    handing = true; busy = true; last_pickup = Date.now();
+    var ok = false;
+    try {
+        var need_hp = Math.max(0, 150 - pots_total(POTS_HP)), need_mp = Math.max(0, 150 - pots_total(POTS_MP));
+        var plan = handover_plan();
+        pickup_state = { t: Date.now(), ready: false, done: false };
+        team_send(TEAM.merch, { t: "pickup", reason: reason, items: plan.length, pots: { hp: need_hp >= 30 ? need_hp : 0, mp: need_mp >= 30 ? need_mp : 0, hp_t: pick_pot_tier(POTS_HP), mp_t: pick_pot_tier(POTS_MP) }, map: character.map, x: Math.round(character.x), y: Math.round(character.y) });
+        game_log("Händler gerufen (" + reason + "): " + plan.length + " Items" + (need_hp >= 30 || need_mp >= 30 ? ", Tränke " + need_hp + "/" + need_mp : ""));
+        set_message("Händler kommt");
+        var t0 = Date.now(), m = null;
+        while (Date.now() - t0 < 4 * 60000 && !character.rip) { // warten, bis er neben uns steht (weiter kämpfen tut der Magier in der Zeit nicht – er steht)
+            m = get_player(TEAM.merch); if (m && m.map == character.map && distance(character, m) < 300 && pickup_state.ready) break;
+            if (paused) throw "PAUSE";
+            await sleep(500);
+        }
+        if (!(m && m.map == character.map && distance(character, m) < 300)) { game_log("Händler nicht angekommen – mache den Stadtgang selbst"); team_send(TEAM.merch, { t: "pickup_cancel" }); return false; }
+        // Übergabe: erst Ansage, dann Item
+        var given = 0, plan2 = handover_plan(); // frisch, Indizes können sich verschoben haben
+        for (var k = 0; k < plan2.length; k++) {
+            var p = plan2[k], it = character.items[p.i]; if (!it || it.name != p.name) continue;
+            team_send(TEAM.merch, { t: "item", name: p.name, level: p.level, q: p.q, action: p.action });
+            try { send_item(TEAM.merch, p.i, p.q); given++; } catch (e) { game_log("Übergabe " + p.name + ": " + err_txt(e)); }
+            await sleep(350);
+            var mm = get_player(TEAM.merch); if (!mm || mm.map != character.map || distance(character, mm) > 350) { game_log("Händler weg – Übergabe abgebrochen"); break; }
+        }
+        // Gold-Überschuss vom Händler kommt von selbst (er schickt); wir melden fertig
+        team_send(TEAM.merch, { t: "done", given: given });
+        game_log("Übergabe an Händler: " + given + " Items – frei jetzt " + character.esize);
+        var t1 = Date.now(); while (Date.now() - t1 < 8000 && !pickup_state.done) await sleep(300); // Tränke/Gold entgegennehmen
+        ok = true;
+    } catch (e) { if (e != "PAUSE") game_log("Abholung: " + err_txt(e)); }
+    handing = false; busy = false; pickup_state = null;
+    return ok;
+}
 var tidy_force = false; // Button: kompletter Durchgang unabhängig vom Füllstand
 async function tidy_inventory() {
     var min_free = focus_mode ? FOCUS_MIN_FREE : INV_MIN_FREE;
     if (busy || upgrading || paused || (!tidy_force && (character.esize >= min_free || Date.now() < tidy_next))) return;
+    if (!tidy_force && merchant_available()) { // Stufe 2: Händler holt ab, Magier bleibt am Spot
+        var done = await merchant_pickup("Inventar voll");
+        if (done) { if (character.esize < min_free) tidy_next = Date.now() + 5 * 60000; return; }
+    }
     busy = true;
     var free_before = character.esize, target_free = tidy_force ? 99 : focus_mode ? FOCUS_TARGET_FREE : INV_TARGET_FREE;
     try {
@@ -1735,6 +1801,7 @@ function check_potions() {
     var price = G.items[hp_t].g + G.items[mp_t].g;
     var amount = Math.min(150, Math.floor((spendable() * 0.7) / price));
     if (amount < 20) return;
+    if (merchant_available() && pots_total(POTS_HP) >= 10 && pots_total(POTS_MP) >= 10 && !manual_lock) { merchant_pickup("Tränke").then(function (ok) { if (!ok) { /* Fallback beim nächsten Tick: Händler ist 3 min gesperrt */ } }); return; } // Händler bringt Tränke; nur bei fast leeren Vorräten selbst laufen
 
     busy = true; set_message("Tränke kaufen");
     travel_place("potions").then(function () {

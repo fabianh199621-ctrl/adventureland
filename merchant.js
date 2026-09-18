@@ -1,12 +1,12 @@
 // ===== Adventure Land – LogicPlan Händler (F4llenMerch) – Stufe 1 =====
 // Läuft unsichtbar neben dem Magier. Aufgaben: Stand kaufen und öffnen, dem Magier regelmäßig mluck geben,
 // Startgold vom Magier holen. Meldungen gehen per Charakter-Nachricht an den Magier und erscheinen dort als "[Merch] …".
-var MERCH_VERSION = "v159";
+var MERCH_VERSION = "v160";
 var MAGE = "F4llen";
 try { localStorage.setItem("lp_tlog_" + character.name, JSON.stringify([{ t: Date.now(), m: "Skript geladen (" + character.ctype + ", Lv " + character.level + ", Server " + (typeof server != "undefined" && server ? (server.region + " " + server.id) : "?") + ")" }])); } catch (e) {}
 var STAND_ITEM = "stand0";
 var MLUCK_EVERY = 25 * 60000;      // mluck hält 60 min, wir frischen ab 25 min Restlaufzeit auf
-var GOLD_WANT = 100000, GOLD_MIN = 60000;
+var GOLD_WANT = 200000, GOLD_MIN = 60000;
 var MLUCK_LEVEL = (G.skills.mluck && G.skills.mluck.level) || 40; // mluck erst ab diesem Level: bis dahin in der Party beim Magier mitleveln
 var FOLLOW_DIST = 140, FOLLOW_MAX = 240, moving = false, last_follow_move = 0;
 var mage = null;                   // letzte Meldung des Magiers { map, x, y, mluck, paused, t }
@@ -16,9 +16,19 @@ function say_once(key, msg, every) { if (last_log[key] && Date.now() - last_log[
 function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 var last_state = null;
 function status(state) { if (state == last_state && Date.now() - last_status < 30000) return; last_state = state; last_status = Date.now(); try { send_cm(MAGE, { t: "st", level: character.level, state: character.rip ? "tot" : state, gold: character.gold, stand: !!character.stand, map: character.map, hp: character.hp, max_hp: character.max_hp }); } catch (e) {} }
+// ---------- Stufe 2: Abholung, Verkauf am Stand/NPC, Bank ----------
+var pickup = null, manifest = {}, pickup_done = false, STAND_MARKUP = 1.8, STAND_MAX_AGE = 24 * 3600000, GOLD_KEEP = 150000, GOLD_HANDBACK = 300000;
+var listed = {}; try { listed = JSON.parse(localStorage.getItem("lp_listed_" + character.name) || "{}"); } catch (e) {}
+function save_listed() { try { localStorage.setItem("lp_listed_" + character.name, JSON.stringify(listed)); } catch (e) {} }
+function item_key(name, level) { return name + "+" + (level || 0); }
+function npc_val(name, level) { try { if (typeof parent.calculate_item_value == "function") { var v = parent.calculate_item_value({ name: name, level: level || 0 }); if (isFinite(v) && v > 0) return v; } } catch (e) {} var d = G.items[name]; return d && d.g ? d.g : 0; }
 function on_cm(name, data) {
     if (name != MAGE || !data) return;
-    if (data.t == "me") { mage = data; mage.t = Date.now(); if (typeof data.paused == "boolean") m_paused = data.paused; }
+    if (data.t == "pickup") { pickup = data; pickup.t = Date.now(); pickup_done = false; manifest = {}; say("Abholung angefordert (" + (data.reason || "") + ", " + (data.items || 0) + " Items" + (data.pots && (data.pots.hp || data.pots.mp) ? ", Tränke " + data.pots.hp + "/" + data.pots.mp : "") + ")"); }
+    else if (data.t == "pickup_cancel") { pickup = null; }
+    else if (data.t == "item") { manifest[item_key(data.name, data.level)] = data.action || "bank"; }
+    else if (data.t == "done") { pickup_done = true; }
+    else if (data.t == "me") { mage = data; mage.t = Date.now(); if (typeof data.paused == "boolean") m_paused = data.paused; }
     else if (data.t == "state") { m_paused = !!data.paused; }
     else if (data.t == "nogold") { if (!data.near) say_once("nogold", "Gold: Magier nicht in Reichweite"); }
 }
@@ -92,6 +102,59 @@ async function do_mluck() {
     // Gold holen, wenn wir schon hier sind
     if (character.gold < GOLD_MIN && Date.now() - last_gold_ask > 120000) { last_gold_ask = Date.now(); try { send_cm(MAGE, { t: "gold?", amount: GOLD_WANT }); } catch (e) {} await sleep(1500); }
 }
+async function do_pickup() { // zum Magier, Items entgegennehmen, Tränke/Gold übergeben, dann in der Stadt verarbeiten
+    var req = pickup; pickup = null; stand_off();
+    var pots_bought = 0;
+    try {
+        status("Abholung");
+        var p = req.pots || {};
+        if ((p.hp || p.mp) && p.hp_t && p.mp_t) { // Tränke vorher in der Stadt kaufen
+            var cost = (p.hp || 0) * (G.items[p.hp_t].g || 0) + (p.mp || 0) * (G.items[p.mp_t].g || 0);
+            if (character.gold >= cost + 5000) { try { await smart_move("potions"); if (p.hp) await buy(p.hp_t, p.hp); if (p.mp) await buy(p.mp_t, p.mp); await sleep(600); pots_bought = (p.hp || 0) + (p.mp || 0); say("Tränke gekauft für den Magier: " + p.hp + " " + p.hp_t + " / " + p.mp + " " + p.mp_t); } catch (e) { say("Trankkauf: " + (e && e.reason || e)); } }
+            else say("Zu wenig Gold für Tränke (" + cost + "), bringe keine mit");
+        }
+        // zum Magier
+        var t = mage_entity(), tgt = t && character.map == t.map ? { map: t.map, x: t.x, y: t.y } : (mage ? { map: mage.map, x: mage.x, y: mage.y } : { map: req.map, x: req.x, y: req.y });
+        for (var i = 0; i < 4; i++) { await go(tgt, 120); t = mage_entity(); if (t && character.map == t.map && Math.hypot(character.x - t.x, character.y - t.y) < 250) break; if (mage) tgt = { map: mage.map, x: mage.x, y: mage.y }; }
+        t = mage_entity();
+        if (!t || character.map != t.map || Math.hypot(character.x - t.x, character.y - t.y) > 300) { say("Magier nicht erreicht – Abholung abgebrochen"); return; }
+        try { send_cm(MAGE, { t: "ready" }); } catch (e) {}
+        var t0 = Date.now(); while (!pickup_done && Date.now() - t0 < 90000) await sleep(300);
+        // Tränke und Gold übergeben
+        var gave_pots = 0;
+        if (pots_bought) { for (var j = 0; j < character.items.length; j++) { var it = character.items[j]; if (it && (it.name == p.hp_t || it.name == p.mp_t)) { try { send_item(MAGE, j, it.q || 1); gave_pots += it.q || 1; await sleep(300); } catch (e) {} } } }
+        var gave_gold = 0; if (character.gold > GOLD_HANDBACK) { gave_gold = character.gold - GOLD_KEEP; try { send_gold(MAGE, gave_gold); } catch (e) { gave_gold = 0; } }
+        try { send_cm(MAGE, { t: "delivered", pots: gave_pots, gold: gave_gold }); } catch (e) {}
+        say("Übernommen: " + Object.keys(manifest).length + " Posten" + (gave_pots ? ", " + gave_pots + " Tränke übergeben" : "") + (gave_gold ? ", " + gave_gold + " Gold übergeben" : ""));
+    } catch (e) { say("Abholung: " + (e && e.message ? e.message : e)); }
+    await process_inventory();
+}
+async function process_inventory() { // in der Stadt: verkaufen, an den Stand, in die Bank
+    var sell = [], stand = [], bank = [];
+    for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (!it || it.name == STAND_ITEM || /^(hpot|mpot)/.test(it.name)) continue; var a = manifest[item_key(it.name, it.level)] || "bank"; (a == "sell" ? sell : a == "stand" ? stand : bank).push(i); }
+    if (!sell.length && !stand.length && !bank.length) { manifest = {}; return; }
+    try {
+        if (sell.length) { status("verkauft"); await smart_move("potions"); var g0 = character.gold; for (var s1 = sell.length - 1; s1 >= 0; s1--) { var it1 = character.items[sell[s1]]; if (!it1) continue; try { sell_item(sell[s1], it1.q || 1); } catch (e) {} await sleep(300); } say("Beim NPC verkauft: " + sell.length + " Items (+" + (character.gold - g0) + " Gold)"); }
+        if (stand.length) { status("Stand bestücken"); await go(home_spot(), 40); if (!stand_open()) stand_on(); await sleep(800); var n = 0; for (var s2 = 0; s2 < stand.length; s2++) { var it2 = character.items[stand[s2]]; if (!it2) continue; var slot = free_trade_slot(); if (!slot) { manifest[item_key(it2.name, it2.level)] = "bank"; bank.push(stand[s2]); continue; } var price = Math.round(npc_val(it2.name, it2.level) * STAND_MARKUP / 100) * 100; try { trade(stand[s2], slot, price, it2.q || 1); listed[slot] = { name: it2.name, level: it2.level || 0, t: Date.now(), price: price }; n++; await sleep(400); } catch (e) { say("Stand " + it2.name + ": " + (e && e.reason || e)); } } save_listed(); if (n) say("Am Stand eingestellt: " + n + " Items (Preis = NPC-Wert × " + STAND_MARKUP + ")"); }
+        var bank2 = []; for (var b = 0; b < character.items.length; b++) { var itb = character.items[b]; if (!itb || itb.name == STAND_ITEM || /^(hpot|mpot)/.test(itb.name)) continue; var ab = manifest[item_key(itb.name, itb.level)] || "bank"; if (ab == "bank" || (ab == "stand" && !is_listed_item(itb))) bank2.push(b); }
+        if (bank2.length) { status("Bank"); stand_off(); await smart_move("bank"); await sleep(800); var nb = 0; for (var b2 = bank2.length - 1; b2 >= 0; b2--) { try { bank_store(bank2[b2]); nb++; } catch (e) {} await sleep(300); } say("In die Bank gelegt: " + nb + " Items"); }
+    } catch (e) { say("Verarbeitung: " + (e && e.message ? e.message : e)); }
+    manifest = {};
+}
+function sell_item(i, q) { try { sell(i, q); } catch (e) { parent.socket.emit("sell", { num: i, quantity: q }); } }
+function free_trade_slot() { for (var n = 1; n <= 16; n++) { var sl = "trade" + n; if (!(sl in character.slots)) continue; if (!character.slots[sl]) return sl; } for (var n2 = 1; n2 <= 16; n2++) { if (!character.slots["trade" + n2]) return "trade" + n2; } return null; }
+function is_listed_item(it) { for (var sl in character.slots) { if (sl.indexOf("trade") == 0 && character.slots[sl] && character.slots[sl].name == it.name && (character.slots[sl].level || 0) == (it.level || 0)) return true; } return false; }
+var last_stand_check = 0;
+async function check_stand_age() { // Ladenhüter nach 24 h vom Stand nehmen und beim NPC verkaufen
+    if (Date.now() - last_stand_check < 10 * 60000) return; last_stand_check = Date.now();
+    var old = [];
+    for (var sl in character.slots) { if (sl.indexOf("trade") != 0 || !character.slots[sl]) continue; var rec = listed[sl]; if (!rec) { listed[sl] = { name: character.slots[sl].name, level: character.slots[sl].level || 0, t: Date.now() }; continue; } if (Date.now() - rec.t > STAND_MAX_AGE) old.push(sl); }
+    for (var sl2 in listed) if (!character.slots[sl2]) { if (listed[sl2].price) say("Verkauft am Stand: " + listed[sl2].name + "+" + listed[sl2].level + " für " + listed[sl2].price); delete listed[sl2]; }
+    save_listed();
+    if (!old.length) return;
+    say("Ladenhüter: " + old.length + " Items vom Stand zum NPC");
+    try { for (var k = 0; k < old.length; k++) { try { unequip(old[k]); } catch (e) {} await sleep(400); manifest[item_key(listed[old[k]].name, listed[old[k]].level)] = "sell"; delete listed[old[k]]; } save_listed(); await process_inventory(); } catch (e) { say("Ladenhüter: " + (e && e.message || e)); }
+}
 async function do_home() {
     var h = home_spot();
     if (dist_to(h) > 60) { say_once("home", "Zurück zum Stand", 300000); await go(h, 40); }
@@ -103,6 +166,7 @@ async function loop() {
             if (character.rip) { stand_off(); await sleep(15000); respawn(); await sleep(5000); continue; }
             if (m_paused) { if (stand_open()) stand_off(); status("Pause"); await sleep(3000); continue; }
             if (locate_item(STAND_ITEM) < 0) { status("kein Stand"); await do_buy_stand(); if (locate_item(STAND_ITEM) < 0 && mage && character.gold < (G.items[STAND_ITEM].g || 0) && Date.now() - last_gold_ask > 120000) { await do_mluck(); } await sleep(5000); continue; }
+            if (pickup) { await do_pickup(); continue; }
             if (character.level < MLUCK_LEVEL) { // Level-Phase: Stand zu, beim Magier mitlaufen (Party-XP), bei Angriff zum Magier flüchten
                 if (stand_open()) stand_off();
                 say_once("levelmode", "Lv " + character.level + " – mluck erst ab Lv " + MLUCK_LEVEL + ", levle in der Party beim Magier mit", 1800000);
@@ -115,6 +179,7 @@ async function loop() {
             if (character.gold < GOLD_MIN && Date.now() - last_gold_ask > 30 * 60000) { status("Gold holen"); await do_mluck(); continue; }
             status(stand_open() ? "Stand" : "unterwegs");
             await do_home();
+            await check_stand_age();
         } catch (e) { say("Fehler: " + (e && e.message ? e.message : e)); }
         await sleep(3000);
     }

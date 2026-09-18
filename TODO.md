@@ -38,7 +38,7 @@
 7. **Glück/Gold/XP-Boni** mit kleinen Gewichten in die Item-Bewertung aufnehmen (verändert die Rangfolge im Zielbau-Dropdown).
 8. **Hunt-Server prüfen** – Monster Hunts gelten nur auf dem Server der Annahme (`sn`); bei Abweichung anzeigen, wie abgelaufen behandeln, optional Knopf „zurück nach …“.
 9. **Arbitrage Schritt 2** – Knopf „Arbitrage“: lohnende Angebote kaufen und beim NPC verkaufen, andere Server (kein PVP) per Hin-Kaufen-Verkaufen-Zurück; erst wenn Scan (v138) und Faktor-Messung (v140) belastbar sind.
-10. **Händler-Charakter** (A2) – Stufe 1 erledigt v141–v150 (Start per Magier, Stand, mluck, Gold; Priester folgt/heilt/kämpft). Offen: Stufe 2 Loot abholen & am Stand verkaufen, Stufe 3 Bank/Nachschub/Upgrades, Stufe 4 Zielbau-Käufe. Ursprünglicher Plan: Loader startet Händler mit, Stand + mluck + Loot verkaufen, dann Bank/Nachschub/Upgrades, dann Zielbau-Käufe.
+10. **Händler-Charakter** (A2) – Stufe 1 erledigt v141–v150 (Start per Magier, Stand, mluck, Gold; Priester folgt/heilt/kämpft). Stufe 2 (v160): Händler holt Loot beim Magier ab, bringt Tränke, verkauft Schrott beim NPC, stellt Wertvolles 24 h an den Stand (NPC-Wert × 1,8), Rest in die Bank, gibt Gold-Überschuss zurück. Offen: Stufe 3 Bank/Nachschub/Upgrades, Stufe 4 Zielbau-Käufe. Ursprünglicher Plan: Loader startet Händler mit, Stand + mluck + Loot verkaufen, dann Bank/Nachschub/Upgrades, dann Zielbau-Käufe.
 
 ## E) Ideen Panel (Vorschläge vom 18.09., noch nicht beauftragt)
 
