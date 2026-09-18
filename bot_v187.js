@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v186";
+var BOT_VERSION = "v187";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : character.ctype == "ranger" || /ranger/i.test(character.name) ? "ranger" : "priest";
@@ -88,9 +88,24 @@ var FALLBACK_WEAPONS = ["staff", "stick"];
 var NO_WEAPON_MONSTER = "goo";
 var MAX_TARGET_HP_FACTOR = 5;
 // Kandidaten für Farmspots – ungeeignete (zu stark) werden automatisch aussortiert
-var CANDIDATES = ["goo", "crab", "bee", "croc", "armadillo", "squig", "squigtoad", "poisio",
+var CANDIDATES_STATIC = ["goo", "crab", "bee", "croc", "armadillo", "squig", "squigtoad", "poisio",
                   "tortoise", "frog", "rat", "minimush", "snake", "osnake", "scorpion", "spider",
                   "arcticbee", "boar", "crabx", "bat", "cgoo"];
+function all_farmable() { // alle Monster, die auf normalen Karten spawnen (keine Bosse/Event-/Übungsziele, keine PVP-/Instanz-Karten)
+    var seen = {}, out = [];
+    try {
+        for (var map in G.maps) {
+            var md = G.maps[map]; if (!md || md.ignore || md.instance || md.pvp || map == "jail" || !md.monsters) continue;
+            md.monsters.forEach(function (e) {
+                var id = e.type, m = G.monsters[id]; if (!m || seen[id]) return;
+                if (m.boss || m.special || m.cooperative || /^target/.test(id) || !(m.xp > 0) || !(m.hp > 0)) return;
+                seen[id] = true; out.push(id);
+            });
+        }
+    } catch (e) {}
+    return out.length ? out.sort() : CANDIDATES_STATIC.slice();
+}
+var CANDIDATES = all_farmable();
 var EXCLUDE = { iceroamer: true };   // gezielt ausgeschlossen (Einfrieren)
 var hidden_mons = {}; try { hidden_mons = JSON.parse(localStorage.getItem("lp_hidden") || "{}"); } catch (e) {}
 var only_worth = false; try { only_worth = localStorage.getItem("lp_only_worth") == "1"; } catch (e) {}
