@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Händler (F4llenMerch) – Stufe 1 =====
 // Läuft unsichtbar neben dem Magier. Aufgaben: Stand kaufen und öffnen, Loot abholen/verkaufen/einlagern,
 // Startgold vom Magier holen. mluck ist abgeschaltet (braucht Lv 40, Händler levelt praktisch nicht) – USE_MLUCK/LEVEL_MODE. Meldungen gehen per Charakter-Nachricht an den Magier und erscheinen dort als "[Merch] …".
-var MERCH_VERSION = "v193";
+var MERCH_VERSION = "v194";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -160,7 +160,7 @@ var last_stand_check = 0;
 async function check_stand_age() { // Ladenhüter nach 24 h vom Stand nehmen und beim NPC verkaufen
     if (Date.now() - last_stand_check < 10 * 60000) return; last_stand_check = Date.now();
     var old = [];
-    for (var sl in character.slots) { if (sl.indexOf("trade") != 0 || !character.slots[sl]) continue; var rec = listed[sl]; if (!rec) { listed[sl] = { name: character.slots[sl].name, level: character.slots[sl].level || 0, t: Date.now() }; continue; } if (!rec.order && Date.now() - rec.t > STAND_MAX_AGE) old.push(sl); }
+    for (var sl in character.slots) { if (sl.indexOf("trade") != 0 || !character.slots[sl]) continue; var rec = listed[sl]; if (!rec) { listed[sl] = { name: character.slots[sl].name, level: character.slots[sl].level || 0, t: Date.now() }; continue; } if (!rec.order && !precious(character.slots[sl]) && Date.now() - rec.t > STAND_MAX_AGE) old.push(sl); }
     for (var sl2 in listed) if (!character.slots[sl2]) { if (listed[sl2].price) say("Verkauft am Stand: " + listed[sl2].name + "+" + listed[sl2].level + " für " + listed[sl2].price); delete listed[sl2]; }
     save_listed();
     if (!old.length) return;
@@ -230,13 +230,17 @@ async function gather_tick() { // in der Hauptschleife: bei freiem Cooldown losz
 // ---------- Stand-Aufträge vom Magier: Wertsachen aus der Bank holen und zum vorgegebenen Preis anbieten ----------
 var stand_orders = {}, last_orders_check = 0, order_state = {};
 function load_orders() { try { stand_orders = JSON.parse(localStorage.getItem("lp_stand_orders_" + character.name) || "{}"); } catch (e) { stand_orders = {}; } }
+function precious(it) { return !!it && (/^(scroll[2-9]|cscroll[2-9])$/.test(it.name) || npc_val(it.name, it.level) >= 1000000); } // wird nie automatisch zum NPC gebracht oder umgeräumt
 function listed_slot_of(name) { for (var sl in character.slots) { var w = character.slots[sl]; if (sl.indexOf("trade") == 0 && w && w.name == name) return sl; } return null; }
 async function fetch_from_bank(name) { // Item aus der Bank holen (Bank ist kontoweit)
     stand_off(); status("Bank"); await smart_move("bank"); await sleep(1000);
     var bank = character.bank || {}; for (var pack in bank) { if (pack.indexOf("items") != 0 || !Array.isArray(bank[pack])) continue; for (var i = 0; i < bank[pack].length; i++) { var it = bank[pack][i]; if (it && it.name == name) { try { bank_retrieve(pack, i); await sleep(800); } catch (e) {} if (have_item(name) >= 0) { say(name + " aus der Bank geholt"); return true; } } } }
     say(name + " nicht in der Bank gefunden"); return false;
 }
+var slots_logged = false;
+function log_trade_slots() { if (slots_logged) return; slots_logged = true; try { var ks = Object.keys(character.slots || {}).filter(function (k) { return k.indexOf("trade") == 0; }); var filled = ks.filter(function (k) { return character.slots[k]; }).map(function (k) { return k + ":" + character.slots[k].name + "@" + character.slots[k].price; }); say("Stand-Slots im Nebenfenster: " + ks.length + " Schlüssel, belegt: " + (filled.join(", ") || "keine")); } catch (e) { say("Stand-Slots: " + e); } }
 async function orders_tick() {
+    log_trade_slots();
     if (Date.now() - last_orders_check < 60000 || pickup || arb_idle || gather_busy) return false; last_orders_check = Date.now();
     load_orders(); var did = false;
     for (var name in stand_orders) {
@@ -248,7 +252,7 @@ async function orders_tick() {
             order_state[name] = "am Stand für " + o.price; continue;
         }
         var ix2 = have_item(name);
-        if (ix2 < 0) { if (order_state[name] == "nicht in Bank" && Date.now() - (o.t || 0) < 3600000) continue; if (!await fetch_from_bank(name)) { order_state[name] = "nicht in Bank"; continue; } ix2 = have_item(name); did = true; }
+        if (ix2 < 0) { var any_slot = Object.keys(character.slots || {}).some(function (k) { return k.indexOf("trade") == 0; }); if (!any_slot) { order_state[name] = "Stand-Slots nicht sichtbar"; continue; } if (order_state[name] == "nicht in Bank" && Date.now() - (o.t || 0) < 3600000) continue; if (!await fetch_from_bank(name)) { order_state[name] = "nicht in Bank"; continue; } ix2 = have_item(name); did = true; }
         if (ix2 < 0) continue;
         await go(home_spot(), 40); if (!stand_open()) stand_on(); await sleep(800);
         var slot = free_trade_slot(); if (!slot) { say("Kein freier Stand-Platz für " + name); continue; }
@@ -256,7 +260,7 @@ async function orders_tick() {
     }
     // verkauft? (Eintrag weg, Auftrag noch da)
     for (var sl3 in listed) { var rec = listed[sl3]; if (!rec || !rec.order || character.slots[sl3]) continue;
-        var sold = have_item(rec.name) == -1 && (rec.gold0 == null || character.gold >= rec.gold0 + rec.price * 0.9); // wirklich verkauft: Item weg UND Gold entsprechend gestiegen
+        var sold = rec.gold0 != null && character.gold >= rec.gold0 + rec.price * 0.9; // wirklich verkauft: nur wenn das Gold entsprechend gestiegen ist
         delete listed[sl3]; save_listed();
         if (sold) { try { send_cm(MAGE, { t: "sold", name: rec.name, price: rec.price }); } catch (e) {} say("VERKAUFT am Stand: " + rec.name + " für " + rec.price + " Gold (Kasse jetzt " + character.gold + ")"); delete stand_orders[rec.name]; try { localStorage.setItem("lp_stand_orders_" + character.name, JSON.stringify(stand_orders)); } catch (e) {} }
         else say(rec.name + " ist nicht mehr am Stand, aber NICHT verkauft (Gold " + character.gold + ") – stelle es wieder aus"); }
@@ -331,7 +335,7 @@ async function loop() {
         try {
             if (arb_idle) { if (character.rip) { await sleep(15000); respawn(); } await sleep(3000); continue; } // Reise fertig: warten, bis der Magier uns zuhause neu startet
             if (character.rip) { stand_off(); await sleep(15000); respawn(); await sleep(5000); continue; }
-            if (m_paused) { if (stand_open()) stand_off(); status("Pause"); await sleep(3000); continue; }
+            if (m_paused) { status("Pause"); if (!stand_open() && locate_item(STAND_ITEM) >= 0 && dist_to(home_spot()) < 80) stand_on(); await sleep(3000); continue; } // Pause: Stand bleibt offen (Wertsachen bleiben ausgestellt)
             if (locate_item(STAND_ITEM) < 0) { status("kein Stand"); await do_buy_stand(); if (locate_item(STAND_ITEM) < 0 && mage && character.gold < (G.items[STAND_ITEM].g || 0) && Date.now() - last_gold_ask > 120000) { await do_mluck(); } await sleep(5000); continue; }
             if (pickup) { await do_pickup(); continue; }
             if (LEVEL_MODE && character.level < MLUCK_LEVEL) { // Level-Phase: Stand zu, beim Magier mitlaufen (Party-XP), bei Angriff zum Magier flüchten
