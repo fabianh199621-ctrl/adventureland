@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v187";
+var BOT_VERSION = "v188";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : character.ctype == "ranger" || /ranger/i.test(character.name) ? "ranger" : "priest";
@@ -1337,8 +1337,14 @@ function my_dps_vs(d) {
 }
 function mon_dps(d) { return (d.attack || 0) * (d.frequency || 1) * (1 + (d.crit || 0) / 100); }
 function mon_dps_on_me(d) {
+    if (d.damage_type == "pure") return mon_dps(d); // "pure": ignoriert Rüstung und Widerstand
     var def = d.damage_type == "magical" ? (character.resistance || 0) - (d.rpiercing || 0) : (character.armor || 0) - (d.apiercing || 0);
     return mon_dps(d) * dmg_mult(def);
+}
+function pack_factor(d) { // aggressive Monster mit großer Reichweite ziehen im Pulk: bis zu 3 gleichzeitige Angreifer einrechnen
+    if (!(d.aggro > 0) || !(d.range >= 250)) return 1;
+    var n = 3; try { var id = null; for (var k in G.monsters) if (G.monsters[k] === d) { id = k; break; } if (id) n = Math.min(3, Math.max(1, spawn_count(id))); } catch (e) {}
+    return n;
 }
 // Team-Beitrag: Ranger-Schaden und Priester-Heilung zählen, wenn sie leben, gemeldet haben und neben mir stehen
 function team_member_active(key) {
@@ -1362,7 +1368,7 @@ function mon_ttk(d) { // Sekunden pro Kill inkl. Lebensraub
 }
 function mon_danger(d) { // Anteil meiner HP, den ein Kill kostet
     var ttk = mon_ttk(d); if (!isFinite(ttk)) return Infinity;
-    var incoming = Math.max(0, mon_dps_on_me(d) + my_dps_vs(d) * (d.reflection || 0) / 100 - team_heal_rate());
+    var incoming = Math.max(0, mon_dps_on_me(d) * pack_factor(d) + my_dps_vs(d) * (d.reflection || 0) / 100 - team_heal_rate());
     return incoming * ttk / character.max_hp;
 }
 // Anzahl gleichzeitiger Spawns eines Monstertyps (alle Karten)
