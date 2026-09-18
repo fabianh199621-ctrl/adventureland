@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v178";
+var BOT_VERSION = "v179";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : character.ctype == "ranger" || /ranger/i.test(character.name) ? "ranger" : "priest";
@@ -378,7 +378,7 @@ async function tw_apply_stat(key, name) { // Attribut-Scroll auf die fertige Tea
     if (it2 && it2.stat_type == tw_stat_type(key)) game_log("Team-Zielbau [" + TEAM_LABEL[key] + "]: " + name + "+" + cp.level + " hat jetzt " + tw_stat_type(key).toUpperCase());
     else { tw_stat_failed[k] = true; game_log("Team-Zielbau [" + TEAM_LABEL[key] + "]: " + name + ": Attribut-Scroll nicht angenommen – wird ohne übergeben"); }
 } // 1 = nur NPC-Teile, 2 = auch Marktangebote auf diesem Server unter Limit
-var TEAM_BUILD_BUDGET = 300000, TEAM_BUILD_MAX_LEVEL = 8, TEAM_BUILD_DEFAULT_MAX = 500000;
+var TEAM_BUILD_BUDGET = 1000000, TEAM_BUILD_MAX_LEVEL = 8, TEAM_BUILD_DEFAULT_MAX = 500000;
 var TEAM_WISH_SLOTS = ["mainhand", "offhand", "helmet", "chest", "pants", "shoes", "gloves", "cape", "ring1", "ring2", "earring1", "earring2", "amulet", "belt", "orb"];
 function save_team_wish() { try { localStorage.setItem("lp_teamwish_" + character.name, JSON.stringify(team_wish)); } catch (e) {} last_panel = 0; }
 function tw_cfg(key, slot) { return (team_wish[key] || {})[slot] || null; }
@@ -440,7 +440,7 @@ async function team_build_step(only, manual) { // in der Ausrüstungsroutine: bi
         if (g0 - character.gold > TEAM_BUILD_BUDGET) { game_log("Team-Zielbau: Budget für diesen Durchlauf (" + fmt(TEAM_BUILD_BUDGET) + ") ausgeschöpft"); break; }
         if (character.esize < 2) { game_log("Team-Zielbau: Inventar zu voll"); break; }
         var rebuys = 0, stopped = false;
-        while (rebuys <= 3) { // bei Zerstörung im selben Durchlauf neu kaufen und weiterbauen
+        while (true) { // bei Zerstörung im selben Durchlauf neu kaufen und weiterbauen, bis es steht (Grenzen: Budget je Durchlauf, Gold-Reserve, Pause)
             check_pause();
             if (g0 - character.gold > TEAM_BUILD_BUDGET) { game_log("Team-Zielbau: Budget für diesen Durchlauf (" + fmt(TEAM_BUILD_BUDGET) + ") ausgeschöpft"); stopped = true; break; }
             if (!tw_copies(name).length) { // beschaffen
@@ -454,7 +454,7 @@ async function team_build_step(only, manual) { // in der Ausrüstungsroutine: bi
             game_log("Team-Zielbau [" + lab + "]: " + name + " +" + cp.level + " → +" + lv + " (Chance +" + cp.level + "→+" + (cp.level + 1) + ": " + success_txt("u", cp.level) + ")");
             var r = await upgrade_inv(name, cp.level, lv);
             if (r.stopped) { stopped = true; break; }
-            if (r.destroyed) { rebuys++; if (rebuys > 3) game_log("Team-Zielbau [" + lab + "]: " + name + " 3× zerstört – nächster Versuch beim nächsten Durchlauf"); else game_log("Team-Zielbau [" + lab + "]: " + name + " zerstört – kaufe neu"); continue; }
+            if (r.destroyed) { rebuys++; game_log("Team-Zielbau [" + lab + "]: " + name + " zerstört (" + rebuys + ". Mal) – kaufe neu"); continue; }
             break;
         }
         if (stopped) break;
