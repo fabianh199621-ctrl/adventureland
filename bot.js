@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v219";
+var BOT_VERSION = "v220";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -661,6 +661,12 @@ function hunts_html() { // Rundlauf: Jagden aller Kämpfer mit Status
     ["priest", "ranger", "hunter"].forEach(function (k) { if (!team_on[k]) return; var st = team_state[TEAM[k]]; if (!st || Date.now() - st.t > 120000) { items.push(TEAM_LABEL[k] + " ?"); return; } var h = st.hunt; items.push(TEAM_LABEL[k] + " " + st_txt(h && h.id, h && h.c, h && h.ms, false)); });
     var w = wait_txt();
     return "<span style='color:#9aa3b2'>Jagden: </span>" + items.join(" · ") + (w ? " <span style='color:#ffb74d'>· " + esc(w) + "</span>" : "");
+}
+var TEAM_POT_FULL = 800, TEAM_POT_MIN = 300;
+function team_pots_need() { // Priest/Ranger unter 300 Tränken: der Händler bringt bei der Abholung auf 800 auf
+    var out = []; if (SOLO) return out;
+    ["priest", "ranger"].forEach(function (k) { if (!team_on[k]) return; var st = team_state[TEAM[k]]; if (!st || Date.now() - st.t > 120000 || st.hpots == null) return; var hp = Math.max(0, TEAM_POT_FULL - st.hpots), mp = Math.max(0, TEAM_POT_FULL - (st.mpots || 0)); if (st.hpots < TEAM_POT_MIN || (st.mpots || 0) < TEAM_POT_MIN) out.push({ name: TEAM[k], hp: hp, mp: mp }); });
+    return out;
 }
 function team_where_txt(nm, st) { // Karte + Entfernung eines Teammitglieds (aus Status/Sichtweite)
     try { var pe = get_player(nm); if (pe && pe.map == character.map) return " · " + Math.round(distance(character, pe)) + " px entfernt"; } catch (e) {}
@@ -1816,7 +1822,7 @@ async function merchant_pickup(reason) { // Händler rufen, Items übergeben, Tr
         var need_hp = Math.max(0, 150 - pots_total(POTS_HP)), need_mp = Math.max(0, 150 - pots_total(POTS_MP));
         var plan = handover_plan();
         pickup_state = { t: Date.now(), ready: false, done: false };
-        team_send(TEAM.merch, { t: "pickup", reason: reason, items: plan.length, pots: { hp: need_hp >= 30 ? need_hp : 0, mp: need_mp >= 30 ? need_mp : 0, hp_t: pick_pot_tier(POTS_HP), mp_t: pick_pot_tier(POTS_MP) }, map: character.map, x: Math.round(character.x), y: Math.round(character.y) });
+        team_send(TEAM.merch, { t: "pickup", reason: reason, items: plan.length, pots: { hp: need_hp >= 30 ? need_hp : 0, mp: need_mp >= 30 ? need_mp : 0, hp_t: pick_pot_tier(POTS_HP), mp_t: pick_pot_tier(POTS_MP) }, team_pots: team_pots_need(), map: character.map, x: Math.round(character.x), y: Math.round(character.y) });
         game_log("Händler gerufen (" + reason + "): " + plan.length + " Items" + (need_hp >= 30 || need_mp >= 30 ? ", Tränke " + need_hp + "/" + need_mp : ""));
         set_message("Händler kommt");
         var t0 = Date.now(), m = null;

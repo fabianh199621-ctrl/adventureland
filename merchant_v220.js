@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Händler (F4llenMerch) – Stufe 1 =====
 // Läuft unsichtbar neben dem Magier. Aufgaben: Stand kaufen und öffnen, Loot abholen/verkaufen/einlagern,
 // Startgold vom Magier holen. mluck ist abgeschaltet (braucht Lv 40, Händler levelt praktisch nicht) – USE_MLUCK/LEVEL_MODE. Meldungen gehen per Charakter-Nachricht an den Magier und erscheinen dort als "[Merch] …".
-var MERCH_VERSION = "v218";
+var MERCH_VERSION = "v220";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -121,6 +121,7 @@ async function do_pickup() { // zum Magier, Items entgegennehmen, Tränke/Gold �
             if (character.gold >= cost + 5000) { try { await smart_move("potions"); if (p.hp) await buy(p.hp_t, p.hp); if (p.mp) await buy(p.mp_t, p.mp); await sleep(600); pots_bought = (p.hp || 0) + (p.mp || 0); say("Tränke gekauft für den Magier: " + p.hp + " " + p.hp_t + " / " + p.mp + " " + p.mp_t); } catch (e) { say("Trankkauf: " + (e && e.reason || e)); } }
             else say("Zu wenig Gold für Tränke (" + cost + "), bringe keine mit");
         }
+        var tp0 = req.team_pots || []; if (tp0.length) { var thp = 0, tmp = 0; tp0.forEach(function (x) { thp += x.hp || 0; tmp += x.mp || 0; }); var tcost = thp * (G.items.hpot0.g || 0) + tmp * (G.items.mpot0.g || 0); if (character.gold >= tcost + 5000) { try { await smart_move("potions"); if (thp) await buy("hpot0", thp); if (tmp) await buy("mpot0", tmp); await sleep(600); say("Tränke gekauft für " + tp0.map(function (x) { return x.name; }).join("/") + ": " + thp + " hpot0 / " + tmp + " mpot0"); } catch (e) { say("Trankkauf Team: " + (e && e.reason || e)); } } else say("Zu wenig Gold für Team-Tränke (" + tcost + ")"); }
         // zum Magier
         var t = mage_entity(), tgt = t && character.map == t.map ? { map: t.map, x: t.x, y: t.y } : (mage ? { map: mage.map, x: mage.x, y: mage.y } : { map: req.map, x: req.x, y: req.y });
         for (var i = 0; i < 4; i++) { await go(tgt, 120); t = mage_entity(); if (t && character.map == t.map && Math.hypot(character.x - t.x, character.y - t.y) < 250) break; if (mage) tgt = { map: mage.map, x: mage.x, y: mage.y }; }
@@ -131,6 +132,8 @@ async function do_pickup() { // zum Magier, Items entgegennehmen, Tränke/Gold �
         // Tränke und Gold übergeben
         var gave_pots = 0;
         if (pots_bought) { for (var j = 0; j < character.items.length; j++) { var it = character.items[j]; if (it && (it.name == p.hp_t || it.name == p.mp_t)) { try { send_item(MAGE, j, it.q || 1); gave_pots += it.q || 1; await sleep(300); } catch (e) {} } } }
+        // Tränke für Priest/Ranger (hpot0/mpot0) übergeben, wenn sie neben dem Magier stehen
+        var tp = req.team_pots || []; for (var ti = 0; ti < tp.length; ti++) { var tn = tp[ti]; var tpl = null; try { tpl = get_player(tn.name); } catch (e) {} if (!tpl || tpl.map != character.map || Math.hypot(character.x - tpl.x, character.y - tpl.y) > 300) { say("Tränke für " + tn.name + ": nicht in Reichweite"); continue; } var gv = 0; for (var tj = 0; tj < character.items.length; tj++) { var tit = character.items[tj]; if (!tit) continue; var want = tit.name == "hpot0" ? tn.hp : tit.name == "mpot0" ? tn.mp : 0; if (want > 0) { var q = Math.min(want, tit.q || 1); try { send_item(tn.name, tj, q); gv += q; if (tit.name == "hpot0") tn.hp -= q; else tn.mp -= q; await sleep(300); } catch (e) {} } } if (gv) say(gv + " Tränke an " + tn.name + " übergeben"); }
         var gave_gold = 0; if (character.gold > GOLD_HANDBACK) { gave_gold = character.gold - GOLD_KEEP; try { send_gold(MAGE, gave_gold); } catch (e) { gave_gold = 0; } }
         try { send_cm(MAGE, { t: "delivered", pots: gave_pots, gold: gave_gold }); } catch (e) {}
         say("Übernommen: " + Object.keys(manifest).length + " Posten" + (gave_pots ? ", " + gave_pots + " Tränke übergeben" : "") + (gave_gold ? ", " + gave_gold + " Gold übergeben" : ""));
