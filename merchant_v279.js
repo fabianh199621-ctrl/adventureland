@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Händler (F4llenMerch) – Stufe 1 =====
 // Läuft unsichtbar neben dem Magier. Aufgaben: Stand kaufen und öffnen, Loot abholen/verkaufen/einlagern,
 // Startgold vom Magier holen. mluck ist abgeschaltet (braucht Lv 40, Händler levelt praktisch nicht) – USE_MLUCK/LEVEL_MODE. Meldungen gehen per Charakter-Nachricht an den Magier und erscheinen dort als "[Merch] …".
-var MERCH_VERSION = "v278";
+var MERCH_VERSION = "v279";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -89,7 +89,7 @@ async function do_tidy() { // auf Befehl des Magiers: billige Ausrüstung verkau
     manifest = {}; var n_sell = 0, n_bank = 0;
     for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (!it || it.name == STAND_ITEM || /^(hpot|mpot)/.test(it.name)) continue;
         if (it.name == "rod" || it.name == "pickaxe" || it.name == "staff" || it.name == "blade" || it.name == "tracker" || it.name == "computer" || stand_orders[it.name] || hold_items[item_key(it.name, it.level)]) continue;
-        var d = G.items[it.name] || {}, cheap = (d.type && GEAR_TYPES[d.type]) && (d.g || 0) < 10000 && (it.level || 0) <= 2;
+        var d = G.items[it.name] || {}, cheap = (d.type && GEAR_TYPES[d.type]) && !/^mm|^(dex|int|str|vit)(ring|earring|amulet|belt)$/.test(it.name) && (d.g || 0) < 10000 && (it.level || 0) <= 2;
         manifest[item_key(it.name, it.level)] = cheap ? "sell" : "bank"; if (cheap) n_sell++; else n_bank++; }
     say("Aufräumen: " + n_sell + " verkaufen, " + n_bank + " in die Bank");
     await process_inventory();

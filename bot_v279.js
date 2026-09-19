@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v278";
+var BOT_VERSION = "v279";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -220,6 +220,7 @@ var FILL_SLOTS = {
 var INV_MIN_FREE = 5;                // unter so vielen freien Plätzen -> aufräumen
 var INV_TARGET_FREE = 14;            // ... und dann so viele Plätze wieder frei machen
 var BANK_MIN_FREE = 10;              // unter so vielen freien Bankplätzen -> Bank aufräumen
+var NEVER_SELL = /^mm|^(dex|int|str|vit)(ring|earring|amulet|belt)$/; // Token-Set (mm*) und Attribut-Schmuck: nie verkaufen, nie als Duplikat werten
 var KEEP_MIN_LEVEL = 4;              // Ausrüstung ab diesem Level behalten
 var KEEP_MIN_VALUE = 50000;          // Items ab diesem Grundwert behalten
 var KEEP_ITEMS = /^(hpot|mpot|elixirint|scroll|cscroll|intscroll|strscroll|dexscroll|vitscroll|tracker|seashell|monstertoken|slice_|sixcake)/;
@@ -1928,7 +1929,7 @@ function status_message(prefix) {
 var EQUIP_TYPES = ["helmet", "chest", "pants", "shoes", "gloves", "cape", "weapon", "shield", "quiver", "source", "misc_offhand"]; // Schmuck nie verkaufen (Compound)
 function is_junk(it) { // kaufbare Standardausrüstung ohne Level/Attribut; ungetragener kaufbarer Schmuck +0 in Einzelstücken; fremde Elixiere; HP-Schmuck
     var def = G.items[it.name]; if (!def) return false;
-    if (is_team_wish_item(it)) return false; // Team-Zielbau-Teile bleiben
+    if (is_team_wish_item(it) || NEVER_SELL.test(it.name)) return false; // Team-Zielbau-Teile und geschützte Items bleiben
     if (HP_JEWELRY.test(it.name)) return true;
     if (def.type == "elixir" && !/^elixirint/.test(it.name)) return true;
     if (def.compound) return is_buyable(it.name) && (it.level || 0) == 0 && !equipped_names()[it.name] && find_inv_indices(it.name, 0).length < 3;
@@ -1953,6 +1954,7 @@ function all_copies(name) { // Inventar + Bank (bzw. letzter Bankstand), ohne ge
 }
 function dup_protected(it) {
     var def = G.items[it.name] || {};
+    if (NEVER_SELL.test(it.name)) return true;
     if (is_team_wish_item(it)) return true;
     if (it.p || it.stat_type || EVENT_ITEMS.test(it.name)) return true;
     if (def.compound) return (it.level || 0) < COMPOUND_SPARE_MAX || (it.level || 0) > COMPOUND_TARGET; // fertiger Schmuck: nur die Stufe(n) am Ziel zählen als Duplikate
@@ -1995,6 +1997,7 @@ async function sell_duplicates() { // im Laden stehen
 // Lohnt sich Aufbewahrung (Inventar/Bank)? Sonst verkaufen.
 function worth_keeping(it) {
     var def = G.items[it.name]; if (!def) return true;
+    if (NEVER_SELL.test(it.name)) return true;
     if (is_team_wish_item(it)) return true;
     if (HP_JEWELRY.test(it.name)) return false;
     if (on_wishlist(it.name)) return true;
