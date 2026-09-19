@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v251";
+var BOT_VERSION = "v253";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -990,13 +990,21 @@ function team_hunt_pick() { // Jagdmonster von Priest/Ranger, das für uns siche
     if (!cur && team_hunt_cur) { team_hunt_cur = null; try { localStorage.removeItem("lp_team_hunt_cur"); } catch (e) {} }
     return cur;
 }
+var MEASURE_SKIP_RATIO = 0.3, measure_skip_logged = {};
 var team_hunt_logged = "", no_cand_logged = 0, boot_t = Date.now(), team_hunt_cur = null; try { team_hunt_cur = JSON.parse(localStorage.getItem("lp_team_hunt_cur") || "null"); } catch (e) {}
 function choose_spot() {
     var th = team_hunt_pick(); if (th) { if (team_hunt_logged != th.id) { team_hunt_logged = th.id; game_log("Team-Jagd: " + th.who + " jagt " + th.id + " – farme dort mit"); } return th.id; }
     var cands = candidate_list();
     if (!cands.length) { if (Date.now() - no_cand_logged > 300000) { no_cand_logged = Date.now(); game_log("Automatik: kein Monster mit Jagd-Häkchen verfügbar – Häkchen in der Liste setzen; solange goo/bee"); } return team_escort() ? "bee" : "goo"; }
-    // 1. noch nicht (oder veraltet) gemessene Spots zuerst
-    for (var i = 0; i < cands.length; i++) if (!stats_valid(farm_stats[cands[i]])) { game_log("Messe Spot: " + cands[i]); return cands[i]; }
+    // 1. noch nicht (oder veraltet) gemessene Spots zuerst – außer die Schätzung liegt weit unter dem besten gemessenen Spot (keine 10 min verschwenden)
+    var best_meas = 0; cands.forEach(function (m) { if (stats_valid(farm_stats[m])) best_meas = Math.max(best_meas, farm_stats[m].xp_h); });
+    var skipped = [];
+    for (var i = 0; i < cands.length; i++) if (!stats_valid(farm_stats[cands[i]])) {
+        var est_i = mon_xph_est(G.monsters[cands[i]], cands[i]);
+        if (best_meas > 0 && est_i < best_meas * MEASURE_SKIP_RATIO) { skipped.push(cands[i]); if (!measure_skip_logged[cands[i]]) { measure_skip_logged[cands[i]] = true; game_log("Messung übersprungen: " + cands[i] + " (Schätzung " + fmt(est_i) + " XP/h, unter " + Math.round(MEASURE_SKIP_RATIO * 100) + " % vom besten Spot " + fmt(best_meas) + ") – „Farmen“ in der Liste misst ihn trotzdem"); } continue; }
+        game_log("Messe Spot: " + cands[i]); return cands[i];
+    }
+    cands = cands.filter(function (m) { return skipped.indexOf(m) < 0; }); if (!cands.length) return team_escort() ? "bee" : "goo";
     // 2. sonst bester Score
     var max_xp = 1, max_gold = 1;
     cands.forEach(function (m) { max_xp = Math.max(max_xp, farm_stats[m].xp_h); max_gold = Math.max(max_gold, farm_stats[m].gold_h); });
@@ -1360,7 +1368,7 @@ function init_panel() {
         var tile = b.closest ? b.closest("[data-inv],[data-slot-eq]") : null;
         if (tile) { var ii = tile.getAttribute("data-inv"), se = tile.getAttribute("data-slot-eq"); if (ii != null) inv_click(parseInt(ii)); else if (se) { unequip(se); game_log(se + " abgelegt"); } return; }
         if (b.tagName == "TH" && b.getAttribute("data-sort")) { set_sort(b.getAttribute("data-sort")); return; }
-        var mkel = b.closest ? b.closest("[data-mf],[data-msort],[data-mcsort],[data-act='mbuy'],[data-act='mgoto'],[data-act='mtrip'],[data-act='marb'],[data-act='mview'],[data-mg]") : null;
+        var mkel = b.closest ? b.closest("[data-mf],[data-msort],[data-mcsort],[data-act='mbuy'],[data-act='mgoto'],[data-act='mtrip'],[data-act='marb'],[data-act='mview'],[data-act='mmore'],[data-mg]") : null;
         if (mkel && market_click(mkel)) return;
         if (b.tagName != "BUTTON") return;
         if (b.id == "lp_list_close") { div.__collapsed = true; try { localStorage.setItem("lp_panel_collapsed", "1"); } catch (x) {} last_panel = 0; return; }
@@ -1438,7 +1446,7 @@ function init_panel() {
         if (!inside(e)) return;
         var t = e.target; if (!t || (t.tagName != "SELECT" && t.tagName != "INPUT")) return;
         if (t.getAttribute("data-setk")) { settings_input(t); return; }
-        if (t.getAttribute("data-msel")) { mkt[t.getAttribute("data-msel")] = t.value; save_mkt(); try { t.blur(); } catch (x) {} render_market(); return; }
+        if (t.getAttribute("data-msel")) { mkt[t.getAttribute("data-msel")] = t.value; mkt_show = 0; save_mkt(); try { t.blur(); } catch (x) {} render_market(); return; }
         var ws = t.getAttribute("data-wslot"), wl = t.getAttribute("data-wlvl"), wm = t.getAttribute("data-wmax");
         var tws = t.getAttribute("data-twslot"), twl = t.getAttribute("data-twlvl"), twm = t.getAttribute("data-twmax");
         if (tws || twl || twm) {
@@ -1460,7 +1468,7 @@ function init_panel() {
         else if (wl) { var c = wish_cfg[wl] || { item: wish_item(wl) }; c.level = parseInt(t.value); wish_cfg[wl] = c; save_wish_cfg(); game_log("Zielbau " + wl + ": " + c.item + " +" + c.level); }
     };
     win.addEventListener("change", onChange, true);
-    var onInput = function (e) { var t = e.target; if (t && t.id == "lp_wiki_q") { wiki.q = t.value; wiki.page = null; render_wiki(); } else if (t && t.id == "lp_mkt_q") { mkt.q = t.value; render_market(); } };
+    var onInput = function (e) { var t = e.target; if (t && t.id == "lp_wiki_q") { wiki.q = t.value; wiki.page = null; render_wiki(); } else if (t && t.id == "lp_mkt_q") { mkt.q = t.value; mkt_show = 0; render_market(); } };
     var onKeyCap = function (e) { var t = e.target; if (t && (t.id == "lp_wiki_q" || (t.tagName == "INPUT" && inside(e)))) { e.stopPropagation(); if (e.key == "Escape") t.blur(); if (e.key == "Enter" && (t.getAttribute("data-wmax") || t.getAttribute("data-huntmax") || t.getAttribute("data-huntttk") || t.getAttribute("data-arbmin") || t.getAttribute("data-twmax") || t.getAttribute("data-fixprice")) && e.type == "keydown") { try { t.dispatchEvent(new Event("change", { bubbles: true })); } catch (x) {} } } }; // Tasten im Suchfeld nicht ans Spiel/Bot weitergeben
     win.addEventListener("input", onInput, true);
     ["keydown", "keyup", "keypress"].forEach(function (t) { win.addEventListener(t, onKeyCap, true); });
@@ -3754,6 +3762,7 @@ function collect_merchants(obj, out, depth) { // Antwortstruktur defensiv durchs
     for (var k in obj) collect_merchants(obj[k], out, depth + 1);
 }
 // ---------- Markt-Fenster: alle Händlerangebote aller Server auf einen Blick ----------
+var mkt_show = 0; // sichtbare Zeilen (wächst mit „weitere anzeigen“, Filterwechsel setzt zurück)
 var market_all = [], market_scan_t = 0, market_n_merch = 0, market_panel = null, market_job = null, mkt_rows = [];
 try { market_all = parent.__lp_market_all || []; market_scan_t = parent.__lp_market_t || 0; market_n_merch = parent.__lp_market_n || 0; } catch (e) {}
 var market_hist = {}; try { market_hist = JSON.parse(localStorage.getItem("lp_market_hist") || "{}"); } catch (e) {} // "name+lv" -> letzte Scan-Minimalpreise (Ø Markt)
@@ -3902,8 +3911,8 @@ function render_market() {
         var th = function (k, lab, left) { return "<th class='" + (left ? "l " : "") + (mkt.sort == k ? "sorted" : "") + "' data-msort='" + k + "'>" + lab + (mkt.sort == k ? (mkt.dir > 0 ? " ▲" : " ▼") : "") + "</th>"; };
         h = "<table><tr>" + th("name", "Item", true) + th("level", "Lv") + th("price", "Preis") + "<th title='günstigstes Verkaufsangebot desselben Items+Level auf allen Servern'>günstigst</th>" + th("delta", "Δ") + th("seller", "Händler", true) + th("server", "Server · Karte", true) + "<th></th></tr>";
         if (!rows.length) h += "<tr><td class='l' colspan='8' style='color:#9aa3b2'>nichts passt zu den Filtern</td></tr>";
-        rows.slice(0, 200).forEach(function (o, i) { h += mkt_row_html(o, i, false); });
-        if (rows.length > 200) h += "<tr><td class='l' colspan='8' style='color:#6b7280'>… " + (rows.length - 200) + " weitere – Filter oder Suche eingrenzen</td></tr>";
+        var lim2 = mkt_show || 200; rows.slice(0, lim2).forEach(function (o, i) { h += mkt_row_html(o, i, false); });
+        if (rows.length > lim2) h += "<tr><td class='l' colspan='8'><button data-act='mmore'>" + Math.min(200, rows.length - lim2) + " weitere anzeigen</button> <span style='color:#6b7280'>(" + lim2 + " von " + rows.length + ")</span></td></tr>";
         h += "</table>";
     }
     market_panel.querySelector("#lp_mkt_body").innerHTML = h;
@@ -3923,7 +3932,8 @@ function mkt_compact_html() {
     var h = "<table><tr>" + th("name", "Item", true) + th("level", "Lv") + th("price", "günstigstes Angebot", false, "Preis · Händler · Server (Anzahl Anbieter)") + th("bid", "bestes Kaufgesuch", false, "Gebot · Händler · Server (Anzahl Gesuche)") + th("span", "Spanne", false, "Kaufgesuch minus günstigstes Angebot – grün = jemand zahlt mehr, als der Kauf kostet") + "<th></th></tr>";
     if (!groups.length) h += "<tr><td class='l' colspan='6' style='color:#9aa3b2'>nichts passt zu den Filtern</td></tr>";
     var idx = function (o) { mkt_rows.push(o); return mkt_rows.length - 1; };
-    groups.slice(0, 150).forEach(function (gr) {
+    var lim = mkt_show || 150;
+    groups.slice(0, lim).forEach(function (gr) {
         var d = G.items[gr.name] || {}, a = gr.ask, b = gr.bid, open = !!mkt.open[gr.key];
         var atxt = a ? "<span style='color:" + (gr.tags.schn ? "#4caf50" : "#e6e6e6") + "'>" + fmt(a.price) + "</span> <span class='lp_k'>" + esc(a.seller) + " · " + esc(pretty_server(a.server)) + (a.same ? " ★" : "") + (gr.sells.length > 1 ? " (" + gr.sells.length + ")" : "") + "</span>" : "<span class='lp_k'>–</span>";
         var btxt = b ? "<span style='color:#c9a0f0'>" + fmt(b.price) + "</span>" + (d.s && b.q > 1 ? " <span class='lp_k'>×" + b.q + "</span>" : "") + " <span class='lp_k'>" + esc(b.seller) + " · " + esc(pretty_server(b.server)) + (b.same ? " ★" : "") + (gr.bids.length > 1 ? " (" + gr.bids.length + ")" : "") + "</span>" : "<span class='lp_k'>–</span>";
@@ -3933,12 +3943,13 @@ function mkt_compact_html() {
         if (open) { gr.sells.concat(gr.bids).forEach(function (o) { var dl = o._delta != null ? o._delta : (a && a.price > 0 ? (o.price - a.price) / a.price : null); var dc = dl == null ? "#6b7280" : o.b ? (dl >= 0 ? "#4caf50" : "#9aa3b2") : dl <= 0.001 ? "#4caf50" : dl >= 1 ? "#ef5350" : dl >= 0.25 ? "#ffb74d" : "#9aa3b2"; var dtxt = dl == null ? "" : (!o.b && dl <= 0.001) ? "günstigst" : (dl > 0 ? "+" : "") + Math.round(dl * 100) + " %";
             h += "<tr" + (o.same ? " class='here'" : "") + " style='font-size:11px'><td class='l' style='padding-left:22px'><span class='lp_k'>" + (o.b ? "Kaufgesuch" : "Angebot") + "</span> " + esc(o.seller) + " <span class='lp_k'>· " + esc(pretty_server(o.server)) + (o.same ? " ★" : "") + " · " + esc(o.map || "?") + (o.stat_type ? " · " + esc(o.stat_type) : "") + "</span></td><td>" + (d.s ? "×" + o.q : "+" + o.level) + (o._n > 1 && !d.s ? " <small style='color:#6b7280'>×" + o._n + "</small>" : "") + "</td><td style='color:" + (o.b ? "#c9a0f0" : "#e6e6e6") + "'>" + fmt(o.price) + "</td><td></td><td style='color:" + dc + "'>" + dtxt + "</td><td>" + (o.b ? "<span class='lp_k'>zahlt</span>" : mkt_action_html(o, idx(o))) + "</td></tr>"; }); }
     });
-    if (groups.length > 150) h += "<tr><td class='l' colspan='6' style='color:#6b7280'>… " + (groups.length - 150) + " weitere Items – Filter oder Suche eingrenzen</td></tr>";
+    if (groups.length > lim) h += "<tr><td class='l' colspan='6'><button data-act='mmore'>" + Math.min(150, groups.length - lim) + " weitere anzeigen</button> <span style='color:#6b7280'>(" + lim + " von " + groups.length + ")</span></td></tr>";
     return h + "</table>";
 }
 function market_click(b) { // Klicks im Markt-Fenster (true = verarbeitet)
     var mf = b.getAttribute("data-mf"), ms = b.getAttribute("data-msort"), mcs = b.getAttribute("data-mcsort"), mg = b.getAttribute("data-mg"), act = b.getAttribute("data-act"), i = parseInt(b.getAttribute("data-i"));
-    if (mf) { mkt.f[mf] = !mkt.f[mf]; save_mkt(); render_market(); return true; }
+    if (mf) { mkt.f[mf] = !mkt.f[mf]; mkt_show = 0; save_mkt(); render_market(); return true; }
+    if (act == "mmore") { var body = market_panel && market_panel.querySelector("#lp_mkt_body"), stop = body ? body.scrollTop : 0; mkt_show = (mkt_show || (mkt.view == "kompakt" ? 150 : 200)) + (mkt.view == "kompakt" ? 150 : 200); render_market(); try { if (body) body.scrollTop = stop; } catch (e) {} return true; }
     if (act == "mview") { mkt.view = mkt.view == "kompakt" ? "alle" : "kompakt"; save_mkt(); render_market(); return true; }
     if (mcs) { if (mkt.csort == mcs) mkt.cdir = -mkt.cdir; else { mkt.csort = mcs; mkt.cdir = (mcs == "name" || mcs == "level" || mcs == "price") ? 1 : -1; } save_mkt(); render_market(); return true; }
     if (mg && !act) { mkt.open[mg] = !mkt.open[mg]; render_market(); return true; }
