@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v215";
+var BOT_VERSION = "v216";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -123,24 +123,25 @@ function hunter_hunt() { // laufende Jagd des Jäger-Chars (aus seinem Status), 
     return st.hunt;
 }
 var wait_team_on = true, wait_team_danger = 0.10; try { wait_team_on = localStorage.getItem("lp_wait_team") != "0"; var wtd = parseFloat(localStorage.getItem("lp_wait_danger")); if (isFinite(wtd) && wtd >= 0) wait_team_danger = wtd; } catch (e) {} // Auf Team warten: bei Spots über dieser Gefahr nicht vorlaufen/allein kämpfen
-var WAIT_BEHIND = 500, WAIT_NEAR = 250, spot_travel = false, team_wait_stop = false, wait_logged = 0;
+var WAIT_BEHIND = 500, WAIT_NEAR = 250, STRICT_XP = 2000, spot_travel = false, team_wait_stop = false, wait_logged = 0; // ab STRICT_XP XP/Kill: streng – kein Angriff, bevor Priest und Ranger < WAIT_NEAR stehen
+function strict_mon(mon) { var d = G.monsters[mon]; return !!d && (d.xp || 0) > STRICT_XP; }
 function escorts() { // mitlaufende Kämpfer (Priest/Ranger), die an sind und sich zuletzt gemeldet haben
     var out = []; if (SOLO) return out;
     ["priest", "ranger"].forEach(function (k) { if (!team_on[k]) return; var st = team_state[TEAM[k]]; if (!st || Date.now() - st.t > 90000) return; out.push({ k: k, nm: TEAM[k], st: st }); });
     return out;
 }
-function escort_behind() { // am weitesten zurückhängender Begleiter (Abstand > WAIT_BEHIND, andere Karte oder tot), sonst null
-    var worst = null;
+function escort_behind(limit) { // am weitesten zurückhängender Begleiter (Abstand > limit, andere Karte oder tot), sonst null
+    var worst = null; limit = limit || WAIT_BEHIND;
     escorts().forEach(function (e) { var p = null; try { p = get_player(e.nm); } catch (x) {} var d;
         if (p && !p.rip && p.map == character.map) d = distance(character, p);
         else if (p && p.rip) d = Infinity;
         else if (e.st.map && e.st.map != character.map) d = Infinity;
         else d = e.st.x != null ? Math.hypot(character.x - e.st.x, character.y - e.st.y) : Infinity;
-        if (d > WAIT_BEHIND && (!worst || d > worst.d)) worst = { k: e.k, nm: e.nm, d: d, rip: !!(p && p.rip), other_map: !!(e.st.map && e.st.map != character.map) }; });
+        if (d > limit && (!worst || d > worst.d)) worst = { k: e.k, nm: e.nm, d: d, rip: !!(p && p.rip), other_map: !!(e.st.map && e.st.map != character.map) }; });
     return worst;
 }
 function escort_near() { var ok = true; escorts().forEach(function (e) { var p = null; try { p = get_player(e.nm); } catch (x) {} if (!(p && !p.rip && p.map == character.map && distance(character, p) <= WAIT_NEAR)) ok = false; }); return ok; }
-function spot_needs_team(mon) { if (!wait_team_on || SOLO || event_mode || !mon || !escorts().length) return false; var d = G.monsters[mon]; return !!d && mon_danger(d) > wait_team_danger; }
+function spot_needs_team(mon) { if (!wait_team_on || SOLO || event_mode || !mon || !escorts().length) return false; var d = G.monsters[mon]; return !!d && (strict_mon(mon) || mon_danger(d) > wait_team_danger); }
 function wait_txt() { var b = escort_behind(); if (!b) return ""; return "warte auf " + TEAM_LABEL[b.k] + (b.rip ? " (tot)" : isFinite(b.d) ? " (" + Math.round(b.d) + " px)" : b.other_map ? " (andere Karte)" : " (außer Sicht)"); }
 function wait_log(why) { if (Date.now() - wait_logged > 60000) { wait_logged = Date.now(); game_log("Auf Team warten: " + why); } }
 function hunter_only_mon() { var hh = hunter_only ? hunter_hunt() : null; return hh ? hh.id : null; }
@@ -4090,7 +4091,7 @@ function start_main() {
 
     var farm = pick_farm_monster();
     var target = get_targeted_monster();
-    var beh = (wait_team_on && !SOLO && !event_mode && escorts().length) ? escort_behind() : null;
+    var beh = (wait_team_on && !SOLO && !event_mode && escorts().length) ? escort_behind(strict_mon(farm) ? WAIT_NEAR : WAIT_BEHIND) : null;
     var hold = spot_needs_team(farm) && !!beh; // Team hängt zurück: kein neues Ziel, nur Verteidigung
 
     if (target && !is_valid_target(target)) {
@@ -4116,7 +4117,7 @@ function start_main() {
             if (m.target && m.target != character.name) continue;
             if (aggro >= MAX_AGGRO && m.target != character.name) continue;
             if (too_strong(m)) { seen_farm = true; if (distance(character, m) < 300) log_ignored(m, "gelevelt/zu stark"); continue; }
-            if (beh && !m.target && ((m.level || 1) > 1 || mon_danger(G.monsters[m.mtype] || {}) > wait_team_danger)) { strong_wait = true; continue; } // starkes/gelevelte Exemplar: erst ziehen, wenn Priest/Ranger da sind
+            if (beh && !m.target && (strict_mon(m.mtype) || (m.level || 1) > 1 || mon_danger(G.monsters[m.mtype] || {}) > wait_team_danger)) { strong_wait = true; continue; } // starkes/gelevelte Exemplar: erst ziehen, wenn Priest/Ranger da sind
             var d = distance(character, m); if (d < best_d) { best_d = d; target = m; }
         }
         if (!target && strong_wait) { set_message(wait_txt()); wait_log(wait_txt() + " – starke/gelevelte " + farm + " erst mit Team"); for (var sid3 in parent.entities) { var se3 = parent.entities[sid3]; if (is_valid_target(se3) && se3.target == character.name) { target = se3; break; } } if (!target) return; }
