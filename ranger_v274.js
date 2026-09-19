@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Ranger (F4llenRanger) =====
 // Folgt dem Magier, greift dessen Ziel an (Supershot, Hunter's Mark, 3-/5-Shot), versorgt sich selbst mit NPC-Ausrüstung und Tränken.
 // Meldungen gehen per Charakter-Nachricht an den Magier ("[Ranger] …").
-var RANGER_VERSION = "v273";
+var RANGER_VERSION = "v274";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -92,7 +92,7 @@ async function go_give_mage() { // alles außer Tränken/Tokens/Tracker zum Magi
         if (!tgt) throw "Magier-Position unbekannt";
         for (var i = 0; i < 4; i++) { try { await smart_move(tgt); } catch (e) {} m = mage_entity(); if (m && character.map == m.map && dist(character, m) < 200) break; if (mage) tgt = { map: mage.map, x: mage.x, y: mage.y }; }
         m = mage_entity(); if (!m || character.map != m.map || dist(character, m) > 300) throw "Magier nicht erreicht (" + character.map + ")";
-        for (var j = character.items.length - 1; j >= 0; j--) { var it = character.items[j]; if (!it) continue; if (/^(hpot|mpot)/.test(it.name) || it.name == "monstertoken" || it.name == "tracker" || it.name == "computer") continue;
+        for (var j = character.items.length - 1; j >= 0; j--) { var it = character.items[j]; if (!it) continue; if (/^(hpot|mpot)/.test(it.name) || it.name == "tracker" || it.name == "computer") continue;
             if (mage && mage.free != null && mage.free <= 1) { left++; continue; }
             try { send_item(MAGE, j, it.q || 1); n++; } catch (e) { left++; } await sleep(350); }
         say("Übergabe: " + n + " Posten an " + MAGE + (left ? ", " + left + " nicht (Magier voll)" : ""));

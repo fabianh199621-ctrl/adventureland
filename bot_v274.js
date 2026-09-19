@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v273";
+var BOT_VERSION = "v274";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -2839,7 +2839,7 @@ async function tidy_now() {
     if (team_on.merch && team_running(TEAM.merch)) team_send(TEAM.merch, { t: "tidy" });
     if (givers.length) {
         busy = true; give_done = {}; givers.forEach(function (k) { team_send(TEAM[k], { t: "givemage" }); });
-        game_log("Aufräumen: " + givers.map(function (k) { return TEAM_LABEL[k]; }).join("/") + " bringen alles außer Tränken/Tokens zu mir – ich warte (frei: " + character.esize + ")");
+        game_log("Aufräumen: " + givers.map(function (k) { return TEAM_LABEL[k]; }).join("/") + " bringen alles außer Tränken zu mir – ich warte (frei: " + character.esize + ")");
         set_message("Team-Übergabe"); var t0 = Date.now();
         while (Date.now() - t0 < 120000 && givers.some(function (k) { return !give_done[TEAM[k]]; }) && !character.rip) await sleep(500);
         var late = givers.filter(function (k) { return !give_done[TEAM[k]]; }); if (late.length) game_log("Aufräumen: keine Rückmeldung von " + late.map(function (k) { return TEAM_LABEL[k]; }).join("/") + " – mache weiter");
