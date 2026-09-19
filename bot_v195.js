@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v194";
+var BOT_VERSION = "v195";
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : character.ctype == "ranger" || /ranger/i.test(character.name) ? "ranger" : "priest";
@@ -1245,6 +1245,7 @@ function init_panel() {
             else { var mv2 = parse_mio(t.value); if (mv2 > 0) tc.max = mv2; else delete tc.max; game_log("Zielbau " + TEAM_LABEL[tk] + " " + tsl + ": Preislimit " + (mv2 > 0 ? fmt(mv2) : "Standard " + fmt(TEAM_BUILD_DEFAULT_MAX))); }
             team_wish[tk][tsl] = tc; save_team_wish(); try { t.blur(); } catch (x) {} return;
         }
+        if (t.getAttribute("data-fixprice")) { var fpn = t.getAttribute("data-fixprice"), fpv = parse_mio(t.value); var fo = stand_orders[fpn] || (stand_orders[fpn] = { since: Date.now() }); if (fpv > 0) { fo.fixed = fpv; fo.price = fpv; } else { delete fo.fixed; } fo.t = Date.now(); save_stand_orders(); game_log("Stand-Auftrag " + fpn + ": " + (fpv > 0 ? "fester Preis " + fmt(fpv) : "automatische Preisleiter") + " – Händler passt den Stand an, sobald er den Slot sieht"); try { t.blur(); } catch (x) {} last_panel = 0; return; }
         if (t.getAttribute("data-arbmin")) { var am = parse_mio(t.value); if (am > 0) { ARB_TRIP_MIN = am; try { localStorage.setItem("lp_arb_min", String(am)); } catch (x) {} game_log("Handelsreise ab " + fmt(am) + " Gewinn"); } try { t.blur(); } catch (x) {} last_panel = 0; return; }
         if (t.getAttribute("data-give")) { give_sel = t.value === "" ? -1 : parseInt(t.value); try { t.blur(); } catch (x) {} return; }
         if (t.getAttribute("data-huntmax")) { var hv = parseFloat(String(t.value).replace(",", ".")); if (isFinite(hv) && hv > 0 && hv <= 100) { hunt_max_danger = hv / 100; try { localStorage.setItem("lp_hunt_max_danger", String(hunt_max_danger)); } catch (x) {} game_log("Jagd-Gefahrgrenze: " + Math.round(hv) + " %"); hunt_skipped = null; last_hunt_check = 0; } try { t.blur(); } catch (x) {} last_panel = 0; return; }
@@ -1254,7 +1255,7 @@ function init_panel() {
     };
     win.addEventListener("change", onChange, true);
     var onInput = function (e) { var t = e.target; if (t && t.id == "lp_wiki_q") { wiki.q = t.value; wiki.page = null; render_wiki(); } };
-    var onKeyCap = function (e) { var t = e.target; if (t && (t.id == "lp_wiki_q" || (t.tagName == "INPUT" && inside(e)))) { e.stopPropagation(); if (e.key == "Escape") t.blur(); if (e.key == "Enter" && (t.getAttribute("data-wmax") || t.getAttribute("data-huntmax") || t.getAttribute("data-arbmin") || t.getAttribute("data-twmax")) && e.type == "keydown") { try { t.dispatchEvent(new Event("change", { bubbles: true })); } catch (x) {} } } }; // Tasten im Suchfeld nicht ans Spiel/Bot weitergeben
+    var onKeyCap = function (e) { var t = e.target; if (t && (t.id == "lp_wiki_q" || (t.tagName == "INPUT" && inside(e)))) { e.stopPropagation(); if (e.key == "Escape") t.blur(); if (e.key == "Enter" && (t.getAttribute("data-wmax") || t.getAttribute("data-huntmax") || t.getAttribute("data-arbmin") || t.getAttribute("data-twmax") || t.getAttribute("data-fixprice")) && e.type == "keydown") { try { t.dispatchEvent(new Event("change", { bubbles: true })); } catch (x) {} } } }; // Tasten im Suchfeld nicht ans Spiel/Bot weitergeben
     win.addEventListener("input", onInput, true);
     ["keydown", "keyup", "keypress"].forEach(function (t) { win.addEventListener(t, onKeyCap, true); });
     parent.__lp_panel_h = { down: onDown, move: onMove, up: onUp, click: onClick, change: onChange, input: onInput, key: onKeyCap };
@@ -3246,7 +3247,7 @@ function watch_after_scan() {
         var ms = team_state[TEAM.merch], merch_has = ms && ms.orders && ms.orders[name];
         if (in_bank || merch_has || o) {
             if (!o) { o = stand_orders[name] = { since: Date.now() }; }
-            var np = stand_price_for(name);
+            var np = o.fixed ? o.fixed : stand_price_for(name);
             if (np != o.price) { o.price = np; o.t = Date.now(); save_stand_orders(); game_log("Stand-Auftrag " + name + ": " + fmt(np) + (ws && ws.bid ? " (Kaufauftrag " + fmt(ws.bid.price) + ")" : "") + " – Händler holt es aus der Bank und stellt es aus"); }
         }
     }
@@ -3254,7 +3255,7 @@ function watch_after_scan() {
 function watch_html() {
     var h = "";
     for (var name in WATCH_ITEMS) { var ws = watch_summary(name), o = stand_orders[name], ms = team_state[TEAM.merch], st = ms && ms.orders && ms.orders[name]; if (!ws && !o) continue;
-        h += "<div class='lp_row' style='flex-wrap:wrap;line-height:1.6'><span class='lp_k'>" + esc((G.items[name] || {}).name || name) + ":</span> " + (ws && ws.bid ? "Kaufauftrag " + fmt(ws.bid.price) : "kein Kaufauftrag") + " · " + (ws && ws.ask ? "Verkäufer ab " + fmt(ws.ask.price) + " (" + ws.n_ask + ")" : "kein Verkäufer") + (o ? " · <span style='color:#8ab4f8'>Stand: " + fmt(o.price) + (st ? " – " + esc(st) : " – wartet auf Händler") + "</span>" : "") + "</div>"; }
+        h += "<div class='lp_row' style='flex-wrap:wrap;line-height:1.6'><span class='lp_k'>" + esc((G.items[name] || {}).name || name) + ":</span> " + (ws && ws.bid ? "Kaufauftrag " + fmt(ws.bid.price) : "kein Kaufauftrag") + " · " + (ws && ws.ask ? "Verkäufer ab " + fmt(ws.ask.price) + " (" + ws.n_ask + ")" : "kein Verkäufer") + (o ? " · <span style='color:#8ab4f8'>Stand: " + fmt(o.price) + (st ? " – " + esc(st) : " – wartet auf Händler") + "</span>" : "") + " <input data-fixprice='" + name + "' value='" + (o && o.fixed ? esc(fmt_mio(o.fixed)) : "") + "' placeholder='fest, Mio.' title='fester Standpreis in Mio. (leer = automatische Preisleiter)' style='width:60px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'></div>"; }
     return h;
 }
 // ---------- Arbitrage Stufe 2: der Händler reist im Hintergrund (eigenes Fenster auf dem Zielserver) ----------

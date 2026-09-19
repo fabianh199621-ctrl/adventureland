@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Händler (F4llenMerch) – Stufe 1 =====
 // Läuft unsichtbar neben dem Magier. Aufgaben: Stand kaufen und öffnen, Loot abholen/verkaufen/einlagern,
 // Startgold vom Magier holen. mluck ist abgeschaltet (braucht Lv 40, Händler levelt praktisch nicht) – USE_MLUCK/LEVEL_MODE. Meldungen gehen per Charakter-Nachricht an den Magier und erscheinen dort als "[Merch] …".
-var MERCH_VERSION = "v194";
+var MERCH_VERSION = "v195";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -248,7 +248,7 @@ async function orders_tick() {
         var sl = listed_slot_of(name);
         if (sl) { // schon am Stand: Preis prüfen
             var cur = character.slots[sl];
-            if (Math.abs((cur.price || 0) - o.price) > 1000) { try { delete listed[sl]; unequip(sl); await sleep(600); var ix = have_item(name); if (ix >= 0) { var slot2 = free_trade_slot(); if (slot2) { trade(ix, slot2, o.price, cur.q || 1); await sleep(600); listed[slot2] = { name: name, level: 0, t: Date.now(), price: o.price, order: true, gold0: character.gold }; save_listed(); say(name + " am Stand neu bepreist: " + o.price); } } } catch (e) { say("Neu bepreisen " + name + ": " + (e && e.reason || e)); } }
+            if (Math.abs((cur.price || 0) - o.price) > 1000) { try { delete listed[sl]; unequip(sl); await sleep(800); var ix = have_item(name); if (ix < 0) { say("Neu bepreisen " + name + ": nach dem Abnehmen nicht im Inventar?! (Slot " + sl + ") – bitte im Spiel prüfen"); } else { trade(ix, sl, o.price, cur.q || 1); await sleep(800); var chk = character.slots[sl]; if (chk && chk.name == name) { listed[sl] = { name: name, level: 0, t: Date.now(), price: o.price, order: true, gold0: character.gold }; save_listed(); say(name + " am Stand neu bepreist: " + o.price + " (Slot " + sl + ")"); } else { say(name + " wieder ausstellen zu " + o.price + " nicht bestätigt – liegt im Inventar, nächster Versuch"); } } } catch (e) { say("Neu bepreisen " + name + ": " + (e && e.reason || e)); } }
             order_state[name] = "am Stand für " + o.price; continue;
         }
         var ix2 = have_item(name);
