@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v223";
+var BOT_VERSION = "v225";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -277,8 +277,13 @@ function skill_available(name) {
 }
 
 // Prüft das konkrete Exemplar (gelevelte Monster haben mehr HP/Angriff als die G-Daten)
+var PRIORITY_MONS = { phoenix: true }; // seltene, lohnende und harmlose Spawns: sofort angreifen und fokussieren (Team folgt dem Ziel)
+function priority_mon(mtype) { if (PRIORITY_MONS[mtype]) return true; var d = G.monsters[mtype]; return !!d && d.cooperative && (d.attack || 0) * 8 < character.max_hp && !d.boss; } // kooperative Spawns mit schwachem Angriff ebenfalls
+function priority_target() { var best = null, bd = 700; for (var id in parent.entities) { var m = parent.entities[id]; if (!m || m.type != "monster" || m.dead || !priority_mon(m.mtype)) continue; var d = distance(character, m); if (d < bd) { bd = d; best = m; } } return best; }
+var prio_logged = "";
 function too_strong(m) {
     var base = G.monsters[m.mtype]; if (!base) return true;
+    if (priority_mon(m.mtype)) return false;
     if (hunter_only && m.mtype == hunter_only_mon()) return false; // Nur Jäger-Jagd: das Jagdmonster wird immer angegangen
     var d = Object.assign({}, base);
     if (m.max_hp) d.hp = m.max_hp;
@@ -318,6 +323,7 @@ function log_ignored(m, why) {
 function is_valid_target(m) {
     if (!m || m.type != "monster" || m.dead) return false;
     if (m.target && TEAM_NAMES.indexOf(m.target) >= 0) return true; // greift ein Teammitglied an
+    if (priority_mon(m.mtype)) return true; // seltener Spawn (Phoenix): immer gültig
     if (m.mtype == pick_farm_monster()) return m.target == character.name || !too_strong(m); // Angreifer wehren wir ab, sonst nur ungelevelte/sichere Exemplare
     if (m.max_hp > character.max_hp * MAX_TARGET_HP_FACTOR) return false;
     if (bycatch && is_safe_monster(m.mtype) && !hidden_mons[m.mtype] && (!m.target || m.target == character.name)) return true;
@@ -655,10 +661,10 @@ function hunts_html() { // Rundlauf: Jagden aller Kämpfer mit Status
         if (!id || !(c > 0)) return "keine";
         var d = G.monsters[id], dg = d ? Math.round(mon_danger(d) * 100) : 0, ok = mine ? hunt_target_ok(id) : (th && th.id == id);
         var run = current_spot == id && !paused;
-        return esc(id) + " " + c + (ok ? (run ? " <span style='color:#4caf50'>läuft</span>" : " <span style='color:#8ab4f8'>machbar" + (mine ? "" : ", als Nächstes") + "</span>") : " <span style='color:#ffb74d'>" + esc(hunt_skip_reason(id)) + ", läuft aus " + fmt_time(ms || 0) + "</span>");
+        return esc(id) + " " + c + (ok ? (run ? " <span style='color:#4caf50'>läuft</span>" : " <span style='color:#8ab4f8'>machbar" + (mine ? "" : ", als Nächstes") + "</span>") : " <span style='color:#ffb74d'>" + esc(hunt_skip_reason(id)) + (ms != null ? ", läuft aus " + fmt_time(ms) : "") + "</span>");
     }
     items.push("Mage " + st_txt(q && q.id, q && q.c, q && q.ms, true));
-    ["priest", "ranger", "hunter"].forEach(function (k) { if (!team_on[k]) return; var st = team_state[TEAM[k]]; if (!st || Date.now() - st.t > 120000) { items.push(TEAM_LABEL[k] + " ?"); return; } var h = st.hunt; items.push(TEAM_LABEL[k] + " " + st_txt(h && h.id, h && h.c, h && h.ms, false)); });
+    ["priest", "ranger", "hunter"].forEach(function (k) { if (!team_on[k]) return; var st = team_state[TEAM[k]]; if (!st || Date.now() - st.t > 120000) { items.push(TEAM_LABEL[k] + " ?"); return; } var h = st.hunt; items.push(TEAM_LABEL[k] + " " + st_txt(h && h.id, h && h.c, h && h.ms != null ? Math.max(0, h.ms - (Date.now() - st.t)) : null, false)); }); // Restzeit ab Meldezeitpunkt weiterzählen
     var w = wait_txt();
     return "<span style='color:#9aa3b2'>Jagden: </span>" + items.join(" · ") + (w ? " <span style='color:#ffb74d'>· " + esc(w) + "</span>" : "");
 }
@@ -4138,6 +4144,7 @@ function start_main() {
         target = null;
     }
 
+    var pt = priority_target(); if (pt && (!target || target.mtype != pt.mtype)) { target = pt; if (prio_logged != pt.id) { prio_logged = pt.id; game_log("Seltener Spawn: " + pt.mtype + " in " + Math.round(distance(character, pt)) + " px – greife an, Team fokussiert mit"); } change_target(pt); }
     if (!target) { var tt = team_threat(); if (tt) target = tt; }
     if (!target && hold) { // Team hängt zurück: nur Angreifer auf mich abwehren, sonst stehen bleiben
         for (var hid in parent.entities) { var he = parent.entities[hid]; if (is_valid_target(he) && he.target == character.name) { target = he; break; } }

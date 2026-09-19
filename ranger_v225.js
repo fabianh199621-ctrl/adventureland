@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Ranger (F4llenRanger) =====
 // Folgt dem Magier, greift dessen Ziel an (Supershot, Hunter's Mark, 3-/5-Shot), versorgt sich selbst mit NPC-Ausrüstung und Tränken.
 // Meldungen gehen per Charakter-Nachricht an den Magier ("[Ranger] …").
-var RANGER_VERSION = "v223";
+var RANGER_VERSION = "v225";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -72,7 +72,7 @@ function say_once(key, msg, every) { if (last_log[key] && Date.now() - last_log[
 function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 var last_state = null;
 function worn_summary() { var o = {}; for (var sl in character.slots) { var it = character.slots[sl]; if (it && sl.indexOf("trade") != 0) o[sl] = { name: it.name, level: it.level || 0 }; } return o; }
-function status(state) { if (state == last_state && Date.now() - last_status < 30000) return; last_state = state; last_status = Date.now(); try { send_cm(MAGE, { t: "st", hpots: pot_count("hpot"), mpots: pot_count("mpot"), level: character.level, state: character.rip ? "tot" : state, hp: character.hp, max_hp: character.max_hp, mp_pct: character.mp / character.max_mp, map: character.map, free: character.esize, attack: character.attack, frequency: character.frequency, tokens: pot_count("monstertoken"), hunt: (mh_q() ? { id: mh_q().id, c: mh_q().c || 0 } : null), slots: worn_summary() }); } catch (e) {} }
+function status(state) { if (state == last_state && Date.now() - last_status < 30000) return; last_state = state; last_status = Date.now(); try { send_cm(MAGE, { t: "st", hpots: pot_count("hpot"), mpots: pot_count("mpot"), level: character.level, state: character.rip ? "tot" : state, hp: character.hp, max_hp: character.max_hp, mp_pct: character.mp / character.max_mp, map: character.map, free: character.esize, attack: character.attack, frequency: character.frequency, tokens: pot_count("monstertoken"), hunt: (mh_q() ? { id: mh_q().id, c: mh_q().c || 0, ms: mh_q().ms || 0 } : null), slots: worn_summary() }); } catch (e) {} }
 var gear_incoming = [];
 async function equip_incoming() { // vom Magier erhaltene Teile anlegen, ersetzte Teile beim nächsten Einkauf verkaufen
     while (gear_incoming.length) {
@@ -82,7 +82,7 @@ async function equip_incoming() { // vom Magier erhaltene Teile anlegen, ersetzt
         try { equip(idx, g.slot); await sleep(600); if (g.manual) manual_choice[g.slot] = g.name + "+" + g.level; say(g.name + "+" + g.level + " angelegt (" + g.slot + (g.manual ? ", von dir gewählt – bleibt an" : "") + ")"); } catch (e) { say("Anlegen " + g.name + ": " + (e && e.reason || e)); }
     }
     last_autoequip = 0; try { await auto_equip(); } catch (e) {}
-    try { send_cm(MAGE, { t: "st", hpots: pot_count("hpot"), mpots: pot_count("mpot"), level: character.level, state: last_state || "bei dir", hp: character.hp, max_hp: character.max_hp, mp_pct: character.mp / character.max_mp, map: character.map, free: character.esize, attack: character.attack, frequency: character.frequency, tokens: pot_count("monstertoken"), hunt: (mh_q() ? { id: mh_q().id, c: mh_q().c || 0 } : null), slots: worn_summary() }); } catch (e) {}
+    try { send_cm(MAGE, { t: "st", hpots: pot_count("hpot"), mpots: pot_count("mpot"), level: character.level, state: last_state || "bei dir", hp: character.hp, max_hp: character.max_hp, mp_pct: character.mp / character.max_mp, map: character.map, free: character.esize, attack: character.attack, frequency: character.frequency, tokens: pot_count("monstertoken"), hunt: (mh_q() ? { id: mh_q().id, c: mh_q().c || 0, ms: mh_q().ms || 0 } : null), slots: worn_summary() }); } catch (e) {}
 }
 // ---------- Auto-Anlegen: besseres Teil im Inventar (egal woher) wird angelegt ----------
 var ALL_SLOTS = { helmet: "helmet", chest: "chest", pants: "pants", shoes: "shoes", gloves: "gloves", cape: "cape", mainhand: "weapon", offhand: "offhand", ring1: "ring", ring2: "ring", earring1: "earring", earring2: "earring", amulet: "amulet", belt: "belt", orb: "orb" };
