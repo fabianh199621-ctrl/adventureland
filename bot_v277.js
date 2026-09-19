@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v276";
+var BOT_VERSION = "v277";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -728,6 +728,7 @@ function team_html() {
         parts.push("<span style='color:" + col + "' title='" + esc(tip) + "'>" + lab + sym + (fresh ? " Lv " + st.level : "") + (warn ? " <small>" + esc(warn) + "</small>" : "") + "</span> <button data-act='team' data-k='" + k + "'" + (team_on[k] ? " class='on'" : "") + " style='padding:0 5px'>" + (team_on[k] ? "an" : "aus") + "</button><button data-act='tchar' data-nm='" + TEAM[k] + "' title='Fenster: Charakter & Inventar von " + lab + "'" + (tchar_panels[TEAM[k]] && tchar_panels[TEAM[k]].parentNode ? " class='on'" : "") + " style='padding:0 5px'>▣</button>");
     }
     var btns = "";
+    if ((team_on.priest || team_on.ranger) && tokens() > 0) btns += "<button data-act='givetokens' title='Je 4 Monster-Tokens an Priest/Ranger ohne Tracktrix (sie kaufen sich damit bei Daisy einen für Cavalry) – sie müssen neben dir stehen'>Tokens für Tracktrix (" + tokens() + ")</button> ";
     btns += "<button data-act='teamlogs' title='gespeicherte Logs von Merch/Priest/Ranger (letzte 40 Zeilen je Char) ins Log holen'>Team-Logs</button>";
     var give = "";
     if (team_on.priest || team_on.ranger) { // manuelle Übergabe: Inventarteil auswählen, an Priest/Ranger geben (der legt es an, wenn es besser ist)
@@ -1412,6 +1413,7 @@ function init_panel() {
         else if (act == "buyoffer") { var bo = offers_for_slot(b.getAttribute("data-slot"))[parseInt(b.getAttribute("data-idx"))]; if (bo) buy_confirm = { key: offer_key(bo), offer: bo, slot: b.getAttribute("data-slot"), t: Date.now() }; }
         else if (act == "buyno") buy_confirm = null;
         else if (act == "give") give_to_team(b.getAttribute("data-k"));
+        else if (act == "givetokens") { ["priest", "ranger"].forEach(function (k) { if (!team_on[k]) return; var nm = TEAM[k], st = team_state[nm], p = get_player(nm); if (st && st.cav && st.cav.has) { game_log("[" + TEAM_LABEL[k] + "] hat schon einen Tracktrix"); return; } if (!p || p.rip || p.map != character.map || distance(character, p) > 350) { game_log("[" + TEAM_LABEL[k] + "] nicht neben mir – keine Tokens gegeben"); return; } var ti = locate_item("monstertoken"); if (ti < 0 || (character.items[ti].q || 0) < 4) { game_log("Tokens: weniger als 4 übrig"); return; } try { send_item(nm, ti, 4); game_log("[" + TEAM_LABEL[k] + "] 4 Monster-Tokens gegeben – kauft beim nächsten Daisy-Besuch einen Tracktrix"); } catch (e) { game_log("Tokens geben: " + err_txt(e)); } }); last_panel = 0; }
         else if (act == "merchtest") start_merch_test();
         else if (act == "teamlogs") { for (var tk2 in TEAM) { try { var arr = JSON.parse(localStorage.getItem("lp_tlog_" + TEAM[tk2]) || "[]"); game_log("=== " + TEAM_LABEL[tk2] + " – gespeichertes Log (" + arr.length + " Zeilen) ==="); arr.forEach(function (e) { game_log("[" + TEAM_LABEL[tk2] + " " + new Date(e.t).toLocaleTimeString() + "] " + e.m); }); } catch (x) { game_log(TEAM_LABEL[tk2] + ": Log nicht lesbar"); } } var so = null; try { so = localStorage.getItem("lp_stand_orders_" + TEAM.merch); } catch (x) {} game_log("Stand-Aufträge: " + (so || "keine") + " · Händler-Stand (gespeichert): " + (function () { try { return localStorage.getItem("lp_listed_" + TEAM.merch) || "leer"; } catch (x) { return "?"; } })()); }
         else if (act == "goldback") { ["merch", "priest", "ranger"].forEach(function (k) { if (team_on[k] && team_running(TEAM[k])) team_send(TEAM[k], { t: "goldback" }); }); game_log("Gold holen: Händler bringt alles über " + fmt(MG.target) + ", Priest/Ranger alles über " + fmt(MG.esc_max)); }
