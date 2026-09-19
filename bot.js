@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v220";
+var BOT_VERSION = "v221";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -1200,6 +1200,30 @@ try {
     parent.__lp_death_fn = function (data) { if (data && data.id && data.id == last_target_id) { last_target_id = null; day_count("kills"); } };
     parent.socket.on("death", parent.__lp_death_fn);
 } catch (e) {}
+// ---------- Cavalry (Tracktrix): Lv-100-NPC-Trupp räumt 90 s lang bis zu 24 Monster im Umkreis (unter Lv 80); lange Abklingzeit ----------
+var cav_on = true, cav_last = 0, cav_cd_ms = 0, cav_msg = ""; try { cav_on = localStorage.getItem("lp_cav_on") != "0"; cav_last = parseInt(localStorage.getItem("lp_cav_last") || "0") || 0; cav_cd_ms = parseInt(localStorage.getItem("lp_cav_cd") || "0") || 0; } catch (e) {}
+function cav_cooldown() { try { var c = (G.items.tracker || {}).cavalry || {}; return cav_cd_ms || ((c.cooldown_base || 600000) + (c.cooldown_per_level || 60000) * character.level); } catch (e) { return 3600000; } }
+function cav_ready() { return has_tracker() && Date.now() - cav_last > cav_cooldown(); }
+function has_tracker() { return locate_item("tracker") >= 0; }
+function call_cavalry(why) {
+    if (!has_tracker()) { game_log("Cavalry: kein Tracktrix im Inventar"); return; }
+    cav_last = Date.now(); try { localStorage.setItem("lp_cav_last", String(cav_last)); } catch (e) {}
+    try { parent.socket.emit("interaction", { type: "cavalry" }); game_log("Cavalry gerufen (" + why + ")"); } catch (e) { game_log("Cavalry: " + err_txt(e)); }
+}
+try {
+    if (parent.__lp_cav_fn) parent.socket.off("game_response", parent.__lp_cav_fn);
+    parent.__lp_cav_fn = function (data) { try { if (!data || data.interaction != "cavalry") return; cav_msg = JSON.stringify(data).slice(0, 200); game_log("Cavalry-Antwort: " + cav_msg); if (data.failed) { var ms = data.ms || data.cooldown || data.remaining; if (ms > 1000) { cav_last = Date.now() - cav_cooldown() + ms; try { localStorage.setItem("lp_cav_last", String(cav_last)); } catch (e) {} } } } catch (e) {} };
+    parent.socket.on("game_response", parent.__lp_cav_fn);
+} catch (e) {}
+var cav_checked = 0;
+function cavalry_tick() { // automatisch: am Spot stehen >= 3 gelevelte/zu starke Exemplare in 320 px und kein normales Ziel -> Trupp rufen
+    if (!cav_on || SOLO || paused || event_mode || fleeing || Date.now() - cav_checked < 10000) return; cav_checked = Date.now();
+    if (!cav_ready()) return;
+    var farm = current_spot; if (!farm) return;
+    var strong = 0, weak = 0;
+    for (var id in parent.entities) { var m = parent.entities[id]; if (!m || m.type != "monster" || m.dead || m.mtype != farm || distance(character, m) > 320) continue; if ((m.level || 1) >= 5 || too_strong(m)) strong++; else weak++; }
+    if (strong >= 3 && weak == 0) call_cavalry(strong + "x gelevelte " + farm + " in Reichweite, keine normalen");
+}
 var last_gain = Date.now(), stuck_count = 0;
 function session_tick() {
     var before = sess.xp;
@@ -1307,6 +1331,8 @@ function init_panel() {
         else if (act == "twist") { var ik = b.getAttribute("data-k"), ist = team_state[TEAM[ik]]; if (!ist || !ist.slots) game_log("Team-Zielbau: keine Statusmeldung von " + TEAM_LABEL[ik]); else { team_wish[ik] = {}; TEAM_WISH_SLOTS.forEach(function (sl) { var w = ist.slots[sl]; if (w && G.items[w.name]) team_wish[ik][sl] = { item: w.name, level: w.level || 0 }; }); save_team_wish(); game_log("Team-Zielbau " + TEAM_LABEL[ik] + ": Ist-Stand übernommen"); } }
         else if (act == "wishtoggle") { div.__wish = !div.__wish; try { localStorage.setItem("lp_panel_wish", div.__wish ? "1" : "0"); } catch (x) {} }
         else if (act == "pauseafter") { pause_after = !pause_after; try { localStorage.setItem("lp_pause_after", pause_after ? "1" : "0"); } catch (x) {} game_log("Nach manueller Aktion: " + (pause_after ? "pausieren" : "weiterfarmen")); last_panel = 0; }
+        else if (act == "cavalry") call_cavalry("manuell");
+        else if (act == "cavauto") { cav_on = !cav_on; try { localStorage.setItem("lp_cav_on", cav_on ? "1" : "0"); } catch (x) {} game_log("Cavalry-Automatik " + (cav_on ? "an" : "aus")); }
         else if (act == "waitteam") { wait_team_on = !wait_team_on; try { localStorage.setItem("lp_wait_team", wait_team_on ? "1" : "0"); } catch (x) {} game_log("Auf Team warten " + (wait_team_on ? "an (ab " + Math.round(wait_team_danger * 100) + " % Gefahr)" : "aus")); }
         else if (act == "hunteronly") { hunter_only = !hunter_only; try { localStorage.setItem("lp_hunter_only", hunter_only ? "1" : "0"); } catch (x) {} game_log("Nur Jäger-Jagd " + (hunter_only ? "an – Team farmt ausschließlich die Jagd von " + TEAM.hunter : "aus")); need_repick = true; meas = null; if (!hunter_only) current_spot = null; stop("smart"); busy = false; change_target(null); save_state(); }
         else if (act == "hunt") { hunt_on = !hunt_on; try { localStorage.setItem("lp_hunt", hunt_on ? "1" : "0"); } catch (x) {} game_log("Monster Hunt " + (hunt_on ? "an" : "aus")); }
@@ -1580,7 +1606,7 @@ function update_panel() {
       + "<div class='lp_big'>" + fmt(cur_xp_h) + " XP/h &nbsp;·&nbsp; " + fmt(cur_gold_h) + " G/h</div>"
       + "<div class='lp_k'>Session " + fmt(sess.xp / sh) + " XP/h · " + fmt(sess.gold / sh) + " G/h · nächstes Level in " + (rate > 0 ? fmt_time((G.levels[character.level] - character.xp) / rate * 3600000) : "-") + "</div></div>";
     h += "<div class='lp_row'><span class='lp_mode'>Modus: " + (manual_spot ? "fest (" + esc(manual_spot) + ")" : "automatisch") + "</span><button data-act='auto'" + (manual_spot ? "" : " class='on'") + ">Auto</button><button data-act='reset'>Neu messen</button><button data-act='worth'" + (only_worth ? " class='on'" : "") + " title='nur die 5 besten nach geschätzten XP/h'>Top 5</button><button data-act='bycatch'" + (bycatch ? " class='on'" : "") + " title='andere sichere Monster in der Nähe mit angreifen'>Beifang</button><button data-act='focus'" + (focus_mode ? " class='on'" : "") + " title='nur farmen/hunten: kein Kuss, Ponty, Markt, Kuchen, keine Ausrüstungsautomatik; Inventar erst unter 3 freien Plätzen bis 20 frei aufräumen (mit Tränken)'>Fokus</button><button data-act='sortinv' title='Inventar sortieren'>Inv ⇅</button></div>"
-      + "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Aktionen</span><button data-act='compound' title='Schmuck compounden (getragen + ungetragen)'>Compound</button><button data-act='tidy' title='Schrott verkaufen, Rest in die Bank'>Aufräumen</button><button data-act='bank' title='Schrott aus der Bank holen und verkaufen'>Bank aufräumen</button><button data-act='banksort' title='Bank nach Gruppen sortieren, Reiter lückenlos füllen'>Bank ⇅</button><button data-act='copylog' title='Bot-Log in die Zwischenablage'>Log kopieren</button><button data-act='pauseafter'" + (pause_after ? " class='on'" : "") + " title='Nach Buttons/Tasten pausieren statt weiterfarmen'>Danach: " + (pause_after ? "Pause" : "Farmen") + "</button><button data-act='clearlog' title='Log-Puffer leeren' style='padding:1px 5px'>✕</button></div>";
+      + "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Aktionen</span><button data-act='compound' title='Schmuck compounden (getragen + ungetragen)'>Compound</button><button data-act='cavalry' title='Tracktrix: Lv-100-Trupp rufen, räumt bis zu 24 Monster im Umkreis (90 s); Abklingzeit ca. " + Math.round(cav_cooldown() / 60000) + " min" + (cav_ready() ? "" : ", bereit in " + fmt_time(Math.max(0, cav_last + cav_cooldown() - Date.now()))) + "'" + (cav_ready() ? " style='color:#C6AA62'" : "") + ">Cavalry</button><button data-act='cavauto'" + (cav_on ? " class='on'" : "") + " title='Cavalry automatisch rufen, wenn am Spot nur gelevelte Exemplare stehen'>Cav-Auto</button><button data-act='tidy' title='Schrott verkaufen, Rest in die Bank'>Aufräumen</button><button data-act='bank' title='Schrott aus der Bank holen und verkaufen'>Bank aufräumen</button><button data-act='banksort' title='Bank nach Gruppen sortieren, Reiter lückenlos füllen'>Bank ⇅</button><button data-act='copylog' title='Bot-Log in die Zwischenablage'>Log kopieren</button><button data-act='pauseafter'" + (pause_after ? " class='on'" : "") + " title='Nach Buttons/Tasten pausieren statt weiterfarmen'>Danach: " + (pause_after ? "Pause" : "Farmen") + "</button><button data-act='clearlog' title='Log-Puffer leeren' style='padding:1px 5px'>✕</button></div>";
     h += event_html();
     h += "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Hunt: <span style='color:#e6e6e6'>" + esc(mh_txt()) + "</span> · " + tokens() + " Tokens</span><button data-act='hunt'" + (hunt_on ? " class='on'" : "") + " title='Monster Hunt automatisch'>Hunt</button>" + "<button data-act='waitteam'" + (wait_team_on ? " class='on'" : "") + " title='Bei Spots über " + Math.round(wait_team_danger * 100) + " % Gefahr nicht vorlaufen und nicht allein kämpfen, bis Priest/Ranger da sind'>Team-Warten</button>" + (team_on.hunter || hunter_only ? "<button data-act='hunteronly'" + (hunter_only ? " class='on'" : "") + " title='Nur die Jagd des Jäger-Chars farmen (ohne Gefahrgrenze), keine eigene Jagd'>Nur Jäger</button>" : "") + "" + (mh_quest() ? "<button data-act='huntabandon'>Abbrechen</button>" : "") + "</div>";
     h += "<div class='lp_row' style='flex-wrap:wrap;line-height:1.6'><span class='lp_k'>Serverwechsel:</span> <span style='font-size:11px'>" + server_tip_html() + "</span></div>";
@@ -4094,7 +4120,7 @@ function start_main() {
         if (focus_mode) { // nur das Nötigste: Scan (bewegt nichts), manuelle Ziele, fehlende Ausrüstung, Inventar erst wenn fast voll, Not-Tränke, Hunt-Abwicklung
             scan_all_merchants(); if (pending_buy && (pending_buy.force || trip_buying)) run_pending_buy(); run_goal(); check_weapon(); check_gear_slots(); tidy_inventory(); check_potions(); check_stuck(); check_monsterhunt();
         } else {
-            auto_gear_tick(); best_equip_tick(); scan_all_merchants(); run_pending_buy(); run_goal(); check_weapon(); check_gear_slots(); check_elixir(); kiss_routine(); tidy_inventory(); check_potions(); check_stuck(); check_ponty(false); check_market(false); check_seashells(); check_monsterhunt(); check_cake();
+            auto_gear_tick(); best_equip_tick(); scan_all_merchants(); run_pending_buy(); run_goal(); check_weapon(); check_gear_slots(); check_elixir(); kiss_routine(); tidy_inventory(); check_potions(); check_stuck(); cavalry_tick(); check_ponty(false); check_market(false); check_seashells(); check_monsterhunt(); check_cake();
         }
     }
     if (spot_travel && busy && !fleeing) { var fm0 = current_spot; if (spot_needs_team(fm0)) { var beh = escort_behind(); if (beh) { team_wait_stop = true; stop("smart"); spot_travel = false; busy = false; last_go = Date.now(); set_message(wait_txt()); wait_log(wait_txt() + " – halte an (" + fm0 + ")"); return; } } }
