@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v264";
+var BOT_VERSION = "v265";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -444,6 +444,7 @@ function on_cm(name, data) { // Nachrichten der eigenen Charaktere
         else if (data.t == "st") { team_state[name] = Object.assign({}, data, { t: Date.now() }); last_panel = 0; }
         else if (data.t == "ready") { if (pickup_state) pickup_state.ready = true; }
         else if (data.t == "sold") { game_log("[" + who + "] VERKAUFT: " + data.name + " für " + fmt(data.price) + " Gold – Gold kommt bei der nächsten Abholung/Übergabe"); if (stand_orders[data.name]) { delete stand_orders[data.name]; save_stand_orders(); } }
+        else if (data.t == "sold") { if (merch_buy && data.id == merch_buy.id) { if (data.ok) mb_done(data.q + "× " + merch_buy.o.name + " verkauft für " + fmt(data.earned) + " – Erlös in der Händlerkasse"); else mb_fail(data.why || "Verkauf nicht gelungen – Item bleibt beim Händler"); } }
         else if (data.t == "bought") { if (merch_buy && data.id == merch_buy.id) { if (data.ok) { merch_buy.stage = "deliver"; merch_buy.t = Date.now(); mb_save(); } else mb_fail(data.why || "Kauf nicht gelungen"); } }
         else if (data.t == "delivered_item") { if (merch_buy && data.id == merch_buy.id) { if (data.q > 0) mb_done(data.name + (data.q > 1 ? " ×" + data.q : "") + " erhalten" + (data.gold ? ", " + fmt(data.gold) + " Gold zurück" : "")); else if (data.ok) { merch_buy.stage = "fetch"; merch_buy.t = Date.now(); mb_save(); game_log("Einkauf: Händler hat mich nicht erreicht – rufe ihn zum Abholen"); } } }
         else if (data.t == "delivered") { if (pickup_state) pickup_state.done = true; if (merch_buy && merch_buy.stage == "fetching" && data.items) merch_buy.got = data.items; if (data.pots) game_log("[Merch] Tränke erhalten: " + data.pots); if (data.gold) game_log("[Merch] " + fmt(data.gold) + " Gold Verkaufserlös erhalten"); }
@@ -2080,7 +2081,7 @@ async function merchant_pickup(reason) { // Händler rufen, Items übergeben, Tr
         var plan = handover_plan();
         pickup_state = { t: Date.now(), ready: false, done: false };
         var mbj = merch_buy && (merch_buy.stage == "calling" || merch_buy.stage == "fetching") ? merch_buy : null;
-        team_send(TEAM.merch, { t: "pickup", reason: reason, buy: mbj && mbj.stage == "calling" ? Object.assign({}, mbj.o, { id: mbj.id, q: mbj.q, mode: mbj.mode }) : null, fetch: mbj && mbj.stage == "fetching" ? [{ name: mbj.o.name, level: mbj.o.level }] : null, items: plan.length, pots: { hp: need_hp >= 30 ? need_hp : 0, mp: need_mp >= 30 ? need_mp : 0, hp_t: pick_pot_tier(POTS_HP), mp_t: pick_pot_tier(POTS_MP) }, team_pots: team_pots_need(), map: character.map, x: Math.round(character.x), y: Math.round(character.y) });
+        team_send(TEAM.merch, { t: "pickup", reason: reason, buy: mbj && mbj.stage == "calling" && mbj.kind != "sell" ? Object.assign({}, mbj.o, { id: mbj.id, q: mbj.q, mode: mbj.mode }) : null, sellreq: mbj && mbj.stage == "calling" && mbj.kind == "sell" ? Object.assign({}, mbj.o, { id: mbj.id, q: mbj.q, mode: mbj.mode }) : null, fetch: mbj && mbj.stage == "fetching" ? [{ name: mbj.o.name, level: mbj.o.level }] : null, items: plan.length, pots: { hp: need_hp >= 30 ? need_hp : 0, mp: need_mp >= 30 ? need_mp : 0, hp_t: pick_pot_tier(POTS_HP), mp_t: pick_pot_tier(POTS_MP) }, team_pots: team_pots_need(), map: character.map, x: Math.round(character.x), y: Math.round(character.y) });
         game_log("Händler gerufen (" + reason + "): " + plan.length + " Items" + (need_hp >= 30 || need_mp >= 30 ? ", Tränke " + need_hp + "/" + need_mp : ""));
         set_message("Händler kommt");
         var t0 = Date.now(), m = null;
@@ -2099,7 +2100,8 @@ async function merchant_pickup(reason) { // Händler rufen, Items übergeben, Tr
             await sleep(350);
             var mm = get_player(TEAM.merch); if (!mm || mm.map != character.map || distance(character, mm) > 350) { game_log("Händler weg – Übergabe abgebrochen"); break; }
         }
-        if (mbj && mbj.stage == "calling" && merch_buy && merch_buy.id == mbj.id) { try { send_gold(TEAM.merch, mbj.gold); mbj.gold_sent = true; mb_save(); game_log("Einkauf: " + fmt(mbj.gold) + " Gold an den Händler übergeben"); } catch (e) { game_log("Einkauf: Gold-Übergabe fehlgeschlagen – " + err_txt(e)); } await sleep(400); }
+        if (mbj && mbj.stage == "calling" && mbj.kind == "sell" && merch_buy && merch_buy.id == mbj.id) { var left = mbj.q, sent = 0; for (var si = 0; si < character.items.length && left > 0; si++) { var sit = character.items[si]; if (!sit || sit.name != mbj.o.name || (sit.level || 0) != (mbj.o.level || 0)) continue; var sq = Math.min(left, sit.q || 1); team_send(TEAM.merch, { t: "item", name: sit.name, level: sit.level || 0, q: sq, action: "hold" }); try { send_item(TEAM.merch, si, sq); sent += sq; left -= sq; } catch (e) { game_log("Verkauf: Übergabe fehlgeschlagen – " + err_txt(e)); break; } await sleep(400); } if (sent) { mbj.item_sent = true; mb_save(); game_log("Verkauf: " + sent + "× " + mbj.o.name + " an den Händler übergeben"); } }
+        if (mbj && mbj.stage == "calling" && mbj.kind != "sell" && merch_buy && merch_buy.id == mbj.id) { try { send_gold(TEAM.merch, mbj.gold); mbj.gold_sent = true; mb_save(); game_log("Einkauf: " + fmt(mbj.gold) + " Gold an den Händler übergeben"); } catch (e) { game_log("Einkauf: Gold-Übergabe fehlgeschlagen – " + err_txt(e)); } await sleep(400); }
         // Gold-Überschuss vom Händler kommt von selbst (er schickt); wir melden fertig
         team_send(TEAM.merch, { t: "done", given: given });
         game_log("Übergabe an Händler: " + given + " Items – frei jetzt " + character.esize);
@@ -3719,10 +3721,11 @@ function arb_tick() {
 function arb_finish(res, why) {
     var nm = TEAM.merch, sv = arb_job.server;
     if (res && res.wrong_server) game_log("Handelsreise: Händler ist auf " + (res.server || "?").toUpperCase() + " gelandet statt " + pretty_server(sv) + " – abgebrochen");
+    else if (res && res.done && arb_job.sellonly) game_log("Verkaufsreise " + pretty_server(sv) + ": " + (res.sold ? res.sold + " verkauft für " + fmt(res.earned) : "nichts verkauft" + (res.log && res.log.length ? " – " + res.log.slice(-1)[0] : "")) + " · Händler kommt zurück");
     else if (res && res.done && arb_job.keep) game_log("Einkaufsreise " + pretty_server(sv) + ": " + (res.bought ? res.bought + " gekauft (" + fmt(res.spent) + ")" : "nichts gekauft" + (res.log && res.log.length ? " – " + res.log.slice(-1)[0] : "")) + " · Händler kommt zurück");
     else if (res && res.done) game_log("Handelsreise " + pretty_server(sv) + ": " + res.bought + " gekauft (" + fmt(res.spent) + "), " + res.sold + " verkauft (" + fmt(res.earned) + ") → Gewinn " + fmt(res.profit || 0) + (res.skipped ? ", " + res.skipped + " übersprungen" : "") + " · Händler hat jetzt " + fmt(res.gold || 0) + " Gold");
     else game_log("Handelsreise " + pretty_server(sv) + " abgebrochen: " + (why || "keine Rückmeldung") + (res && res.log ? " – zuletzt: " + res.log.slice(-2).join(" | ") : ""));
-    if (arb_job.keep && merch_buy && merch_buy.id == arb_job.buy_id && !(res && res.done && res.bought)) { mb_fail(res && res.done ? "auf der Reise nichts gekauft" : (why || "keine Rückmeldung")); }
+    if (arb_job.keep && merch_buy && merch_buy.id == arb_job.buy_id && !(res && res.done && (res.bought || res.sold))) { mb_fail(res && res.done ? "auf der Reise nichts gekauft" : (why || "keine Rückmeldung")); }
     if (!arb_job.keep) arb_hist.push({ t: Date.now(), server: sv, profit: res && res.done ? (res.profit || 0) : null, bought: res ? res.bought || 0 : 0, why: why || null }); if (arb_hist.length > 20) arb_hist = arb_hist.slice(-20); try { localStorage.setItem("lp_arb_hist", JSON.stringify(arb_hist)); } catch (e) {}
     try { var f = parent.document.getElementById("ichar" + nm.toLowerCase()); if (f) f.remove(); } catch (e) {}
     try { if (active_chars()[nm]) stop_character(nm); } catch (e) {}
@@ -3962,7 +3965,7 @@ function mkt_filtered() {
     return out;
 }
 function mkt_action_html(o, i) {
-    if (o.b) { var have = inv_count(o.name, o.level); var why = !o.same ? "Kaufgesuch auf " + pretty_server(o.server) + " – Verkauf nur auf dem eigenen Server" : !have ? "nicht in deinem Inventar" : ""; return "<button data-act='msell' data-i='" + i + "' title='" + esc(why || ("Bot läuft zum Käufer und verkauft " + Math.min(have, o.q || 1) + "× " + o.name + " für " + fmt(o.price) + " je Stück")) + "'" + (why ? " disabled" : "") + ">Verkaufen" + (have ? " (" + Math.min(have, o.q || 1) + ")" : "") + "</button>"; }
+    if (o.b) { var have = inv_count(o.name, o.level), viam2 = merch_can_buy() && !is_pvp_server(o.server); var why = !have ? "nicht in deinem Inventar" : is_pvp_server(o.server) ? "PVP-Server" : (!o.same && !viam2) ? "anderer Server – nur über den Händler möglich (" + (merch_buy ? "Einkauf/Verkauf läuft" : "Händler aus") + ")" : ""; return "<button data-act='msell' data-i='" + i + "' title='" + esc(why || (viam2 ? "Händler holt " + Math.min(have, o.q || 1) + "× " + o.name + " bei dir ab" + (o.same ? "" : ", reist nach " + pretty_server(o.server)) + " und verkauft für " + fmt(o.price) + " je Stück" : "Magier läuft zum Käufer und verkauft " + Math.min(have, o.q || 1) + "× " + o.name)) + "'" + (why ? " disabled" : "") + ">Verkaufen" + (have ? " (" + Math.min(have, o.q || 1) + ")" : "") + (viam2 || !have ? "" : " (Magier)") + "</button>"; }
     if (o.same) { var viam = merch_can_buy() && MB_SAFE_MAPS[o.map]; return "<button data-act='mbuy' data-i='" + i + "' title='" + (viam ? "Händler holt das Gold beim Magier, kauft und bringt es – Magier farmt weiter" : merch_buy ? "Einkauf läuft schon – Magier kauft selbst" : !team_on.merch || !team_running(TEAM.merch) ? "Händler aus – Magier kauft selbst" : "Verkäufer steht auf " + (o.map || "?") + " (für den Händler zu gefährlich) – Magier kauft selbst") + "'>Kaufen" + (viam ? "" : " (Magier)") + "</button> <button data-act='mgoto' data-i='" + i + "' title='nur hinlaufen und pausieren – du schaust selbst'>Hin</button>"; }
     if (is_pvp_server(o.server)) return "<span class='lp_k' title='PVP-Server – kein Serverwechsel'>PVP</span>";
     var viat = merch_can_buy();
@@ -4023,7 +4026,7 @@ function mkt_compact_html() {
         var atxt = a ? "<span style='color:" + (gr.tags.schn ? "#4caf50" : "#e6e6e6") + "'>" + fmt(a.price) + "</span> <span class='lp_k'>" + esc(a.seller) + " · " + esc(pretty_server(a.server)) + (a.same ? " ★" : "") + (gr.sells.length > 1 ? " (" + gr.sells.length + ")" : "") + "</span>" : "<span class='lp_k'>–</span>";
         var btxt = b ? "<span style='color:#c9a0f0'>" + fmt(b.price) + "</span>" + (d.s && b.q > 1 ? " <span class='lp_k'>×" + b.q + "</span>" : "") + " <span class='lp_k'>" + esc(b.seller) + " · " + esc(pretty_server(b.server)) + (b.same ? " ★" : "") + (gr.bids.length > 1 ? " (" + gr.bids.length + ")" : "") + "</span>" : "<span class='lp_k'>–</span>";
         var sp = gr.span, sc = sp == null ? "#6b7280" : sp >= 0 ? "#4caf50" : "#9aa3b2", stxt = sp == null ? "–" : (sp > 0 ? "+" : "") + Math.round(sp * 100) + " %";
-        var act = (a ? mkt_action_html(a, idx(a)) : "") + (b && b.same && inv_count(b.name, b.level) ? " " + mkt_action_html(b, idx(b)) : "");
+        var act = (a ? mkt_action_html(a, idx(a)) : "") + (b && inv_count(b.name, b.level) ? " " + mkt_action_html(b, idx(b)) : "");
         h += "<tr class='lp_mg" + (a && a.same ? " here" : "") + "' data-mg='" + esc(gr.key) + "' style='cursor:pointer'><td class='l'><span style='color:#6b7280;display:inline-block;width:10px'>" + (open ? "▾" : "▸") + "</span>" + mkt_label(gr.name) + (gr.stat_type ? " <small style='color:#9aa3b2'>" + esc(gr.stat_type) + "</small>" : "") + mkt_tags_html(gr.tags) + "</td><td>" + (d.s ? "–" : "+" + gr.level) + "</td><td>" + atxt + "</td><td>" + btxt + "</td><td style='color:" + sc + "'>" + stxt + "</td><td>" + act + "</td></tr>";
         if (open) { gr.sells.concat(gr.bids).forEach(function (o) { var dl = o._delta != null ? o._delta : (a && a.price > 0 ? (o.price - a.price) / a.price : null); var dc = dl == null ? "#6b7280" : o.b ? (dl >= 0 ? "#4caf50" : "#9aa3b2") : dl <= 0.001 ? "#4caf50" : dl >= 1 ? "#ef5350" : dl >= 0.25 ? "#ffb74d" : "#9aa3b2"; var dtxt = dl == null ? "" : (!o.b && dl <= 0.001) ? "günstigst" : (dl > 0 ? "+" : "") + Math.round(dl * 100) + " %";
             h += "<tr" + (o.same ? " class='here'" : "") + " style='font-size:11px'><td class='l' style='padding-left:22px'><span class='lp_k'>" + (o.b ? "Kaufgesuch" : "Angebot") + "</span> " + esc(o.seller) + " <span class='lp_k'>· " + esc(pretty_server(o.server)) + (o.same ? " ★" : "") + " · " + esc(o.map || "?") + (o.stat_type ? " · " + esc(o.stat_type) : "") + "</span></td><td>" + (d.s ? "×" + o.q : "+" + o.level) + (o._n > 1 && !d.s ? " <small style='color:#6b7280'>×" + o._n + "</small>" : "") + "</td><td style='color:" + (o.b ? "#c9a0f0" : "#e6e6e6") + "'>" + fmt(o.price) + "</td><td></td><td style='color:" + dc + "'>" + dtxt + "</td><td>" + mkt_action_html(o, idx(o)) + "</td></tr>"; }); }
@@ -4042,7 +4045,8 @@ function market_click(b) { // Klicks im Markt-Fenster (true = verarbeitet)
     if (!act) return false; var o = mkt_rows[i];
     if (act == "mbuy" && o && merch_can_buy() && MB_SAFE_MAPS[o.map]) { merch_buy_start(o, "here"); render_market(); return true; }
     if (act == "mbuy" && o) { market_job = { mode: "buy", o: o }; game_log("Markt: kaufe " + o.name + (o.level ? "+" + o.level : "") + " für " + fmt(o.price) + " bei " + o.seller + " – laufe hin"); run_market_job(); return true; }
-    if (act == "msell" && o) { market_job = { mode: "sell", o: o }; game_log("Markt: verkaufe " + o.name + (o.level ? "+" + o.level : "") + " an " + o.seller + " für " + fmt(o.price) + " – laufe hin"); run_market_job(); return true; }
+    if (act == "msell" && o && merch_can_buy() && !is_pvp_server(o.server)) { merch_sell_start(o); render_market(); return true; }
+    if (act == "msell" && o && o.same) { market_job = { mode: "sell", o: o }; game_log("Markt: verkaufe " + o.name + (o.level ? "+" + o.level : "") + " an " + o.seller + " für " + fmt(o.price) + " – laufe hin"); run_market_job(); return true; }
     if (act == "mgoto" && o) { market_job = { mode: "goto", o: o }; game_log("Markt: laufe zu " + o.seller + " (" + (o.map || "?") + ")"); run_market_job(); return true; }
     if (act == "mtrip" && o && merch_can_buy() && !is_pvp_server(o.server)) { merch_buy_start(o, "trip"); render_market(); return true; }
     if (act == "mtrip" && o) { var f = global_finds.filter(function (x) { return x.name == o.name && x.seller == o.seller && x.price == o.price; })[0]; if (!f) f = { name: o.name, level: o.level, price: o.price, q: o.q, seller: o.seller, server: o.server, map: o.map, x: o.x, y: o.y, tslot: o.tslot, slot: "markt", force: true, market: true, t: Date.now() }; game_log("Serverkauf: " + o.name + (o.level ? "+" + o.level : "") + " für " + fmt(o.price) + " bei " + o.seller + " auf " + pretty_server(o.server)); start_trip(f); render_market(); return true; }
@@ -4086,7 +4090,8 @@ var MB_SAFE_MAPS = { main: true, bank: true, winterland: true };
 function inv_count(name, level) { var q = 0; for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && it.name == name && (it.level || 0) == (level || 0)) q += it.q || 1; } return q; }
 function mb_save() { try { if (merch_buy) localStorage.setItem("lp_merch_buy", JSON.stringify(merch_buy)); else localStorage.removeItem("lp_merch_buy"); } catch (e) {} last_panel = 0; }
 function merch_can_buy() { return !SOLO && team_on.merch && team_running(TEAM.merch) && !merch_buy && !arb_job && !server_trip; }
-function mb_stage_txt() { if (!merch_buy) return ""; var j = merch_buy, o = j.o, nm = o.name + (o.level ? "+" + o.level : ""); var st = { direct: "Auftrag geht an den Händler (eigene Kasse)", call: "wartet auf Gelegenheit, Händler zu rufen", calling: "Händler unterwegs zum Gold holen", buying: "Händler kauft bei " + o.seller, deliver: "Händler bringt es", trip: "Reise wird gestartet", away: "Händler auf " + pretty_server(o.server), fetch: "Händler wird zum Abholen gerufen", fetching: "Händler bringt es" }[j.stage] || j.stage; return nm + " (" + fmt(o.price) + (j.q > 1 ? " ×" + j.q : "") + ") – " + st; }
+function mb_stage_txt() { if (!merch_buy) return ""; var j = merch_buy, o = j.o, nm = o.name + (o.level ? "+" + o.level : ""); if (j.kind == "sell") { var sst = { call: "wartet auf Gelegenheit, Händler zu rufen", calling: "Händler holt das Item", selling: "Händler verkauft an " + o.seller, trip: "Reise wird gestartet", away: "Händler verkauft auf " + pretty_server(o.server) }[j.stage] || j.stage; return "Verkauf " + j.q + "× " + nm + " (" + fmt(o.price) + ") – " + sst; }
+    var st = { direct: "Auftrag geht an den Händler (eigene Kasse)", call: "wartet auf Gelegenheit, Händler zu rufen", calling: "Händler unterwegs zum Gold holen", buying: "Händler kauft bei " + o.seller, deliver: "Händler bringt es", trip: "Reise wird gestartet", away: "Händler auf " + pretty_server(o.server), fetch: "Händler wird zum Abholen gerufen", fetching: "Händler bringt es" }[j.stage] || j.stage; return nm + " (" + fmt(o.price) + (j.q > 1 ? " ×" + j.q : "") + ") – " + st; }
 function merch_buy_start(o, mode) {
     if (!merch_can_buy()) { game_log("Einkauf über Händler nicht möglich" + (merch_buy ? " – läuft schon: " + mb_stage_txt() : arb_job ? " – Handelsreise läuft" : "")); return false; }
     var mst = team_state[TEAM.merch], mgold = mst && mst.gold != null ? mst.gold : 0, budget = spendable() + Math.max(0, mgold - 50000);
@@ -4096,6 +4101,14 @@ function merch_buy_start(o, mode) {
     if (!own) { var gap = need - Math.max(0, mgold - 50000), top = Math.max(gap, MG.target - mgold); if (spendable() >= top) gold = top; else if (spendable() >= gap) gold = gap; else { game_log("Einkauf: zu wenig Gold – nötig " + fmt(gap) + " zusätzlich zur Händlerkasse (" + fmt(mgold) + "), verfügbar " + fmt(spendable()) + " über der Reserve"); return false; } }
     merch_buy = { id: Date.now(), o: { name: o.name, level: o.level || 0, price: o.price, q: o.q, seller: o.seller, server: o.server, map: o.map, x: o.x, y: o.y, tslot: o.tslot }, q: q, gold: gold, mode: mode, stage: own ? (mode == "here" ? "direct" : "trip") : "call", t: Date.now(), tries: 0 }; mb_save();
     game_log("Einkauf über Händler: " + o.name + (o.level ? "+" + o.level : "") + (q > 1 ? " ×" + q : "") + " für " + fmt(o.price) + (mode == "trip" ? " auf " + pretty_server(o.server) : " bei " + o.seller) + (own ? " – aus der Händlerkasse (" + fmt(mgold) + ")" : " – Händler holt " + fmt(gold) + " Gold"));
+    return true;
+}
+function merch_sell_start(o) {
+    if (!merch_can_buy()) { game_log("Verkauf über Händler nicht möglich" + (merch_buy ? " – läuft schon: " + mb_stage_txt() : arb_job ? " – Handelsreise läuft" : "")); return false; }
+    var have = inv_count(o.name, o.level); if (!have) { game_log("Verkauf: " + o.name + " nicht im Inventar"); return false; }
+    var q = Math.max(1, Math.min(o.q || 1, have));
+    merch_buy = { id: Date.now(), kind: "sell", o: { name: o.name, level: o.level || 0, price: o.price, q: o.q, seller: o.seller, server: o.server, map: o.map, x: o.x, y: o.y, tslot: o.tslot }, q: q, gold: 0, mode: o.same ? "here" : "trip", stage: "call", t: Date.now(), tries: 0 }; mb_save();
+    game_log("Verkauf über Händler: " + q + "× " + o.name + (o.level ? "+" + o.level : "") + " an " + o.seller + " für " + fmt(o.price) + " je Stück" + (o.same ? "" : " auf " + pretty_server(o.server)) + " – Händler holt das Item");
     return true;
 }
 function mb_fail(why) { if (!merch_buy) return; game_log("Einkauf abgebrochen: " + why + " (" + mb_stage_txt() + ")"); merch_buy = null; mb_save(); }
@@ -4109,25 +4122,26 @@ function merch_buy_tick() {
         var was = j.stage; j.stage = was == "call" ? "calling" : "fetching"; j.t = Date.now(); mb_save();
         merchant_pickup(was == "call" ? "Einkauf" : "Einkauf abholen").then(function (ok) {
             if (!merch_buy || merch_buy.id != j.id) return;
+            if (was == "call" && j.kind == "sell") { if (!ok || !j.item_sent) { j.stage = "call"; j.t = Date.now(); j.tries++; if (j.tries >= 3) mb_fail("Händler kam nicht / Item nicht übergeben"); mb_save(); return; } j.stage = j.mode == "here" ? "selling" : "trip"; j.t = Date.now(); mb_save(); return; }
             if (was == "call") { if (!ok || !j.gold_sent) { j.stage = "call"; j.t = Date.now(); j.tries++; if (j.tries >= 3) mb_fail("Händler kam nicht / Gold nicht übergeben"); mb_save(); return; } j.stage = j.mode == "here" ? "buying" : "trip"; j.t = Date.now(); mb_save(); }
             else { if (ok && j.got) mb_done(j.o.name + (j.got > 1 ? " ×" + j.got : "") + " erhalten"); else { j.stage = "fetch"; j.t = Date.now(); j.tries++; if (j.tries >= 4) mb_fail("Abholung nicht gelungen – Item liegt beim Händler"); mb_save(); } }
         });
         return;
     }
-    if (j.stage == "buying" || j.stage == "deliver") { if (el > 12 * 60000) mb_fail("keine Rückmeldung vom Händler"); return; }
+    if (j.stage == "buying" || j.stage == "deliver" || j.stage == "selling") { if (el > 12 * 60000) mb_fail("keine Rückmeldung vom Händler"); return; }
     if (j.stage == "trip") { if (arb_job) return; var why = arb_blocked(); if (why && !/Pause bis/.test(why)) { mb_fail("Reise nicht möglich: " + why); return; } if (why) return; mb_start_trip(); return; }
-    if (j.stage == "away") { if (!arb_job) { j.stage = "fetch"; j.t = Date.now(); j.tries = 0; mb_save(); } else if (el > 20 * 60000) mb_fail("Reise ohne Ende"); return; }
+    if (j.stage == "away") { if (!arb_job) { if (j.kind == "sell") { mb_done("Verkaufsreise beendet – Erlös liegt in der Händlerkasse"); return; } j.stage = "fetch"; j.t = Date.now(); j.tries = 0; mb_save(); } else if (el > 20 * 60000) mb_fail("Reise ohne Ende"); return; }
 }
 function mb_start_trip() { // Handelsreise mit genau diesem Angebot, Item wird behalten
     var j = merch_buy, o = j.o, sp = split_server(norm_server(o.server).toUpperCase()); if (!sp) { mb_fail("Server unbekannt (" + o.server + ")"); return; }
     var nm = TEAM.merch;
-    arb_job = { id: Date.now(), server: o.server, region: sp.region, sid: sp.id, offers: [{ name: o.name, level: o.level, price: o.price, q: j.q, seller: o.seller, map: o.map, x: o.x, y: o.y, tslot: o.tslot, profit: 0 }], t: Date.now(), stage: "stopped", profit: 0, keep: true, buy_id: j.id };
+    arb_job = { id: Date.now(), server: o.server, region: sp.region, sid: sp.id, offers: [{ name: o.name, level: o.level, price: o.price, q: j.q, seller: o.seller, map: o.map, x: o.x, y: o.y, tslot: o.tslot, profit: 0, sell: j.kind == "sell" }], t: Date.now(), stage: "stopped", profit: 0, keep: true, sellonly: j.kind == "sell", buy_id: j.id };
     arb_save_job(); try { localStorage.removeItem("lp_arb_result_" + nm); } catch (e) {}
     last_arb_trip = Date.now();
     try { if (active_chars()[nm]) stop_character(nm); } catch (e) {}
     try { parent.__lp_team_restart_after = Date.now() + 12 * 60000; } catch (e) {}
     j.stage = "away"; j.t = Date.now(); mb_save();
-    game_log("Einkauf: Händler reist nach " + pretty_server(o.server) + " für " + o.name + (o.level ? "+" + o.level : ""));
+    game_log((j.kind == "sell" ? "Verkauf" : "Einkauf") + ": Händler reist nach " + pretty_server(o.server) + " für " + o.name + (o.level ? "+" + o.level : ""));
 }
 var scanning_now = false;
 async function market_scan_now() { // Knopf im Händler-Bereich: sofortiger Scan, Ergebnis ins Log

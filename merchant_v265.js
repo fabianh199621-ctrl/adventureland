@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Händler (F4llenMerch) – Stufe 1 =====
 // Läuft unsichtbar neben dem Magier. Aufgaben: Stand kaufen und öffnen, Loot abholen/verkaufen/einlagern,
 // Startgold vom Magier holen. mluck ist abgeschaltet (braucht Lv 40, Händler levelt praktisch nicht) – USE_MLUCK/LEVEL_MODE. Meldungen gehen per Charakter-Nachricht an den Magier und erscheinen dort als "[Merch] …".
-var MERCH_VERSION = "v264";
+var MERCH_VERSION = "v265";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -48,7 +48,7 @@ function on_cm(name, data) {
     else if (data.t == "pickup_cancel") { pickup = null; }
     else if (data.t == "goldback") { goldback_req = Date.now(); }
     else if (data.t == "tidy") { tidy_req = Date.now(); say("Aufräumen angefordert"); }
-    else if (data.t == "item") { manifest[item_key(data.name, data.level)] = data.action || "bank"; }
+    else if (data.t == "item") { manifest[item_key(data.name, data.level)] = data.action || "bank"; if (data.action == "hold") { hold_items[item_key(data.name, data.level)] = true; hold_save(); } }
     else if (data.t == "done") { pickup_done = true; }
     else if (data.t == "me") { mage = data; mage.t = Date.now(); if (typeof data.paused == "boolean") m_paused = data.paused; if (data.mg && data.mg.target > 0) { GOLD_KEEP = data.mg.target; GOLD_HANDBACK = data.mg.target + 200000; GOLD_AUTO_BACK = data.mg.target + 500000; GOLD_MIN = data.mg.min || GOLD_MIN; } }
     else if (data.t == "buy" && data.buy) { direct_buy = data.buy; say("Einkauf aus eigener Kasse: " + data.buy.name + (data.buy.level ? "+" + data.buy.level : "") + " bei " + data.buy.seller); }
@@ -158,7 +158,9 @@ async function do_pickup() { // zum Magier, Items entgegennehmen, Tränke/Gold �
         say("Übernommen: " + Object.keys(manifest).length + " Posten" + (gave_pots ? ", " + gave_pots + " Tränke übergeben" : "") + (gave_gold ? ", " + gave_gold + " Gold übergeben" : ""));
     } catch (e) { say("Abholung: " + (e && e.message ? e.message : e)); }
     await process_inventory();
-    if (req.buy && req.buy.mode == "here") await do_market_buy(req.buy);
+    if (req.sellreq && req.sellreq.mode == "here") await do_market_sell(req.sellreq);
+    else if (req.sellreq) say("Verkaufsware an Bord – warte auf die Reise nach " + req.sellreq.server);
+    else if (req.buy && req.buy.mode == "here") await do_market_buy(req.buy);
     else if (req.buy && req.buy.mode == "trip") say("Reisegold an Bord – warte auf die Reise nach " + req.buy.server);
 }
 async function do_market_buy(b) { // Einkauf auf diesem Server: hin, kaufen, zum Magier bringen
@@ -183,6 +185,29 @@ async function do_market_buy(b) { // Einkauf auf diesem Server: hin, kaufen, zum
     say(ok ? "Einkauf: " + b.name + (b.level ? "+" + b.level : "") + (got > 1 ? " ×" + got : "") + " gekauft für " + spent + " Gold" : "Einkauf fehlgeschlagen: " + why);
     try { send_cm(MAGE, { t: "bought", id: b.id, ok: ok, spent: spent, why: why, q: got }); } catch (e) {}
     await deliver_to_mage(b, ok);
+}
+function find_order(buyer, b) { // Kaufgesuch des Käufers für dieses Item finden
+    var c0 = buyer.slots[b.tslot]; if (c0 && c0.b && c0.name == b.name && (c0.level || 0) == (b.level || 0) && c0.price >= b.price * 0.95) return { it: c0, slot: b.tslot };
+    for (var sl in buyer.slots) { var c = buyer.slots[sl]; if (sl.indexOf("trade") == 0 && c && c.b && c.name == b.name && (c.level || 0) == (b.level || 0) && c.price >= b.price * 0.95) return { it: c, slot: sl }; }
+    return null;
+}
+async function do_market_sell(b) { // Item des Magiers an ein Kaufgesuch auf diesem Server verkaufen
+    var ok = false, why = "", earned = 0, q = 0;
+    try {
+        status("Verkauf");
+        if (!(await go({ map: b.map, x: b.x, y: b.y + 30 }, 150))) throw "Käufer nicht erreichbar";
+        var buyer = null; try { buyer = get_player(b.seller); } catch (e) {}
+        if (!buyer || !buyer.slots) throw "Käufer " + b.seller + " nicht (mehr) hier";
+        var ord = find_order(buyer, b); if (!ord) throw "Kaufgesuch nicht mehr da oder niedriger";
+        q = Math.max(1, Math.min(ord.it.q || 1, count_item(b.name, b.level))); if (!count_item(b.name, b.level)) throw "Item nicht im Inventar";
+        var g0 = character.gold;
+        try { await trade_sell(buyer, ord.slot, q); } catch (e) { try { parent.socket.emit("trade_sell", { slot: ord.slot, id: buyer.id, rid: ord.it.rid, q: q }); } catch (e2) {} }
+        await sleep(1500); earned = character.gold - g0;
+        if (earned <= 0) throw "Verkauf nicht bestätigt (Gold unverändert)";
+        ok = true; delete hold_items[item_key(b.name, b.level)]; hold_save();
+    } catch (e) { why = e && e.message ? e.message : String(e); }
+    say(ok ? "Verkauf: " + q + "× " + b.name + (b.level ? "+" + b.level : "") + " für " + earned + " Gold an " + b.seller : "Verkauf fehlgeschlagen: " + why + " – Item bleibt bei mir");
+    try { send_cm(MAGE, { t: "sold", id: b.id, ok: ok, earned: earned, q: q, why: why }); } catch (e) {}
 }
 async function deliver_to_mage(b, ok) { // Item und Restgold zum Magier bringen
     status("Lieferung");
@@ -358,6 +383,18 @@ async function run_arbitrage(job) {
         var offers = job.offers.slice().sort(function (a, b) { return b.profit - a.profit; });
         for (var i = 0; i < offers.length; i++) {
             var o = offers[i]; if (Date.now() - t0 > 6 * 60000) { arb_log("Zeitlimit erreicht"); break; }
+            if (o.sell) { // Kaufgesuch bedienen (Item vom Magier an Bord)
+                if (!count_item(o.name, o.level)) { arb_res.skipped++; arb_log(o.name + ": nicht im Inventar"); continue; }
+                if (o.map && o.x != null) { var oks = await go({ map: o.map, x: o.x, y: o.y + 30 }, 120); if (!oks) { arb_res.skipped++; arb_log(o.seller + " nicht erreichbar"); continue; } }
+                var buyer = null; try { buyer = get_player(o.seller); } catch (e) {}
+                if (!buyer || !buyer.slots) { arb_res.skipped++; arb_log("Käufer " + o.seller + " nicht (mehr) hier"); continue; }
+                var ord = find_order(buyer, o); if (!ord) { arb_res.skipped++; arb_log(o.name + ": Kaufgesuch nicht mehr da oder niedriger"); continue; }
+                var qs = Math.max(1, Math.min(ord.it.q || 1, count_item(o.name, o.level))), gs = character.gold;
+                try { await trade_sell(buyer, ord.slot, qs); } catch (e) { try { parent.socket.emit("trade_sell", { slot: ord.slot, id: buyer.id, rid: ord.it.rid, q: qs }); } catch (e2) {} }
+                await sleep(1500);
+                if (character.gold > gs) { arb_res.sold += qs; arb_res.earned += character.gold - gs; delete hold_items[item_key(o.name, o.level)]; hold_save(); arb_log("verkauft " + qs + "× " + o.name + " für " + (character.gold - gs)); } else { arb_res.skipped++; arb_log("Verkauf " + o.name + " nicht bestätigt"); }
+                arb_save(); continue;
+            }
             if (character.esize < 2) { arb_log("Inventar voll"); break; }
             if (character.gold < o.price) { arb_res.skipped++; arb_log(o.name + "+" + o.level + ": zu wenig Gold (" + o.price + ")"); continue; }
             if (o.map && o.x != null) { var ok = await go({ map: o.map, x: o.x, y: o.y + 30 }, 120); if (!ok) { arb_res.skipped++; arb_log(o.seller + " nicht erreichbar"); continue; } }
