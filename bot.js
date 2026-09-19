@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v238";
+var BOT_VERSION = "v239";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -146,7 +146,17 @@ function escort_near() { var ok = true; escorts().forEach(function (e) { var p =
 function spot_needs_team(mon) { if (!wait_team_on || SOLO || event_mode || !mon || !escorts().length) return false; var d = G.monsters[mon]; return !!d && (strict_mon(mon) || mon_danger(d) > wait_team_danger); }
 function wait_txt() { var b = escort_behind(); if (!b) return ""; return "warte auf " + TEAM_LABEL[b.k] + (b.rip ? " (tot)" : isFinite(b.d) ? " (" + Math.round(b.d) + " px)" : b.other_map ? " (andere Karte)" : " (außer Sicht)"); }
 function wait_log(why) { if (Date.now() - wait_logged > 60000) { wait_logged = Date.now(); game_log("Auf Team warten: " + why); } }
-var wait_since = 0, wait_who = "";
+var wait_since = 0, wait_who = "", rally_logged = 0;
+function rally_back(farm) { // Team-Spot und ich stehe schon im/zu nah am Spawnfeld ohne Team: raus zum Kartenanfang und dort warten
+    if (!strict_mon(farm) || busy) return false;
+    var rs = mon_rects(farm, character.map); if (!rs.length) return false;
+    var pt = [character.x, character.y, character.x, character.y], dmin = Infinity; for (var i = 0; i < rs.length; i++) dmin = Math.min(dmin, rect_dist(rs[i], pt));
+    if (dmin >= RALLY_DIST) return false;
+    var sp = (G.maps[character.map] && G.maps[character.map].spawns || [])[0]; if (!sp) return false;
+    if (Date.now() - rally_logged > 60000) { rally_logged = Date.now(); game_log("Team-Spot " + farm + ": stehe " + Math.round(dmin) + " px am Spawnfeld ohne Team – zurück zum Sammelpunkt (Kartenanfang)"); }
+    busy = true; change_target(null); smart_move({ map: character.map, x: sp[0], y: sp[1] }).catch(function () {}).then(function () { busy = false; });
+    return true;
+}
 function meet_escort() { // Begleiter hängt auf derselben Karte länger fest (kein Weg zu mir?): ich gehe ihm entgegen
     var b = escort_behind(); if (!b || !isFinite(b.d) || b.rip) { wait_since = 0; return; }
     if (wait_who != b.nm) { wait_who = b.nm; wait_since = Date.now(); return; }
@@ -4168,7 +4178,7 @@ function start_main() {
     if (!target) { var tt = team_threat(); if (tt) target = tt; }
     if (!target && hold) { // Team hängt zurück: nur Angreifer auf mich abwehren, sonst stehen bleiben
         for (var hid in parent.entities) { var he = parent.entities[hid]; if (is_valid_target(he) && he.target == character.name) { target = he; break; } }
-        if (!target) { set_message(wait_txt()); wait_log(wait_txt() + " – kämpfe nicht allein bei " + farm); meet_escort(); return; }
+        if (!target) { set_message(wait_txt()); wait_log(wait_txt() + " – kämpfe nicht allein bei " + farm); if (!rally_back(farm)) meet_escort(); return; }
         if (character.hp < character.max_hp * 0.6 || strict_mon(farm)) { game_log("Ohne Team von " + target.mtype + " angegriffen (HP " + Math.round(character.hp / character.max_hp * 100) + " %" + (strict_mon(farm) ? ", Team-Pflicht" : "") + ") – Rückzug in die Stadt statt allein zu kämpfen"); fleeing = true; busy = true; (async function () { try { stop("smart"); change_target(null); await travel_place("town"); while (character.hp < character.max_hp * 0.9 && !character.rip) await sleep(1000); } catch (e) {} fleeing = false; busy = false; })(); return; }
         wait_log("verteidige mich gegen " + target.mtype + " (Team fehlt noch)"); change_target(target);
     }
