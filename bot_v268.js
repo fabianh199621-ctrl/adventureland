@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v267";
+var BOT_VERSION = "v268";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -2253,14 +2253,14 @@ async function bank_compound_jewelry() { // muss in der Bank stehen
 }
 // ---------- Bank sortieren ----------
 function bank_status_log() { // alle Bankfächer: Karte, Belegung, freigeschaltet oder Preis
-    var bp = null; try { bp = parent.G && parent.G.bank_packs; } catch (e) {} var bk = character.bank || {}, lines = [], total = 0, free = 0;
+    var bp = null; try { bp = parent.bank_packs || (parent.G && parent.G.bank_packs) || (typeof bank_packs != "undefined" ? bank_packs : null); } catch (e) {} var bk = (character.bank && typeof character.bank == "object") ? character.bank : (bank_cache || {}), lines = [], total = 0, free = 0;
     var keys = bp ? Object.keys(bp) : Object.keys(bk).filter(function (k) { return k.indexOf("items") == 0; });
     keys.sort(function (a, b) { return parseInt(a.replace("items", "")) - parseInt(b.replace("items", "")); }).forEach(function (k) {
         var meta = bp && bp[k], arr = bk[k];
         if (Array.isArray(arr)) { var used = arr.filter(function (x) { return !!x; }).length; total += arr.length; free += arr.length - used; lines.push(k + " (" + (meta ? meta[0] : "?") + "): " + used + "/" + arr.length); }
         else lines.push(k + " (" + (meta ? meta[0] : "?") + "): gesperrt" + (meta ? ", " + fmt(meta[1]) + " Gold" : ""));
     });
-    game_log("Bank: " + (character.bank ? "" : "(letzter Stand, nicht in der Bank) ") + free + " von " + total + " Plätzen frei · " + lines.join(" · "));
+    game_log("Bank: " + (character.bank ? "" : "(letzter Stand, nicht in der Bank) ") + free + " von " + total + " Plätzen frei · " + (lines.length ? lines.join(" · ") : "keine Fächer bekannt (Preisliste " + (bp ? "da" : "fehlt") + ", Bankdaten " + (Object.keys(bk).length ? "da" : "fehlen") + ")"));
 }
 function bank_packs() { var b = character.bank || {}; return Object.keys(b).filter(function (k) { return k.indexOf("items") == 0 && Array.isArray(b[k]); }).sort(); }
 function bank_item_key(it) { return [inv_rank(it), it.name, -(it.level || 0)]; }
