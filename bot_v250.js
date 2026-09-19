@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v248";
+var BOT_VERSION = "v250";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -423,7 +423,7 @@ function team_broadcast() { // alle 5 s: wo bin ich, was mache ich (für Händle
     if (SOLO) { if (Date.now() - solo_last_st > 30000) { solo_last_st = Date.now(); try { var hq0 = mh_quest(); send_cm(MAIN_NAME, { t: "st", level: character.level, state: character.rip ? "tot" : paused ? "Pause" : (hq0 && hq0.c > 0 ? "jagt " + hq0.id + " (" + hq0.c + ")" : "farmt " + (current_spot || "?")), gold: character.gold, tokens: tokens(), hp: character.hp, max_hp: character.max_hp, map: character.map, free: character.esize }); } catch (e) {} } return; }
     try { window.localStorage.setItem("lp_mh_missing", JSON.stringify(mh_missing_for_me())); } catch (e) {} // für Jäger/Priest/Ranger: welche Set-Teile mir fehlen
     var act = active_chars(), ml = character.s && character.s.mluck;
-    var msg = { t: "me", map: character.map, x: Math.round(character.x), y: Math.round(character.y), level: character.level, hp: character.hp, max_hp: character.max_hp, paused: paused || !bot_running, spot: current_spot, strict: strict_mon(current_spot), event: event_mode, tgt: (function () { if (!paused) return last_target_id; try { var mt = get_target(); return mt && mt.type == "monster" && !mt.dead ? mt.id : null; } catch (e) { return null; } })(), mluck: ml ? { f: ml.f, ms: ml.ms, strong: !!ml.strong } : null, in: character.in };
+    var msg = { t: "me", map: character.map, x: Math.round(character.x), y: Math.round(character.y), level: character.level, hp: character.hp, max_hp: character.max_hp, paused: paused || !bot_running, spot: current_spot, strict: strict_mon(current_spot), event: event_mode, hunt_go: (function () { try { var hs0 = hunt_slot_state(); return hs0.busy ? null : hs0.fetcher; } catch (e) { return null; } })(), hunt_holder: (function () { try { return hunt_slot_state().holder; } catch (e) { return null; } })(), tgt: (function () { if (!paused) return last_target_id; try { var mt = get_target(); return mt && mt.type == "monster" && !mt.dead ? mt.id : null; } catch (e) { return null; } })(), mluck: ml ? { f: ml.f, ms: ml.ms, strong: !!ml.strong } : null, in: character.in };
     for (var k in TEAM) { var nm = TEAM[k]; if (team_on[k] && act[nm]) { try { send_cm(nm, msg); } catch (e) {} } }
 }
 function team_send(name, data) { try { send_cm(name, data); } catch (e) {} }
@@ -968,6 +968,18 @@ function candidate_list() {
     list.sort(function (a, b) { return estimate(b) - estimate(a); });
     return list.slice(0, MEASURE_TOP);
 }
+function hunt_slot_state() { // Team holt nur eine Jagd zur Zeit: {busy, holder, fetcher}
+    var q = mh_quest(), now = Date.now();
+    if (SOLO) return { busy: false, holder: null, fetcher: character.name };
+    var active = null, missing = 0, free = [];
+    if (q && q.c > 0 && hunt_target_ok(q.id)) active = "Mage (" + q.id + ")";
+    if (!q || q.c == 0) free.push(character.name);
+    ["priest", "ranger"].forEach(function (k) { if (!team_on[k]) return; var st = team_state[TEAM[k]]; if (!st || now - st.t > 90000) { missing++; return; } var h = st.hunt; if (h && h.c > 0) { if (!active && hunt_target_ok(h.id)) active = TEAM_LABEL[k] + " (" + h.id + ")"; } else free.push(TEAM[k]); });
+    if (active) return { busy: true, holder: active, fetcher: null };
+    if (missing && now - boot_t < 45000) return { busy: true, holder: "warte auf Statusmeldungen", fetcher: null };
+    return { busy: false, holder: null, fetcher: free[0] || null };
+}
+var hunt_slot_logged = 0;
 function team_hunt_pick() { // Jagdmonster von Priest/Ranger, das für uns sicher ist (nur wenn keine eigene Jagd läuft)
     if (SOLO || hunt_spot) return null;
     var list = [], missing = 0; ["priest", "ranger"].forEach(function (k) { if (!team_on[k]) return; var st = team_state[TEAM[k]]; if (!st || Date.now() - st.t > 90000) { missing++; return; } if (!st.hunt || !(st.hunt.c > 0)) return; var id = st.hunt.id; if (hunt_target_ok(id) && spawn_count(id) > 0) list.push({ id: id, who: TEAM_LABEL[k], k: k, left: st.hunt.ms != null ? st.hunt.ms - (Date.now() - st.t) : 1e12 }); });
@@ -1690,7 +1702,7 @@ function hunts_grid_html() { // Jagden als kleine Tabelle: Wer · Monster n · S
     }
     rows.push(["Mage", q && q.c > 0 ? esc(q.id) + " " + q.c : "–", status(q && q.id, q && q.c, q && q.ms, true)]);
     ["priest", "ranger"].forEach(function (k) { if (!team_on[k]) return; var st = team_state[TEAM[k]]; if (!st || Date.now() - st.t > 120000) { rows.push([TEAM_LABEL[k], "?", "<span class='lp_k'>keine Meldung</span>"]); return; } var h = st.hunt; rows.push([TEAM_LABEL[k], h && h.c > 0 ? esc(h.id) + " " + h.c : "–", status(h && h.id, h && h.c, h && h.ms != null ? Math.max(0, h.ms - (Date.now() - st.t)) : null, false)]); });
-    var w = wait_txt();
+    var w = wait_txt(); try { var hs2 = hunt_slot_state(); rows.push(["<span class='lp_k'>Slot</span>", "", hs2.busy ? "<span class='lp_k'>belegt: " + esc(hs2.holder) + "</span>" : "<span class='lp_k'>frei – holt " + esc(hs2.fetcher == character.name ? "Mage" : hs2.fetcher == TEAM.priest ? "Priest" : hs2.fetcher == TEAM.ranger ? "Ranger" : "niemand (alle haben eine Jagd)") + "</span>"]); } catch (e) {}
     return "<div class='lp_hunts'>" + rows.map(function (r) { return "<span class='lp_hn'>" + r[0] + "</span><span class='lp_hm'>" + r[1] + "</span><span>" + r[2] + "</span>"; }).join("") + "</div>" + (w ? "<div style='color:#ffb74d;font-size:11px'>" + esc(w) + "</div>" : "");
 }
 function update_panel() {
@@ -2493,6 +2505,8 @@ async function check_monsterhunt() {
     // 2. Jagd erledigt -> abgeben; oder keine Jagd -> neue holen
     if (Date.now() < hunt_cooldown_until) return;
     if (SET.hunt_town_only && !(q && q.c == 0)) { var dpos = find_npc("monsterhunter"); if (!dpos || character.map != dpos.map || distance(character, dpos) > 900) return; } // neue Jagd nur holen, wenn wir ohnehin in der Stadt sind
+    var hs = hunt_slot_state(), may_take = !hs.busy && hs.fetcher == character.name; // Team holt nur eine Jagd zur Zeit
+    if (!(q && q.c == 0) && !may_take) { if (Date.now() - hunt_slot_logged > 180000) { hunt_slot_logged = Date.now(); game_log("Keine neue Jagd: " + (hs.busy ? hs.holder + " läuft" : "holt gerade " + (hs.fetcher == TEAM.priest ? "Priest" : hs.fetcher == TEAM.ranger ? "Ranger" : "niemand"))); } return; }
     hunting = true; busy = true;
     try {
         var before_tok = tokens(), before_gold = character.gold;
@@ -2501,7 +2515,8 @@ async function check_monsterhunt() {
         await sleep(800);
         var q2 = mh_quest();
         if (q && q.c == 0) { day_count("hunts"); game_log("Monster Hunt abgegeben: +" + (tokens() - before_tok) + " Tokens, +" + fmt(character.gold - before_gold) + " Gold (" + tokens() + " Tokens gesamt)"); }
-        if (!q2) { try { r = await interact("monsterhunt"); } catch (e) { r = e; } await sleep(800); q2 = mh_quest(); }
+        if (!q2 && !may_take) { hs = hunt_slot_state(); may_take = !hs.busy && hs.fetcher == character.name; if (!may_take) game_log("Jagd abgegeben, keine neue geholt: " + (hs.busy ? hs.holder + " läuft" : "Priest/Ranger holt")); }
+        if (!q2 && may_take) { try { r = await interact("monsterhunt"); } catch (e) { r = e; } await sleep(800); q2 = mh_quest(); }
         if (q2 && q2.c > 0) {
             if (hunt_target_ok(q2.id)) { hunt_bad_tries = 0; game_log("Neue Jagd: " + q2.c + "x " + q2.id + " (" + fmt_time(q2.ms || 0) + ")"); }
             else {
@@ -3819,7 +3834,7 @@ function mkt_gkey(o) { var d = G.items[o.name] || {}; return d.s ? o.name : o.na
 function mkt_groups() { // Kompakt: je Item günstigstes Angebot + bestes Kaufgesuch
     var q = (mkt.q || "").toLowerCase(), rows = mkt_filtered(), g = {};
     rows.forEach(function (o) { if (o.b) return; var k = mkt_gkey(o); var gr = g[k] || (g[k] = { key: k, name: o.name, level: o.level, stat_type: o.stat_type, sells: [], bids: [], tags: {} }); gr.sells.push(o); for (var t in o._tags) gr.tags[t] = true; });
-    market_all.forEach(function (o) { if (!o.b || !mkt_basic_ok(o, q)) return; var k = mkt_gkey(o), mn0 = mkt_min[o.name + "+" + o.level], isarb = !!(mn0 && o.price >= mn0.price); var gr = g[k]; if (!gr) { if (!(mkt.f.buy || mkt.f.all || (mkt.f.arb && isarb))) return; gr = g[k] = { key: k, name: o.name, level: o.level, stat_type: o.stat_type, sells: [], bids: [], tags: { buy: true } }; } o._tags = o._tags || mkt_tags(o); if (isarb) gr.tags.arb = true; gr.bids.push(o); });
+    market_all.forEach(function (o) { if (!o.b || !mkt_basic_ok(o, q)) return; var k = mkt_gkey(o), mn0 = mkt_min[o.name + "+" + o.level], isarb = !!(mn0 && o.price >= mn0.price); var gr = g[k]; if (!gr) { if (!(mkt.f.buy || (mkt.f.arb && isarb))) return; /* reine Kaufgesuche nur mit Chip Kaufgesuche oder Arbitrage-Chip */ gr = g[k] = { key: k, name: o.name, level: o.level, stat_type: o.stat_type, sells: [], bids: [], tags: { buy: true } }; } o._tags = o._tags || mkt_tags(o); if (isarb) gr.tags.arb = true; gr.bids.push(o); });
     var out = Object.keys(g).map(function (k) { var gr = g[k]; gr.sells.sort(function (a, b) { return a.price - b.price; }); gr.bids.sort(function (a, b) { return b.price - a.price; }); gr.ask = gr.sells[0] || null; gr.bid = gr.bids[0] || null; gr.span = gr.ask && gr.bid ? (gr.bid.price - gr.ask.price) / gr.ask.price : null; return gr; });
     var k2 = mkt.csort, d = mkt.cdir;
     out.sort(function (a, b) {
