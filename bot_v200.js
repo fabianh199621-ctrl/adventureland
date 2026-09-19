@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v198";
+var BOT_VERSION = "v200";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -116,6 +116,13 @@ var focus_mode = false; try { focus_mode = localStorage.getItem("lp_focus") == "
 var FOCUS_MIN_FREE = 3, FOCUS_TARGET_FREE = 20, FOCUS_POT_MIN = 50;
 var BYCATCH_RANGE = 250;             // Beifang: andere sichere Monster in dieser Entfernung angreifen
 var hunt_on = true; try { hunt_on = localStorage.getItem("lp_hunt") != "0"; } catch (e) {}
+var hunter_only = false; try { hunter_only = localStorage.getItem("lp_hunter_only") == "1"; } catch (e) {} // Nur Jäger-Jagd: ausschließlich das Jagdmonster des Jägers farmen, egal wie gefährlich; keine eigene Jagd
+function hunter_hunt() { // laufende Jagd des Jäger-Chars (aus seinem Status), sonst null
+    if (SOLO || !team_on.hunter) return null;
+    var st = team_state[TEAM.hunter]; if (!st || Date.now() - st.t > 120000 || !st.hunt || !(st.hunt.c > 0) || !G.monsters[st.hunt.id]) return null;
+    return st.hunt;
+}
+function hunter_only_mon() { var hh = hunter_only ? hunter_hunt() : null; return hh ? hh.id : null; }
 var pause_after = false; try { pause_after = localStorage.getItem("lp_pause_after") == "1"; } catch (e) {} // nach manueller Aktion (Button/Taste) pausieren statt weiterfarmen
 function after_action(what) {
     if (pause_after) { paused = true; stop("smart"); set_message("PAUSE"); game_log((what || "Aktion") + " fertig – pausiert (Einstellung „Danach: Pause“, P zum Weiterfarmen)"); last_panel = 0; }
@@ -248,6 +255,7 @@ function skill_available(name) {
 // Prüft das konkrete Exemplar (gelevelte Monster haben mehr HP/Angriff als die G-Daten)
 function too_strong(m) {
     var base = G.monsters[m.mtype]; if (!base) return true;
+    if (hunter_only && m.mtype == hunter_only_mon()) return false; // Nur Jäger-Jagd: das Jagdmonster wird immer angegangen
     var d = Object.assign({}, base);
     if (m.max_hp) d.hp = m.max_hp;
     if (m.attack) d.attack = m.attack;
@@ -616,13 +624,18 @@ function event_html() {
     var st = event_status(); if (!st && !event_mode) return "";
     return "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Event: <span style='color:#e6e6e6'>Giga Crab" + (st && st.max_hp ? " " + Math.round((st.hp || 0) / st.max_hp * 100) + " % HP" : "") + (event_mode ? " – dabei seit " + Math.round((Date.now() - event_since) / 60000) + " min, " + event_boss_hits + " Treffer" : "") + "</span></span><button data-act='eventon'" + (event_on ? " class='on'" : "") + " title='am Server-Event teilnehmen (Vorrang vor Jagd)'>Teilnehmen</button></div>";
 }
+function team_where_txt(nm, st) { // Karte + Entfernung eines Teammitglieds (aus Status/Sichtweite)
+    try { var pe = get_player(nm); if (pe && pe.map == character.map) return " · " + Math.round(distance(character, pe)) + " px entfernt"; } catch (e) {}
+    if (st && st.map) return " · " + esc(st.map) + (st.map != character.map ? " (andere Karte)" : " (außer Sicht)");
+    return "";
+}
 function team_html() {
     var parts = [];
-    for (var k in TEAM) { var nm = TEAM[k], st = team_state[nm], run = team_running(nm), lab = TEAM_LABEL[k]; var raw = active_chars()[nm]; try { var pe = get_player(nm); if (pe && pe.rip && st) st.state = "tot"; } catch (e) {} parts.push("<span style='color:" + (team_on[k] ? (run ? "#4caf50" : "#ffb74d") : "#9aa3b2") + "'>" + lab + (st && Date.now() - st.t < 60000 ? " Lv " + st.level + " · " + esc(st.state || "") + (st.tokens != null ? " · " + st.tokens + " Tok" : "") + (st.hunt && st.hunt.c > 0 ? " · Jagd " + esc(st.hunt.id) + " " + st.hunt.c : "") : run ? " (" + esc(String(raw)) + ", keine Meldung)" : team_on[k] ? " (aus/offline)" : "") + "</span> <button data-act='team' data-k='" + k + "'" + (team_on[k] ? " class='on'" : "") + " style='padding:0 5px'>" + (team_on[k] ? "an" : "aus") + "</button>"); }
+    for (var k in TEAM) { var nm = TEAM[k], st = team_state[nm], run = team_running(nm), lab = TEAM_LABEL[k]; var raw = active_chars()[nm]; try { var pe = get_player(nm); if (pe && pe.rip && st) st.state = "tot"; } catch (e) {} parts.push("<span style='color:" + (team_on[k] ? (run ? "#4caf50" : "#ffb74d") : "#9aa3b2") + "'>" + lab + (st && Date.now() - st.t < 60000 ? " Lv " + st.level + " · " + esc(st.state || "") + (st.tokens != null ? " · " + st.tokens + " Tok" : "") + (st.hunt && st.hunt.c > 0 ? " · Jagd " + esc(st.hunt.id) + " " + st.hunt.c : "") + team_where_txt(nm, st) : run ? " (" + esc(String(raw)) + ", keine Meldung" + (st ? " seit " + fmt_time(Date.now() - st.t) + ", zuletzt " + esc(st.map || "?") : "") + ")" : team_on[k] ? " (aus/offline)" : "") + "</span> <button data-act='team' data-k='" + k + "'" + (team_on[k] ? " class='on'" : "") + " style='padding:0 5px'>" + (team_on[k] ? "an" : "aus") + "</button>"); }
     if (team_on.merch) { var mst = team_state[TEAM.merch]; parts.push("<button data-act='goldback' title='Händler bringt sein Gold (bis auf 150k) zum Magier'>Gold holen" + (mst && mst.gold ? " (" + fmt(mst.gold) + ")" : "") + "</button>"); }
     parts.push("<button data-act='teamlogs' title='gespeicherte Logs von Merch/Priest/Ranger (letzte 40 Zeilen je Char) ins Log holen'>Team-Logs</button>");
     if (team_on.merch) parts.push("<button data-act='merchtest' title='Testet, ob der Händler auf einen anderen Server gestartet werden kann (Grundlage für Handel im Hintergrund); dauert ca. 1 min, Händler kommt danach zurück'" + (merch_test ? " class='on'" : "") + " style='padding:0 5px'>" + (merch_test ? "Servertest läuft (" + merch_test.stage + ")" : "Merch-Servertest") + "</button>");
-    if (team_on.hunter) { var hst = team_state[TEAM.hunter]; if (hst && hst.hunt && hst.hunt.c > 0) { var hid = hst.hunt.id, ok = G.monsters[hid] && is_safe_monster(hid) && hunt_danger_ok(hid); parts.push("<span style='color:" + (ok ? "#8ab4f8" : "#ffb74d") + "'>Jäger-Jagd: " + esc(hid) + " " + hst.hunt.c + " übrig" + (ok ? (current_spot == hid ? " – Team farmt dort" : "") : " – zu gefährlich (" + Math.round(mon_danger(G.monsters[hid]) * 100) + " %), läuft aus") + "</span>"); } }
+    if (team_on.hunter) { var hst = team_state[TEAM.hunter]; if (hst && Date.now() - hst.t < 120000 && hst.hunt && hst.hunt.c > 0) { var hid = hst.hunt.id, ok = G.monsters[hid] && is_safe_monster(hid) && hunt_danger_ok(hid), dg = G.monsters[hid] ? Math.round(mon_danger(G.monsters[hid]) * 100) : 0; if (hunter_only) parts.push("<span style='color:#8ab4f8'>Jäger-Jagd: " + esc(hid) + " " + hst.hunt.c + " übrig · " + fmt_time(hst.hunt.ms || 0) + " – wird gefarmt (Gefahr " + dg + " %)</span>"); else parts.push("<span style='color:" + (ok ? "#8ab4f8" : "#ffb74d") + "'>Jäger-Jagd: " + esc(hid) + " " + hst.hunt.c + " übrig" + (ok ? (current_spot == hid ? " – Team farmt dort" : "") : " – zu gefährlich (" + dg + " %), läuft aus") + "</span>"); } else if (hunter_only) parts.push("<span style='color:#9aa3b2'>Jäger-Jagd: keine – warte, bis der Jäger eine neue holt</span>"); }
     var give = "";
     if (team_on.priest || team_on.ranger) { // manuelle Übergabe: Inventarteil auswählen, an Priest/Ranger geben (der legt es an, wenn es besser ist)
         var opts = "", any = false;
@@ -898,6 +911,12 @@ function choose_spot() {
 }
 function pick_farm_monster() {
     if (!has_weapon()) return NO_WEAPON_MONSTER;
+    if (hunter_only && !event_mode) { // Nur Jäger-Jagd: Jagdmonster des Jägers ist der einzige Spot, ohne Gefahr-/Sperrprüfung; ohne Jagd wird gewartet
+        var hm = hunter_only_mon();
+        if (hm) { if (current_spot != hm) { current_spot = hm; need_repick = false; meas = null; save_state(); game_log("Nur Jäger-Jagd: farme " + hm + " (" + hunter_hunt().c + " übrig, Gefahr " + Math.round(mon_danger(G.monsters[hm]) * 100) + " %)"); } return hm; }
+        if (current_spot) { current_spot = null; save_state(); }
+        return null;
+    }
     if (manual_spot && !spot_blocked(manual_spot)) { if (current_spot != manual_spot) { current_spot = manual_spot; need_repick = false; meas = null; save_state(); } if (!team_safe(manual_spot) && Date.now() - team_safe_warned > 600000) { team_safe_warned = Date.now(); game_log("Achtung: Spot " + manual_spot + " ist für " + escort_name() + " zu gefährlich – fester Spot bleibt, aber er wird dort sterben"); } return current_spot; }
     if (current_spot && !team_safe(current_spot)) { if (Date.now() - team_safe_warned > 600000) { team_safe_warned = Date.now(); game_log("Spot " + current_spot + " für " + escort_name() + " zu gefährlich – wähle einen leichteren"); } need_repick = true; }
     var th2 = team_hunt_pick(); if (th2 && current_spot != th2.id && !manual_spot) need_repick = true; else if (!th2 && team_hunt_logged && current_spot == team_hunt_logged) { team_hunt_logged = ""; need_repick = true; }
@@ -1011,6 +1030,12 @@ function go_to_farm_spot() {
         return;
     }
     var mon = pick_farm_monster();
+    if (!mon) { // Nur Jäger-Jagd ohne laufende Jagd: beim Jäger bleiben und warten
+        set_message("Warte auf Jäger");
+        var hp = null; try { hp = get_player(TEAM.hunter); } catch (e) {}
+        if (hp && !hp.rip && hp.map == character.map && distance(character, hp) > 250) { busy = true; smart_move({ x: hp.x + 60, y: hp.y }).catch(function () {}).then(function () { busy = false; }); }
+        return;
+    }
     var areas = spawn_areas(mon);
     // Schon im Spawngebiet, aber nichts in Sicht -> umherstreifen statt Weg neu suchen
     if (areas.length && !get_nearest_monster({ type: mon })) {
@@ -1229,6 +1254,7 @@ function init_panel() {
         else if (act == "twist") { var ik = b.getAttribute("data-k"), ist = team_state[TEAM[ik]]; if (!ist || !ist.slots) game_log("Team-Zielbau: keine Statusmeldung von " + TEAM_LABEL[ik]); else { team_wish[ik] = {}; TEAM_WISH_SLOTS.forEach(function (sl) { var w = ist.slots[sl]; if (w && G.items[w.name]) team_wish[ik][sl] = { item: w.name, level: w.level || 0 }; }); save_team_wish(); game_log("Team-Zielbau " + TEAM_LABEL[ik] + ": Ist-Stand übernommen"); } }
         else if (act == "wishtoggle") { div.__wish = !div.__wish; try { localStorage.setItem("lp_panel_wish", div.__wish ? "1" : "0"); } catch (x) {} }
         else if (act == "pauseafter") { pause_after = !pause_after; try { localStorage.setItem("lp_pause_after", pause_after ? "1" : "0"); } catch (x) {} game_log("Nach manueller Aktion: " + (pause_after ? "pausieren" : "weiterfarmen")); last_panel = 0; }
+        else if (act == "hunteronly") { hunter_only = !hunter_only; try { localStorage.setItem("lp_hunter_only", hunter_only ? "1" : "0"); } catch (x) {} game_log("Nur Jäger-Jagd " + (hunter_only ? "an – Team farmt ausschließlich die Jagd von " + TEAM.hunter : "aus")); need_repick = true; meas = null; if (!hunter_only) current_spot = null; stop("smart"); busy = false; change_target(null); save_state(); }
         else if (act == "hunt") { hunt_on = !hunt_on; try { localStorage.setItem("lp_hunt", hunt_on ? "1" : "0"); } catch (x) {} game_log("Monster Hunt " + (hunt_on ? "an" : "aus")); }
         else if (act == "huntabandon") preempt("Jagd aufgeben", hunt_abandon);
         else if (act == "focus") { focus_mode = !focus_mode; try { localStorage.setItem("lp_focus", focus_mode ? "1" : "0"); } catch (x) {} tidy_next = 0; if (focus_mode && pending_upgrade == "auto") pending_upgrade = null; game_log("Fokus-Modus " + (focus_mode ? "an – nur farmen/hunten, Nebenroutinen aus" : "aus – alle Routinen wieder aktiv")); }
@@ -1497,7 +1523,7 @@ function update_panel() {
     h += "<div class='lp_row'><span class='lp_mode'>Modus: " + (manual_spot ? "fest (" + esc(manual_spot) + ")" : "automatisch") + "</span><button data-act='auto'" + (manual_spot ? "" : " class='on'") + ">Auto</button><button data-act='reset'>Neu messen</button><button data-act='worth'" + (only_worth ? " class='on'" : "") + " title='nur die 5 besten nach geschätzten XP/h'>Top 5</button><button data-act='bycatch'" + (bycatch ? " class='on'" : "") + " title='andere sichere Monster in der Nähe mit angreifen'>Beifang</button><button data-act='focus'" + (focus_mode ? " class='on'" : "") + " title='nur farmen/hunten: kein Kuss, Ponty, Markt, Kuchen, keine Ausrüstungsautomatik; Inventar erst unter 3 freien Plätzen bis 20 frei aufräumen (mit Tränken)'>Fokus</button><button data-act='sortinv' title='Inventar sortieren'>Inv ⇅</button></div>"
       + "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Aktionen</span><button data-act='compound' title='Schmuck compounden (getragen + ungetragen)'>Compound</button><button data-act='tidy' title='Schrott verkaufen, Rest in die Bank'>Aufräumen</button><button data-act='bank' title='Schrott aus der Bank holen und verkaufen'>Bank aufräumen</button><button data-act='banksort' title='Bank nach Gruppen sortieren, Reiter lückenlos füllen'>Bank ⇅</button><button data-act='copylog' title='Bot-Log in die Zwischenablage'>Log kopieren</button><button data-act='pauseafter'" + (pause_after ? " class='on'" : "") + " title='Nach Buttons/Tasten pausieren statt weiterfarmen'>Danach: " + (pause_after ? "Pause" : "Farmen") + "</button><button data-act='clearlog' title='Log-Puffer leeren' style='padding:1px 5px'>✕</button></div>";
     h += event_html();
-    h += "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Hunt: <span style='color:#e6e6e6'>" + esc(mh_txt()) + "</span> · " + tokens() + " Tokens</span><button data-act='hunt'" + (hunt_on ? " class='on'" : "") + " title='Monster Hunt automatisch'>Hunt</button><input data-huntmax='1' value='" + Math.round(hunt_max_danger * 100) + "' title='Jagden nur bis zu dieser Gefahr in % (HP-Anteil je Kill); darüber wird die Jagd übersprungen' style='width:34px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555;text-align:right'><span class='lp_k' style='font-size:11px'>%</span>" + (mh_quest() ? "<button data-act='huntabandon'>Abbrechen</button>" : "") + "</div>";
+    h += "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Hunt: <span style='color:#e6e6e6'>" + esc(mh_txt()) + "</span> · " + tokens() + " Tokens</span><button data-act='hunt'" + (hunt_on ? " class='on'" : "") + " title='Monster Hunt automatisch'>Hunt</button>" + (team_on.hunter ? "<button data-act='hunteronly'" + (hunter_only ? " class='on'" : "") + " title='Nur die Jagd des Jäger-Chars farmen (ohne Gefahrgrenze), keine eigene Jagd'>Nur Jäger</button>" : "") + "<input data-huntmax='1' value='" + Math.round(hunt_max_danger * 100) + "' title='Jagden nur bis zu dieser Gefahr in % (HP-Anteil je Kill); darüber wird die Jagd übersprungen' style='width:34px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555;text-align:right'><span class='lp_k' style='font-size:11px'>%</span>" + (mh_quest() ? "<button data-act='huntabandon'>Abbrechen</button>" : "") + "</div>";
     h += "<div class='lp_row' style='flex-wrap:wrap;line-height:1.6'><span class='lp_k'>Serverwechsel:</span> <span style='font-size:11px'>" + server_tip_html() + "</span></div>";
     h += arb_html(panel) + arb_trip_html() + watch_html();
     h += team_html();
@@ -1960,6 +1986,7 @@ function attackers_on_me() {
 var flee_log = {}; // Spot -> Zeitpunkte der Rückzüge (für die Sperre)
 function note_retreat() { // >3 Rückzüge am selben Spot in 10 min -> Spot 30 min sperren (Jagd: übersprungen)
     var m = pick_farm_monster(); if (!m) return;
+    if (hunter_only && m == hunter_only_mon()) return; // Nur Jäger-Jagd: Spot wird nie gesperrt
     var now = Date.now(), arr = (flee_log[m] || []).filter(function (t) { return now - t < 10 * 60000; }); arr.push(now); flee_log[m] = arr;
     if (arr.length <= 3) return;
     flee_log[m] = [];
@@ -1986,6 +2013,7 @@ async function check_flee() {
         } else game_log("Zu starker Angreifer – sofortiger Rückzug (HP " + Math.round(hp * 100) + "%)");
         try { stop("smart"); change_target(null); await travel_place("town"); while (character.hp < character.max_hp * 0.9 && !character.rip) await sleep(1000); } catch (e) {} fleeing = false; busy = false; return;
     }
+    if (hunter_only && n > 0 && hp <= KITE_HP) n = Math.max(n, FLEE_ATTACKERS); // Nur Jäger-Jagd: starkes Monster zählt nicht als "zu stark", darum wenigstens bei wenig HP kurz zurückweichen
     if (n < FLEE_ATTACKERS || hp > KITE_HP) return;
     fleeing = true; busy = true; if (!event_mode) note_retreat();
     try {
@@ -2200,6 +2228,7 @@ async function spend_tokens_for_main() { // Zweit-Charakter: Set-Teile, die dem 
 }
 async function check_monsterhunt() {
     if (event_mode) return; // Event hat Vorrang
+    if (hunter_only) { if (hunt_spot) { game_log("Nur Jäger-Jagd: eigene Jagd auf " + hunt_spot + " wird nicht weiterverfolgt"); hunt_reset(0); } return; } // keine eigenen Jagden, kein Daisy-Besuch
     if (!hunt_on || hunting || busy || upgrading || kissing || fleeing || exchanging || paused || !has_weapon()) return;
     if (Date.now() - last_hunt_check < 15000) return;
     last_hunt_check = Date.now();
