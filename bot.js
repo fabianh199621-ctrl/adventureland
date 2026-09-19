@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v206";
+var BOT_VERSION = "v207";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -260,8 +260,8 @@ function too_strong(m) {
     if (m.max_hp) d.hp = m.max_hp;
     if (m.attack) d.attack = m.attack;
     if (m.frequency) d.frequency = m.frequency;
+    if (m.mtype == manual_spot || m.mtype == current_spot) return d.attack >= character.max_hp * 0.5; // aktueller Farmspot: gelevelte Exemplare werden trotzdem gefarmt (dauert nur länger); nur Gegner, die mich in 2 Treffern töten, bleiben tabu
     if (d.attack * HITS_TO_DIE_MIN > character.max_hp) return true;
-    if (m.mtype == manual_spot || m.mtype == current_spot) return false; // aktueller Farmspot: gelevelte Exemplare werden trotzdem gefarmt (dauert nur länger); nur Ein-Treffer-Gegner bleiben tabu
     return mon_danger(d) > MAX_DANGER || mon_ttk(d) > MAX_TTK;
 }
 // Spot-Sperre: true = dauerhaft (bis Neustart), Zahl = bis Zeitpunkt (gelevelte Monster)
