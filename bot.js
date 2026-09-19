@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v225";
+var BOT_VERSION = "v226";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -4135,6 +4135,7 @@ function start_main() {
 
     var farm = pick_farm_monster();
     var target = get_targeted_monster();
+    if (target && target.id != last_target_id && !priority_mon(target.mtype)) { change_target(null); target = null; } // angeklicktes/fremdes Ziel ignorieren – der Bot verfolgt nur Ziele, die er selbst gesetzt hat (Team folgt sonst deinem Klick)
     var beh = (wait_team_on && !SOLO && !event_mode && escorts().length) ? escort_behind(strict_mon(farm) ? WAIT_NEAR : WAIT_BEHIND) : null;
     var hold = spot_needs_team(farm) && !!beh; // Team hängt zurück: kein neues Ziel, nur Verteidigung
 

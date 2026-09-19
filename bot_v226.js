@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v224";
+var BOT_VERSION = "v226";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -661,10 +661,10 @@ function hunts_html() { // Rundlauf: Jagden aller Kämpfer mit Status
         if (!id || !(c > 0)) return "keine";
         var d = G.monsters[id], dg = d ? Math.round(mon_danger(d) * 100) : 0, ok = mine ? hunt_target_ok(id) : (th && th.id == id);
         var run = current_spot == id && !paused;
-        return esc(id) + " " + c + (ok ? (run ? " <span style='color:#4caf50'>läuft</span>" : " <span style='color:#8ab4f8'>machbar" + (mine ? "" : ", als Nächstes") + "</span>") : " <span style='color:#ffb74d'>" + esc(hunt_skip_reason(id)) + ", läuft aus " + fmt_time(ms || 0) + "</span>");
+        return esc(id) + " " + c + (ok ? (run ? " <span style='color:#4caf50'>läuft</span>" : " <span style='color:#8ab4f8'>machbar" + (mine ? "" : ", als Nächstes") + "</span>") : " <span style='color:#ffb74d'>" + esc(hunt_skip_reason(id)) + (ms != null ? ", läuft aus " + fmt_time(ms) : "") + "</span>");
     }
     items.push("Mage " + st_txt(q && q.id, q && q.c, q && q.ms, true));
-    ["priest", "ranger", "hunter"].forEach(function (k) { if (!team_on[k]) return; var st = team_state[TEAM[k]]; if (!st || Date.now() - st.t > 120000) { items.push(TEAM_LABEL[k] + " ?"); return; } var h = st.hunt; items.push(TEAM_LABEL[k] + " " + st_txt(h && h.id, h && h.c, h && h.ms, false)); });
+    ["priest", "ranger", "hunter"].forEach(function (k) { if (!team_on[k]) return; var st = team_state[TEAM[k]]; if (!st || Date.now() - st.t > 120000) { items.push(TEAM_LABEL[k] + " ?"); return; } var h = st.hunt; items.push(TEAM_LABEL[k] + " " + st_txt(h && h.id, h && h.c, h && h.ms != null ? Math.max(0, h.ms - (Date.now() - st.t)) : null, false)); }); // Restzeit ab Meldezeitpunkt weiterzählen
     var w = wait_txt();
     return "<span style='color:#9aa3b2'>Jagden: </span>" + items.join(" · ") + (w ? " <span style='color:#ffb74d'>· " + esc(w) + "</span>" : "");
 }
@@ -4135,6 +4135,7 @@ function start_main() {
 
     var farm = pick_farm_monster();
     var target = get_targeted_monster();
+    if (target && target.id != last_target_id && !priority_mon(target.mtype)) { change_target(null); target = null; } // angeklicktes/fremdes Ziel ignorieren – der Bot verfolgt nur Ziele, die er selbst gesetzt hat (Team folgt sonst deinem Klick)
     var beh = (wait_team_on && !SOLO && !event_mode && escorts().length) ? escort_behind(strict_mon(farm) ? WAIT_NEAR : WAIT_BEHIND) : null;
     var hold = spot_needs_team(farm) && !!beh; // Team hängt zurück: kein neues Ziel, nur Verteidigung
 
