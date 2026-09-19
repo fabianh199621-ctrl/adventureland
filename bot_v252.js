@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v250";
+var BOT_VERSION = "v252";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -140,7 +140,7 @@ function escort_behind(limit) { // am weitesten zurückhängender Begleiter (Abs
 }
 function escort_near() { var ok = true; escorts().forEach(function (e) { var p = null; try { p = get_player(e.nm); } catch (x) {} if (!(p && !p.rip && p.map == character.map && distance(character, p) <= WAIT_NEAR)) ok = false; }); return ok; }
 function spot_needs_team(mon) { if (!wait_team_on || SOLO || event_mode || !mon || !escorts().length) return false; var d = G.monsters[mon]; return !!d && (strict_mon(mon) || mon_danger(d) > wait_team_danger); }
-function wait_txt() { var b = escort_behind(); if (!b) return ""; return "warte auf " + TEAM_LABEL[b.k] + (b.rip ? " (tot)" : isFinite(b.d) ? " (" + Math.round(b.d) + " px)" : b.other_map ? " (andere Karte)" : " (außer Sicht)"); }
+function wait_txt() { var b = escort_behind() || (strict_mon(current_spot) ? escort_behind(WAIT_NEAR) : null); if (!b) return ""; return "warte auf " + TEAM_LABEL[b.k] + (b.rip ? " (tot)" : isFinite(b.d) ? " (" + Math.round(b.d) + " px)" : b.other_map ? " (andere Karte)" : " (außer Sicht)"); }
 function wait_log(why) { if (Date.now() - wait_logged > 60000) { wait_logged = Date.now(); game_log("Auf Team warten: " + why); } }
 var wait_since = 0, wait_who = "", rally_logged = 0;
 function rally_back(farm) { // Team-Spot und ich stehe schon im/zu nah am Spawnfeld ohne Team: raus zum Kartenanfang und dort warten
@@ -990,13 +990,21 @@ function team_hunt_pick() { // Jagdmonster von Priest/Ranger, das für uns siche
     if (!cur && team_hunt_cur) { team_hunt_cur = null; try { localStorage.removeItem("lp_team_hunt_cur"); } catch (e) {} }
     return cur;
 }
+var MEASURE_SKIP_RATIO = 0.3, measure_skip_logged = {};
 var team_hunt_logged = "", no_cand_logged = 0, boot_t = Date.now(), team_hunt_cur = null; try { team_hunt_cur = JSON.parse(localStorage.getItem("lp_team_hunt_cur") || "null"); } catch (e) {}
 function choose_spot() {
     var th = team_hunt_pick(); if (th) { if (team_hunt_logged != th.id) { team_hunt_logged = th.id; game_log("Team-Jagd: " + th.who + " jagt " + th.id + " – farme dort mit"); } return th.id; }
     var cands = candidate_list();
     if (!cands.length) { if (Date.now() - no_cand_logged > 300000) { no_cand_logged = Date.now(); game_log("Automatik: kein Monster mit Jagd-Häkchen verfügbar – Häkchen in der Liste setzen; solange goo/bee"); } return team_escort() ? "bee" : "goo"; }
-    // 1. noch nicht (oder veraltet) gemessene Spots zuerst
-    for (var i = 0; i < cands.length; i++) if (!stats_valid(farm_stats[cands[i]])) { game_log("Messe Spot: " + cands[i]); return cands[i]; }
+    // 1. noch nicht (oder veraltet) gemessene Spots zuerst – außer die Schätzung liegt weit unter dem besten gemessenen Spot (keine 10 min verschwenden)
+    var best_meas = 0; cands.forEach(function (m) { if (stats_valid(farm_stats[m])) best_meas = Math.max(best_meas, farm_stats[m].xp_h); });
+    var skipped = [];
+    for (var i = 0; i < cands.length; i++) if (!stats_valid(farm_stats[cands[i]])) {
+        var est_i = mon_xph_est(G.monsters[cands[i]], cands[i]);
+        if (best_meas > 0 && est_i < best_meas * MEASURE_SKIP_RATIO) { skipped.push(cands[i]); if (!measure_skip_logged[cands[i]]) { measure_skip_logged[cands[i]] = true; game_log("Messung übersprungen: " + cands[i] + " (Schätzung " + fmt(est_i) + " XP/h, unter " + Math.round(MEASURE_SKIP_RATIO * 100) + " % vom besten Spot " + fmt(best_meas) + ") – „Farmen“ in der Liste misst ihn trotzdem"); } continue; }
+        game_log("Messe Spot: " + cands[i]); return cands[i];
+    }
+    cands = cands.filter(function (m) { return skipped.indexOf(m) < 0; }); if (!cands.length) return team_escort() ? "bee" : "goo";
     // 2. sonst bester Score
     var max_xp = 1, max_gold = 1;
     cands.forEach(function (m) { max_xp = Math.max(max_xp, farm_stats[m].xp_h); max_gold = Math.max(max_gold, farm_stats[m].gold_h); });

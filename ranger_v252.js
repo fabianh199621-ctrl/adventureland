@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Ranger (F4llenRanger) =====
 // Folgt dem Magier, greift dessen Ziel an (Supershot, Hunter's Mark, 3-/5-Shot), versorgt sich selbst mit NPC-Ausrüstung und Tränken.
 // Meldungen gehen per Charakter-Nachricht an den Magier ("[Ranger] …").
-var RANGER_VERSION = "v250";
+var RANGER_VERSION = "v252";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -116,7 +116,8 @@ async function auto_equip() { // alle 30 s: pro Slot das beste Teil aus Inventar
 // ---------- eigene Monsterjagd (Daisy) + Tokens für den Magier ----------
 var last_hunt_town = 0, hunt_reported = "";
 function mh_q() { return character.s && character.s.monsterhunt; }
-function hunt_may_take() { return !mage || Date.now() - mage.t > 90000 || mage.hunt_go == character.name; } // Magier gibt frei, wer die nächste Jagd holt (nur eine Team-Jagd zur Zeit)
+var boot_t = Date.now();
+function hunt_may_take() { if (!mage) return Date.now() - boot_t > 90000; return Date.now() - mage.t > 90000 || mage.hunt_go == character.name; } // ohne Magier-Meldung erst nach 90 s selbst entscheiden // Magier gibt frei, wer die nächste Jagd holt (nur eine Team-Jagd zur Zeit)
 function hunt_town_needed() { var q = mh_q(); return (q && q.c == 0 && Date.now() - last_hunt_town > 60000) || (!q && hunt_may_take() && Date.now() - last_hunt_town > 60000); } // fertig: sofort abgeben und neue holen; keine Jagd: alle 10 min versuchen // keine Jagd oder fertig: zu Daisy
 function daisy_pos() { try { for (var map in G.maps) { var md = G.maps[map]; if (!md || !md.npcs) continue; for (var i = 0; i < md.npcs.length; i++) { var n = md.npcs[i]; if (n.id == "monsterhunter" && n.position) return { map: map, x: n.position[0], y: n.position[1] }; } } } catch (e) {} return null; }
 async function hunt_town_step() { // in der Stadt: Jagd abgeben/holen, Tokens in Set-Teile für den Magier umsetzen (in die Bank)
