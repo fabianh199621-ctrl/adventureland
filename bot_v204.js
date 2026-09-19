@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v202";
+var BOT_VERSION = "v204";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -928,7 +928,7 @@ function pick_farm_monster() {
 }
 // Buttons: fester Spot / Automatik / neu messen
 function set_manual_spot(mon) {
-    manual_spot = mon; meas = null; Object.keys(blocked_spots).forEach(function (k) { if (blocked_spots[k] === true) delete blocked_spots[k]; }); need_repick = true; current_spot = mon;
+    manual_spot = mon; meas = null; Object.keys(blocked_spots).forEach(function (k) { if (blocked_spots[k] === true) delete blocked_spots[k]; }); if (blocked_spots[mon]) { delete blocked_spots[mon]; game_log("Sperre für " + mon + " aufgehoben (manuell gewählt)"); } leveled_since = 0; need_repick = true; current_spot = mon;
     game_log("Fester Farmspot: " + mon); save_state();
     if (paused) { paused = false; game_log("Pause aufgehoben"); }
     stop("smart"); busy = false;
