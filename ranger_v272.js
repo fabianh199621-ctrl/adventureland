@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Ranger (F4llenRanger) =====
 // Folgt dem Magier, greift dessen Ziel an (Supershot, Hunter's Mark, 3-/5-Shot), versorgt sich selbst mit NPC-Ausrüstung und Tränken.
 // Meldungen gehen per Charakter-Nachricht an den Magier ("[Ranger] …").
-var RANGER_VERSION = "v271";
+var RANGER_VERSION = "v272";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -64,6 +64,23 @@ function event_handover() { // Geschenke/Kuchenstücke an den Magier geben, wenn
     last_event_give = Date.now();
     for (var i = character.items.length - 1; i >= 0; i--) { var it = character.items[i]; if (it && (it.name == "anniversarygift" || /^slice_/.test(it.name))) { try { send_item(MAGE, i, it.q || 1); say(it.name + (it.q > 1 ? " ×" + it.q : "") + " an " + MAGE + " übergeben"); } catch (e) {} } }
 }
+async function enter_bank() { // sicher in die Bank: smart_move, sonst zur Tür laufen und selbst durchgehen
+    for (var t = 0; t < 3 && character.map != "bank"; t++) {
+        try { stop("smart"); stop("move"); } catch (e) {}
+        try { await smart_move("bank"); } catch (e) { say("Weg zur Bank (" + (t + 1) + "): " + (e && (e.reason || e.message) || JSON.stringify(e))); }
+        for (var w = 0; w < 15 && character.map != "bank"; w++) await sleep(200);
+        if (character.map == "bank") break;
+        if (character.map == "main") { // Tür-Fallback: main-Tür zur Bank (aus den Kartendaten), hinlaufen, durchgehen
+            var door = null; (G.maps.main.doors || []).forEach(function (d) { if (d[4] == "bank") door = d; });
+            if (door) { var dx = door[0] + door[2] / 2, dy = door[1] + door[3] / 2; try { await smart_move({ map: "main", x: dx, y: dy }); } catch (e) {} for (var w1 = 0; w1 < 10 && is_moving(character); w1++) await sleep(200);
+                say("Bank-Tür: stehe bei " + Math.round(character.x) + "," + Math.round(character.y) + " (Tür " + Math.round(dx) + "," + Math.round(dy) + ") – gehe durch");
+                try { parent.socket.emit("transport", { to: "bank", s: door[5] || 0 }); } catch (e) {} for (var w2 = 0; w2 < 25 && character.map != "bank"; w2++) await sleep(200); }
+        }
+    }
+    if (character.map != "bank") return false;
+    for (var w3 = 0; w3 < 25 && !character.bank; w3++) await sleep(200);
+    return !!character.bank;
+}
 var tidy_req = 0, goldback_req = 0, last_goldback = 0, GOLD_MAX = 2000000;
 function gold_handback() { // alles über GOLD_MAX an den Magier, wenn er in Reichweite steht (auf Befehl sofort, sonst alle 5 min prüfen)
     var over = character.gold - GOLD_MAX; if (over < (goldback_req ? 1000 : 50000)) { if (goldback_req) { goldback_req = 0; say("Gold: nichts über " + GOLD_MAX + " (habe " + character.gold + ")"); } return; }
@@ -84,8 +101,7 @@ async function go_tidy() { // Aufräumen auf Befehl des Magiers: Schrott verkauf
         var stored = 0;
         var failed = 0;
         var last_err = "";
-        if (bank.length) { try { for (var bt = 0; bt < 3 && character.map != "bank"; bt++) { try { stop("smart"); stop("move"); } catch (e) {} try { await smart_move("bank"); } catch (e) { say("Weg zur Bank (" + (bt + 1) + "): " + (e && (e.reason || e.message) || JSON.stringify(e)) + " – Karte " + character.map); await sleep(1500); } }
-            for (var w2 = 0; w2 < 25 && !character.bank; w2++) await sleep(200); if (!character.bank) throw "Bankdaten nicht geladen (Karte " + character.map + " " + Math.round(character.x) + "," + Math.round(character.y) + ")";
+        if (bank.length) { try { if (!(await enter_bank())) throw "Bank nicht erreicht (Karte " + character.map + " " + Math.round(character.x) + "," + Math.round(character.y) + ")";
             for (var b = bank.length - 1; b >= 0; b--) { var ib = character.items[bank[b]]; if (!ib) continue; var e0 = character.esize; try { var pr = bank_store(bank[b]); if (pr && pr.then) pr.then(null, function (e) { last_err = String(e && e.reason || e); }); } catch (e) { last_err = String(e && e.reason || e); } await sleep(600); if (character.esize > e0) stored++; else failed++; } } catch (e) { say("Bank: " + (e && e.message || e)); } }
         say("Aufgeräumt: " + sold + " verkauft, " + stored + " in die Bank" + (failed ? ", " + failed + " nicht abgelegt (" + (last_err || "kein Fehler gemeldet") + ")" : "") + " – frei " + character.esize);
     } catch (e) { say("Aufräumen: " + (e && e.message ? e.message : e)); }
