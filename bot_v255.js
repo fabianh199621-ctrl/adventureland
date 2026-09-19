@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v253";
+var BOT_VERSION = "v255";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -119,7 +119,7 @@ var hunt_on = true; try { hunt_on = localStorage.getItem("lp_hunt") != "0"; } ca
 var auto_on = true; try { auto_on = localStorage.getItem("lp_auto_on") != "0"; } catch (e) {} // Auto aus + kein fester Spot = nur Jagden (Team wartet bei Daisy)
 var idle_logged = 0;
 var wait_team_on = true, wait_team_danger = 0.10; try { var wtd = parseFloat(localStorage.getItem("lp_wait_danger")); if (isFinite(wtd) && wtd >= 0) wait_team_danger = wtd; } catch (e) {} // Auf Team warten: bei Spots über dieser Gefahr nicht vorlaufen/allein kämpfen
-var WAIT_BEHIND = 500, WAIT_NEAR = 250, RALLY_DIST = 350, spot_travel = false, team_wait_stop = false, wait_logged = 0;
+var WAIT_BEHIND = 500, WAIT_NEAR = 300, RALLY_DIST = 350, spot_travel = false, team_wait_stop = false, wait_logged = 0;
 var strict_set = {}; try { strict_set = JSON.parse(localStorage.getItem("lp_strict") || "{}"); } catch (e) {} // Häkchen "Team" je Monster: kein Angriff, bevor Priest und Ranger < WAIT_NEAR stehen; Priest/Ranger ziehen nie selbst
 function strict_mon(mon) { return !!strict_set[mon]; }
 function set_strict(mon, on) { strict_set[mon] = !!on; try { localStorage.setItem("lp_strict", JSON.stringify(strict_set)); } catch (e) {} game_log("Team-Pflicht bei " + mon + (on ? " an" : " aus")); }
@@ -145,6 +145,7 @@ function wait_log(why) { if (Date.now() - wait_logged > 60000) { wait_logged = D
 var wait_since = 0, wait_who = "", rally_logged = 0;
 function rally_back(farm) { // Team-Spot und ich stehe schon im/zu nah am Spawnfeld ohne Team: raus zum Kartenanfang und dort warten
     if (!strict_mon(farm) || busy) return false;
+    var far = escort_behind(WAIT_BEHIND); if (!far) return false; // Team ist auf dieser Karte und in Reichweite (nur noch nicht ganz dran): stehen bleiben statt zum Kartenanfang pendeln
     var rs = mon_rects(farm, character.map); if (!rs.length) return false;
     var pt = [character.x, character.y, character.x, character.y], dmin = Infinity; for (var i = 0; i < rs.length; i++) dmin = Math.min(dmin, rect_dist(rs[i], pt));
     if (dmin >= RALLY_DIST) return false;
@@ -3948,7 +3949,7 @@ function mkt_compact_html() {
 }
 function market_click(b) { // Klicks im Markt-Fenster (true = verarbeitet)
     var mf = b.getAttribute("data-mf"), ms = b.getAttribute("data-msort"), mcs = b.getAttribute("data-mcsort"), mg = b.getAttribute("data-mg"), act = b.getAttribute("data-act"), i = parseInt(b.getAttribute("data-i"));
-    if (mf) { mkt.f[mf] = !mkt.f[mf]; mkt_show = 0; save_mkt(); render_market(); return true; }
+    if (mf) { mkt.f[mf] = !mkt.f[mf]; if (mf == "all" && mkt.f.all) { for (var fk in mkt.f) if (fk != "all") mkt.f[fk] = false; } else if (mf != "all" && mkt.f[mf]) mkt.f.all = false; mkt_show = 0; save_mkt(); render_market(); return true; } // „Alle“ ist exklusiv zu den anderen Chips
     if (act == "mmore") { var body = market_panel && market_panel.querySelector("#lp_mkt_body"), stop = body ? body.scrollTop : 0; mkt_show = (mkt_show || (mkt.view == "kompakt" ? 150 : 200)) + (mkt.view == "kompakt" ? 150 : 200); render_market(); try { if (body) body.scrollTop = stop; } catch (e) {} return true; }
     if (act == "mview") { mkt.view = mkt.view == "kompakt" ? "alle" : "kompakt"; save_mkt(); render_market(); return true; }
     if (mcs) { if (mkt.csort == mcs) mkt.cdir = -mkt.cdir; else { mkt.csort = mcs; mkt.cdir = (mcs == "name" || mcs == "level" || mcs == "price") ? 1 : -1; } save_mkt(); render_market(); return true; }
