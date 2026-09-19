@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v200";
+var BOT_VERSION = "v201";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -714,6 +714,7 @@ function on_key(ev) {
     var t = ev.target;
     if (t && (t.tagName == "INPUT" || t.tagName == "TEXTAREA" || t.isContentEditable)) return; // nicht beim Tippen
     if (ev.ctrlKey || ev.altKey || ev.metaKey) return;
+    if (ev.repeat) return; // Taste gehalten: nur der erste Anschlag zählt
     var k = (ev.key || "").toUpperCase();
     if (k == "P") toggle_pause();
     else if (k == "N") reload_bot();
@@ -750,6 +751,7 @@ function event_debug() {
 }
 
 function reload_bot() {
+    try { if (parent.__lp_reloading && Date.now() - parent.__lp_reloading < 8000) return; parent.__lp_reloading = Date.now(); } catch (e) {} // gedrückt gehaltenes N / Doppelklick: nur ein Neuladen auf einmal (mehrere parallele Starts zerlegen sonst Team-Kanal und Timer)
     game_log("Lade neueste Version von GitHub …");
     fetch(BOT_BASE + "version.txt?t=" + Date.now(), { cache: "no-store" })
         .then(function (r) { if (!r.ok) throw "HTTP " + r.status; return r.text(); })
