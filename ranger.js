@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Ranger (F4llenRanger) =====
 // Folgt dem Magier, greift dessen Ziel an (Supershot, Hunter's Mark, 3-/5-Shot), versorgt sich selbst mit NPC-Ausrüstung und Tränken.
 // Meldungen gehen per Charakter-Nachricht an den Magier ("[Ranger] …").
-var RANGER_VERSION = "v218";
+var RANGER_VERSION = "v219";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -12,7 +12,7 @@ var RANGER_ATTACK_LEVEL = 1; // greift von Anfang an mit an (Fernkampf)
 var FOLLOW_DIST = 120, FOLLOW_MAX = 220;
 var HEAL_SELF_BELOW = 0.6, FLEE_BELOW = 0.35;
 var mage = null, p_paused = false, last_log = {}, last_status = 0, last_move = 0, last_pots_ask = 0, moving = false;
-var GEAR_SLOTS = ["helmet", "chest", "pants", "shoes", "gloves", "mainhand"], POT_MIN = 30, POT_BUY = 80, GOLD_WANT = 100000, GOLD_MIN = 20000;
+var GEAR_SLOTS = ["helmet", "chest", "pants", "shoes", "gloves", "mainhand"], POT_MIN = 100, POT_BUY = 800, GOLD_WANT = 250000, GOLD_MIN = 20000;
 var shopping = false, last_shop = 0, last_gold_ask = 0;
 function have_item(n) { for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && it.name == n) return i; } return -1; }
 function pot_count(kind) { var n = 0; for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && it.name.indexOf(kind) == 0) n += it.q || 1; } return n; }
@@ -176,7 +176,7 @@ async function tick() {
     if (mpr < 0.3) { if (!use_pot("mpot")) { try { use_skill("regen_mp"); } catch (e) {} } }
     if (shopping) return;
     if (!my_attacker() && Date.now() - last_autoequip > 30000) { await auto_equip(); }
-    if (character.gold < GOLD_MIN && mage && Date.now() - last_gold_ask > 3 * 60000) { var mg = mage_entity(); if (mg && character.map == mg.map && dist(character, mg) < 350) { last_gold_ask = Date.now(); try { send_cm(MAGE, { t: "gold?", amount: GOLD_WANT }); } catch (e) {} } }
+    if (character.gold < GOLD_MIN + 2 * POT_BUY * 100 && mage && Date.now() - last_gold_ask > 3 * 60000) { var mg = mage_entity(); if (mg && character.map == mg.map && dist(character, mg) < 350) { last_gold_ask = Date.now(); try { send_cm(MAGE, { t: "gold?", amount: GOLD_WANT }); } catch (e) {} } }
     var mage_fighting = mage && mage.tgt && Date.now() - mage.t < 15000 && !mage.paused;
     if (((shop_needed() && Date.now() - last_shop > 5 * 60000) || hunt_town_needed()) && character.gold >= GOLD_MIN && !my_attacker() && !moving && (!mage_fighting || pot_count("hpot") == 0)) { go_shopping(); return; } // nicht mitten im Kampf des Magiers in die Stadt (außer ganz ohne Tränke)
     if (has_pot("hpot") < 0 && character.gold < GOLD_MIN && mage && Date.now() - last_pots_ask > 5 * 60000) { var me = mage_entity(); if (me && character.map == me.map && dist(character, me) < 350) { last_pots_ask = Date.now(); try { send_cm(MAGE, { t: "pots?" }); } catch (e) {} } }
