@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Ranger (F4llenRanger) =====
 // Folgt dem Magier, greift dessen Ziel an (Supershot, Hunter's Mark, 3-/5-Shot), versorgt sich selbst mit NPC-Ausrüstung und Tränken.
 // Meldungen gehen per Charakter-Nachricht an den Magier ("[Ranger] …").
-var RANGER_VERSION = "v208";
+var RANGER_VERSION = "v209";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -116,7 +116,7 @@ async function auto_equip() { // alle 30 s: pro Slot das beste Teil aus Inventar
 // ---------- eigene Monsterjagd (Daisy) + Tokens für den Magier ----------
 var last_hunt_town = 0, hunt_reported = "";
 function mh_q() { return character.s && character.s.monsterhunt; }
-function hunt_town_needed() { var q = mh_q(); return (!q || q.c == 0) && Date.now() - last_hunt_town > 10 * 60000; } // keine Jagd oder fertig: zu Daisy
+function hunt_town_needed() { var q = mh_q(); return (q && q.c == 0 && Date.now() - last_hunt_town > 60000) || (!q && Date.now() - last_hunt_town > 10 * 60000); } // fertig: sofort abgeben und neue holen; keine Jagd: alle 10 min versuchen // keine Jagd oder fertig: zu Daisy
 function daisy_pos() { try { for (var map in G.maps) { var md = G.maps[map]; if (!md || !md.npcs) continue; for (var i = 0; i < md.npcs.length; i++) { var n = md.npcs[i]; if (n.id == "monsterhunter" && n.position) return { map: map, x: n.position[0], y: n.position[1] }; } } } catch (e) {} return null; }
 async function hunt_town_step() { // in der Stadt: Jagd abgeben/holen, Tokens in Set-Teile für den Magier umsetzen (in die Bank)
     last_hunt_town = Date.now();
@@ -133,7 +133,7 @@ async function hunt_town_step() { // in der Stadt: Jagd abgeben/holen, Tokens in
     if (bought.length) { try { await smart_move("bank"); await sleep(800); for (var b = 0; b < bought.length; b++) { var bi = have_item(bought[b]); if (bi >= 0) { bank_store(bi); await sleep(400); } } say("Tokens: " + bought.join(", ") + " in die Bank gelegt"); } catch (e) { say("Bank: " + (e && e.message || e)); } }
 }
 function hunt_target_near() { // Jagdmonster in der Nähe, das noch niemand fremdes angreift
-    var q = mh_q(); if (!q || !(q.c > 0)) return null; var best = null, bd = 260;
+    var q = mh_q(); if (!q || !(q.c > 0)) return null; if (mage && mage.spot && mage.spot != q.id) return null; var best = null, bd = 260; // eigene Jagd nur anpulen, wenn das Team gerade dort farmt
     for (var id in parent.entities) { var m = parent.entities[id]; if (!m || m.type != "monster" || m.dead || m.mtype != q.id) continue; if (m.target && m.target != character.name && m.target != MAGE) continue; var base = G.monsters[m.mtype] || {}; if (!m.target && ((m.level || 1) > 3 || (base.hp && m.max_hp > base.hp * 1.6))) continue; var d = Math.hypot(character.x - m.x, character.y - m.y); if (d < bd) { bd = d; best = m; } } // gelevelte Exemplare (Lv >3 / >1,6x HP) nicht selbst anpulen – der Magier lässt sie auch aus
     return best;
 }
@@ -177,7 +177,7 @@ async function tick() {
     if (shopping) return;
     if (!my_attacker() && Date.now() - last_autoequip > 30000) { await auto_equip(); }
     if (character.gold < GOLD_MIN && mage && Date.now() - last_gold_ask > 3 * 60000) { var mg = mage_entity(); if (mg && character.map == mg.map && dist(character, mg) < 350) { last_gold_ask = Date.now(); try { send_cm(MAGE, { t: "gold?", amount: GOLD_WANT }); } catch (e) {} } }
-    if ((shop_needed() || hunt_town_needed()) && character.gold >= GOLD_MIN && Date.now() - last_shop > 5 * 60000 && !my_attacker() && !moving) { go_shopping(); return; }
+    if (((shop_needed() && Date.now() - last_shop > 5 * 60000) || hunt_town_needed()) && character.gold >= GOLD_MIN && !my_attacker() && !moving) { go_shopping(); return; }
     if (has_pot("hpot") < 0 && character.gold < GOLD_MIN && mage && Date.now() - last_pots_ask > 5 * 60000) { var me = mage_entity(); if (me && character.map == me.map && dist(character, me) < 350) { last_pots_ask = Date.now(); try { send_cm(MAGE, { t: "pots?" }); } catch (e) {} } }
     var att = my_attacker(), t = mage_entity();
     if (att && ((att.attack || (G.monsters[att.mtype] || {}).attack || 0) >= character.max_hp * 0.5)) { var dxo = character.x - att.x, dyo = character.y - att.y, lo = Math.hypot(dxo, dyo) || 1; try { move(character.x + dxo / lo * 200, character.y + dyo / lo * 200); } catch (e) {} status("weicht Boss aus"); return; } // Ein-Treffer-Gegner (Giga Crab): sofort weg
