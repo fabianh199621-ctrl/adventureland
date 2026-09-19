@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v204";
+var BOT_VERSION = "v206";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -261,6 +261,7 @@ function too_strong(m) {
     if (m.attack) d.attack = m.attack;
     if (m.frequency) d.frequency = m.frequency;
     if (d.attack * HITS_TO_DIE_MIN > character.max_hp) return true;
+    if (m.mtype == manual_spot || m.mtype == current_spot) return false; // aktueller Farmspot: gelevelte Exemplare werden trotzdem gefarmt (dauert nur länger); nur Ein-Treffer-Gegner bleiben tabu
     return mon_danger(d) > MAX_DANGER || mon_ttk(d) > MAX_TTK;
 }
 // Spot-Sperre: true = dauerhaft (bis Neustart), Zahl = bis Zeitpunkt (gelevelte Monster)
@@ -272,15 +273,14 @@ function spot_blocked(m) {
 }
 var LEVELED_WAIT_MS = 45000;   // so lange ohne angreifbares Exemplar am Spot, dann ausweichen
 var LEVELED_BLOCK_MS = 30 * 60000;
-var leveled_since = 0;
+var leveled_since = 0, leveled_warned = 0;
 function all_leveled_check(farm, seen, valid) {
     if (!seen || valid) { leveled_since = 0; return; }
     if (!leveled_since) { leveled_since = Date.now(); return; }
     if (Date.now() - leveled_since < LEVELED_WAIT_MS) return;
     leveled_since = 0;
-    if (hunt_spot == farm) { game_log("Alle " + farm + " gelevelt – Jagd wird aufgegeben"); hunt_abandon(true); return; }
-    blocked_spots[farm] = Date.now() + LEVELED_BLOCK_MS;
-    game_log("Alle " + farm + " gelevelt – Spot 30 min " + (manual_spot == farm ? "ausgesetzt, solange wählt die Automatik" : "gesperrt"));
+    if (manual_spot == farm || hunt_spot == farm) { if (Date.now() - leveled_warned > 600000) { leveled_warned = Date.now(); game_log("Nur Ein-Treffer-Exemplare von " + farm + " in Sicht – warte auf frische (keine Sperre)"); } return; }
+    game_log("Nur Ein-Treffer-Exemplare von " + farm + " in Sicht – Automatik wählt neu (keine Sperre)");
     need_repick = true; meas = null; current_spot = null; save_state();
     change_target(null); stop("smart"); busy = false;
 }
@@ -1056,12 +1056,13 @@ function go_to_farm_spot() {
         .then(function () {
             if (!get_nearest_monster({ type: mon }) && !manual_spot && !spawn_areas(mon).length) {
                 blocked_spots[mon] = true; need_repick = true; meas = null;
-                game_log("Spot " + mon + " erreicht, aber keine Monster – überspringe");
+                game_log("Spot " + mon + " erreicht, aber keine Monster – Automatik wählt neu");
             } else if (!meas || meas.mon != mon) { start_measure(mon); save_state(); }
         })
         .catch(function () {
+            if (manual_spot == mon || hunt_spot == mon) { game_log("Weg zu " + mon + " unterbrochen – neuer Versuch"); return; } // fester Spot / Jagd: keine Sperre (Weg wurde meist durch Flucht/Angreifer abgebrochen)
             blocked_spots[mon] = true; need_repick = true; meas = null;
-            game_log("Spot " + mon + " nicht erreichbar – überspringe");
+            game_log("Spot " + mon + " nicht erreichbar – Automatik wählt neu");
         })
         .then(function () { busy = false; });
 }
@@ -1987,15 +1988,16 @@ function attackers_on_me() {
     return n;
 }
 var flee_log = {}; // Spot -> Zeitpunkte der Rückzüge (für die Sperre)
-function note_retreat() { // >3 Rückzüge am selben Spot in 10 min -> Spot 30 min sperren (Jagd: übersprungen)
+function note_retreat() { // 3 Rückzüge wegen niedriger HP (≤50 %) am selben Spot in 10 min -> Spot 30 min sperren (Jagd: übersprungen)
+    if (character.hp > character.max_hp * 0.5) return; // Rückzug mit noch viel HP (Boss in Sicht o. ä.) zählt nicht
     var m = pick_farm_monster(); if (!m) return;
     if (hunter_only && m == hunter_only_mon()) return; // Nur Jäger-Jagd: Spot wird nie gesperrt
     var now = Date.now(), arr = (flee_log[m] || []).filter(function (t) { return now - t < 10 * 60000; }); arr.push(now); flee_log[m] = arr;
-    if (arr.length <= 3) return;
+    if (arr.length < 3) return;
     flee_log[m] = [];
-    if (hunt_spot == m) { game_log("4 Rückzüge bei " + m + " in 10 min – Jagd wird übersprungen, Monster 30 min gesperrt"); hunt_skipped = m; hunt_reset(LEVELED_BLOCK_MS); try { var q = mh_quest(); hunt_cooldown_until = Date.now() + ((q && q.ms) || 1800000); } catch (e) {} return; }
+    if (hunt_spot == m) { game_log("3 Rückzüge (HP zu niedrig) bei " + m + " in 10 min – Jagd wird übersprungen, Monster 30 min gesperrt"); hunt_skipped = m; hunt_reset(LEVELED_BLOCK_MS); try { var q = mh_quest(); hunt_cooldown_until = Date.now() + ((q && q.ms) || 1800000); } catch (e) {} return; }
     blocked_spots[m] = now + LEVELED_BLOCK_MS; need_repick = true; meas = null;
-    game_log("4 Rückzüge bei " + m + " in 10 min – Spot 30 min " + (manual_spot == m ? "ausgesetzt, solange wählt die Automatik" : "gesperrt"));
+    game_log("3 Rückzüge (HP zu niedrig) bei " + m + " in 10 min – Spot 30 min " + (manual_spot == m ? "ausgesetzt, solange wählt die Automatik" : "gesperrt"));
 }
 async function check_flee() {
     if (fleeing || paused || upgrading || kissing) return;
@@ -3999,7 +4001,7 @@ function start_main() {
   if (main_timer) clearInterval(main_timer);
   main_timer = parent.__lp_main_timer = setInterval(function () {
     heal_logic(); loot();
-    if (character.rip) { if (!rip_counted) { rip_counted = true; day_count("deaths"); game_log("Gestorben (heute " + day.deaths + "x)"); try { var hq = mh_quest(); if (hq && hq.c > 0 && hunt_spot == hq.id) { game_log("Tod bei der Jagd auf " + hq.id + " – Jagd abgebrochen, Monster 30 min gesperrt"); hunt_reset(30 * 60000); hunt_cooldown_until = Date.now() + (hq.ms || 1800000); } } catch (e) {} } if (meas) finish_measure(true); respawn(); busy = false; fleeing = false; kissing = false; return; }
+    if (character.rip) { if (!rip_counted) { rip_counted = true; day_count("deaths"); game_log("Gestorben (heute " + day.deaths + "x)"); try { var hq = mh_quest(); if (hq && hq.c > 0 && hunt_spot == hq.id) { game_log("Tod bei der Jagd auf " + hq.id + " – Jagd abgebrochen, Monster 30 min gesperrt"); hunt_reset(30 * 60000); hunt_cooldown_until = Date.now() + (hq.ms || 1800000); } else if (current_spot && !event_mode && !(hunter_only && current_spot == hunter_only_mon())) { blocked_spots[current_spot] = Date.now() + LEVELED_BLOCK_MS; game_log("Tod bei " + current_spot + " – Spot 30 min " + (manual_spot == current_spot ? "ausgesetzt, solange wählt die Automatik" : "gesperrt")); need_repick = true; meas = null; } } catch (e) {} } if (meas) finish_measure(true); respawn(); busy = false; fleeing = false; kissing = false; return; }
     rip_counted = false;
     session_tick();
     if (Date.now() - last_panel > 2000) { last_panel = Date.now(); try { update_panel(); update_char_panel(); } catch (e) {} }
