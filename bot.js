@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v221";
+var BOT_VERSION = "v222";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -2316,8 +2316,8 @@ function set_hunt_allow(id, on) { hunt_allow[id] = !!on; try { localStorage.setI
 var hunt_bad = {}; try { hunt_bad = JSON.parse(localStorage.getItem("lp_hunt_bad") || "{}"); } catch (e) {} // Monster, bei denen wir gestorben sind: 24 h keine Jagd darauf
 function hunt_bad_for(id) { var t = hunt_bad[id]; if (!t) return false; if (Date.now() - t > 24 * 3600000) { delete hunt_bad[id]; return false; } return true; }
 function note_hunt_bad(id) { if (!id) return; hunt_bad[id] = Date.now(); try { localStorage.setItem("lp_hunt_bad", JSON.stringify(hunt_bad)); } catch (e) {} }
-function hunt_target_ok(id) { return id && G.monsters[id] && !EXCLUDE[id] && hunt_allowed(id) && !spot_blocked(id) && !hunt_bad_for(id); } // Jagd nur nach Häkchen in der Liste (plus Tod/Spot-Sperre)
-function hunt_skip_reason(id) { var d = G.monsters[id]; if (!d) return "unbekannt"; if (hunt_bad_for(id)) return "heute dort gestorben"; if (spot_blocked(id)) return "Spot gesperrt"; if (!hunt_allowed(id)) return (id in hunt_allow) ? "Jagd in der Liste nicht erlaubt" : "kein Häkchen (Standard: nur grüne Spots ohne tödliche Nachbarn)"; if (mon_ttk(d) > hunt_max_ttk) return "zu schwer: " + (isFinite(mon_ttk(d)) ? Math.round(mon_ttk(d)) : "∞") + " s/Kill > " + hunt_max_ttk + " s"; if (!hunt_danger_ok(id)) return Math.round(mon_danger(d) * 100) + " % > " + Math.round(hunt_max_danger * 100) + " %" + team_bonus_txt(); if (!is_safe_monster(id)) return "nicht sicher"; if (spot_blocked(id)) return "gesperrt"; if (!team_safe(id)) return "zu stark für den Priester"; return "ausgeblendet"; }
+function hunt_target_ok(id) { return id && G.monsters[id] && hunt_allowed(id) && !spot_blocked(id) && !hunt_bad_for(id); } // Jagd-Häkchen entscheidet (auch bei iceroamer – der friert ein, Team-Häkchen empfohlen) // Jagd nur nach Häkchen in der Liste (plus Tod/Spot-Sperre)
+function hunt_skip_reason(id) { var d = G.monsters[id]; if (!d) return "unbekannt"; if (hunt_bad_for(id)) return "heute dort gestorben"; if (spot_blocked(id)) return "Spot gesperrt"; if (!hunt_allowed(id)) return "Jagd in der Liste nicht erlaubt"; return "unbekannter Grund"; if (mon_ttk(d) > hunt_max_ttk) return "zu schwer: " + (isFinite(mon_ttk(d)) ? Math.round(mon_ttk(d)) : "∞") + " s/Kill > " + hunt_max_ttk + " s"; if (!hunt_danger_ok(id)) return Math.round(mon_danger(d) * 100) + " % > " + Math.round(hunt_max_danger * 100) + " %" + team_bonus_txt(); if (!is_safe_monster(id)) return "nicht sicher"; if (spot_blocked(id)) return "gesperrt"; if (!team_safe(id)) return "zu stark für den Priester"; return "ausgeblendet"; }
 async function spend_tokens() { // Set-Teile kaufen, günstigstes fehlendes zuerst
     if (SOLO) { await spend_tokens_for_main(); return; }
     var want = MH_SET.filter(function (n) { var def = G.items[n]; var sl = slot_for_item(def); var worn = character.slots[sl]; return !(worn && worn.name == n) && locate_item(n) < 0; })
