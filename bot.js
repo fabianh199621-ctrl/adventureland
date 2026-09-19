@@ -9,7 +9,9 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v163";
+var BOT_VERSION = "v199";
+var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
+var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : character.ctype == "ranger" || /ranger/i.test(character.name) ? "ranger" : "priest";
@@ -88,9 +90,24 @@ var FALLBACK_WEAPONS = ["staff", "stick"];
 var NO_WEAPON_MONSTER = "goo";
 var MAX_TARGET_HP_FACTOR = 5;
 // Kandidaten für Farmspots – ungeeignete (zu stark) werden automatisch aussortiert
-var CANDIDATES = ["goo", "crab", "bee", "croc", "armadillo", "squig", "squigtoad", "poisio",
+var CANDIDATES_STATIC = ["goo", "crab", "bee", "croc", "armadillo", "squig", "squigtoad", "poisio",
                   "tortoise", "frog", "rat", "minimush", "snake", "osnake", "scorpion", "spider",
                   "arcticbee", "boar", "crabx", "bat", "cgoo"];
+function all_farmable() { // alle Monster, die auf normalen Karten spawnen (keine Bosse/Event-/Übungsziele, keine PVP-/Instanz-Karten)
+    var seen = {}, out = [];
+    try {
+        for (var map in G.maps) {
+            var md = G.maps[map]; if (!md || md.ignore || md.instance || md.pvp || map == "jail" || !md.monsters) continue;
+            md.monsters.forEach(function (e) {
+                var id = e.type, m = G.monsters[id]; if (!m || seen[id]) return;
+                if (m.boss || m.special || m.cooperative || /^target/.test(id) || !(m.xp > 0) || !(m.hp > 0)) return;
+                seen[id] = true; out.push(id);
+            });
+        }
+    } catch (e) {}
+    return out.length ? out.sort() : CANDIDATES_STATIC.slice();
+}
+var CANDIDATES = all_farmable();
 var EXCLUDE = { iceroamer: true };   // gezielt ausgeschlossen (Einfrieren)
 var hidden_mons = {}; try { hidden_mons = JSON.parse(localStorage.getItem("lp_hidden") || "{}"); } catch (e) {}
 var only_worth = false; try { only_worth = localStorage.getItem("lp_only_worth") == "1"; } catch (e) {}
@@ -99,6 +116,13 @@ var focus_mode = false; try { focus_mode = localStorage.getItem("lp_focus") == "
 var FOCUS_MIN_FREE = 3, FOCUS_TARGET_FREE = 20, FOCUS_POT_MIN = 50;
 var BYCATCH_RANGE = 250;             // Beifang: andere sichere Monster in dieser Entfernung angreifen
 var hunt_on = true; try { hunt_on = localStorage.getItem("lp_hunt") != "0"; } catch (e) {}
+var hunter_only = false; try { hunter_only = localStorage.getItem("lp_hunter_only") == "1"; } catch (e) {} // Nur Jäger-Jagd: ausschließlich das Jagdmonster des Jägers farmen, egal wie gefährlich; keine eigene Jagd
+function hunter_hunt() { // laufende Jagd des Jäger-Chars (aus seinem Status), sonst null
+    if (SOLO || !team_on.hunter) return null;
+    var st = team_state[TEAM.hunter]; if (!st || Date.now() - st.t > 120000 || !st.hunt || !(st.hunt.c > 0) || !G.monsters[st.hunt.id]) return null;
+    return st.hunt;
+}
+function hunter_only_mon() { var hh = hunter_only ? hunter_hunt() : null; return hh ? hh.id : null; }
 var pause_after = false; try { pause_after = localStorage.getItem("lp_pause_after") == "1"; } catch (e) {} // nach manueller Aktion (Button/Taste) pausieren statt weiterfarmen
 function after_action(what) {
     if (pause_after) { paused = true; stop("smart"); set_message("PAUSE"); game_log((what || "Aktion") + " fertig – pausiert (Einstellung „Danach: Pause“, P zum Weiterfarmen)"); last_panel = 0; }
@@ -201,7 +225,7 @@ function spendable() { return character.gold - GOLD_RESERVE; }
 function check_pause() { if (aborted()) throw "ABORT"; if (paused) throw "PAUSE"; }
 function clear_flags() { busy = false; upgrading = false; kissing = false; fleeing = false; exchanging = false; pontying = false; marketing = false; shelling = false; hunting = false; bank_cleaning = false; sorting_inv = false; baking = false; }
 // Laufende Routine abbrechen und danach die gewünschte Aktion starten (Tasten/Buttons)
-async function preempt(why, action) {
+async function preempt(why, action, keep_pause) { // keep_pause: reine Inventar-Aktion, Pause bleibt bestehen
     if (busy || routine_running()) {
         game_log("Breche laufende Aktion ab (" + why + ")");
         abort_requested = true; stop("smart"); stop("move");
@@ -211,7 +235,7 @@ async function preempt(why, action) {
         if (busy || routine_running()) clear_flags();
         await new Promise(function (r) { setTimeout(r, 400); });
     }
-    if (paused) unpause(why);
+    if (paused && !keep_pause) unpause(why);
     manual_lock = true;
     var res; try { res = await action(); } finally { manual_lock = false; }
     return res;
@@ -231,6 +255,7 @@ function skill_available(name) {
 // Prüft das konkrete Exemplar (gelevelte Monster haben mehr HP/Angriff als die G-Daten)
 function too_strong(m) {
     var base = G.monsters[m.mtype]; if (!base) return true;
+    if (hunter_only && m.mtype == hunter_only_mon()) return false; // Nur Jäger-Jagd: das Jagdmonster wird immer angegangen
     var d = Object.assign({}, base);
     if (m.max_hp) d.hp = m.max_hp;
     if (m.attack) d.attack = m.attack;
@@ -277,10 +302,11 @@ function is_valid_target(m) {
 
 
 // ---------- Team: Händler und Priester (laufen unsichtbar im selben Fenster, gestartet vom Magier) ----------
-var TEAM = { merch: "F4llenMerch", priest: "F4llenPriest", ranger: "F4llenRanger" };
-var TEAM_NAMES = [TEAM.merch, TEAM.priest, TEAM.ranger];
-var TEAM_LABEL = { merch: "Merch", priest: "Priest", ranger: "Ranger" }, TEAM_ROLE = { merch: "merchant", priest: "priest", ranger: "ranger" }, TEAM_CTYPE = { merch: "merchant", priest: "priest", ranger: "ranger" };
-var team_on = { merch: true, priest: true, ranger: true }; try { var to = JSON.parse(localStorage.getItem("lp_team") || "null"); if (to) { for (var tk0 in to) team_on[tk0] = to[tk0]; } } catch (e) {}
+var TEAM = { merch: "F4llenMerch", priest: "F4llenPriest", ranger: "F4llenRanger", hunter: "F4llenHunt" };
+var TEAM_NAMES = [TEAM.merch, TEAM.priest, TEAM.ranger, TEAM.hunter];
+var TEAM_LABEL = { merch: "Merch", priest: "Priest", ranger: "Ranger", hunter: "Jäger" }, TEAM_ROLE = { merch: "merchant", priest: "priest", ranger: "ranger", hunter: "hunter" }, TEAM_CTYPE = { merch: "merchant", priest: "priest", ranger: "ranger", hunter: "mage" };
+var team_on = { merch: true, priest: true, ranger: true, hunter: false }; try { var to = JSON.parse(localStorage.getItem("lp_team") || "null"); if (to) { for (var tk0 in to) team_on[tk0] = to[tk0]; } } catch (e) {}
+if (SOLO) { team_on = { merch: false, priest: false, ranger: false, hunter: false }; }
 function save_team() { try { localStorage.setItem("lp_team", JSON.stringify(team_on)); } catch (e) {} }
 var team_state = {}; // letzte Statusmeldung je Charakter { level, state, t, ... }
 var last_team_tick = 0, last_team_cast = 0, last_party_try = 0, team_start_at = {};
@@ -288,17 +314,19 @@ function team_slot() { try { if (typeof LP_CODE_SLOT != "undefined" && LP_CODE_S
 function active_chars() { try { return (typeof get_active_characters == "function" ? get_active_characters() : parent.get_active_characters()) || {}; } catch (e) { return {}; } }
 function team_running(name) { var a = active_chars(); return !!a[name]; }
 function team_tick() { // fehlende Teammitglieder starten, abgeschaltete stoppen; Party pflegen
+    if (SOLO) return;
     if (Date.now() - last_team_tick < 20000) return; last_team_tick = Date.now();
     try { if (parent.__lp_team_restart_after && Date.now() < parent.__lp_team_restart_after) return; } catch (e) {}
     try { if (server_trip) return; } catch (e) {} // während eines Serverwechsels bleibt das Team zuhause
     var act = active_chars();
     for (var k in TEAM) {
         var nm = TEAM[k], on = !!team_on[k], running = !!act[nm];
+        if (nm == TEAM.merch && (arb_job || merch_test)) continue; // Händler ist auf Reise/Test: nicht neu starten
         if (on && !running) { if (Date.now() - (team_start_at[nm] || 0) > 60000) { team_start_at[nm] = Date.now(); try { var res = start_character(nm, team_slot()); game_log("Team: starte " + nm + " (Code-Slot " + team_slot() + ") – aktiv: " + JSON.stringify(act)); if (res && typeof res.then == "function") (function (who) { res.then(function (r) { game_log("Team: " + who + " Start-Antwort: " + JSON.stringify(r).slice(0, 120)); }, function (e) { game_log("Team: " + who + " Start abgelehnt: " + JSON.stringify(e).slice(0, 160)); }); })(nm); } catch (e) { game_log("Team: " + nm + " konnte nicht gestartet werden – " + err_txt(e)); } } }
         else if (!on && running) { try { stop_character(nm); game_log("Team: " + nm + " gestoppt"); } catch (e) {} }
     }
     // Party: Priester einladen, wenn er läuft und nicht dabei ist
-    if (Date.now() - last_party_try > 60000) { var need = []; if (team_on.priest && act[TEAM.priest]) need.push(TEAM.priest); if (team_on.ranger && act[TEAM.ranger]) need.push(TEAM.ranger); var ms = team_state[TEAM.merch]; if (team_on.merch && act[TEAM.merch] && ms && /levelt|folgt/.test(ms.state || "")) need.push(TEAM.merch); var missing = need.filter(function (nm) { return !(character.party && parent.party && parent.party[nm]); }); if (missing.length) { last_party_try = Date.now(); missing.forEach(function (nm) { try { send_party_invite(nm); } catch (e) {} }); } }
+    if (Date.now() - last_party_try > 60000) { var need = []; if (team_on.priest && act[TEAM.priest]) need.push(TEAM.priest); if (team_on.ranger && act[TEAM.ranger]) need.push(TEAM.ranger); if (team_on.hunter && act[TEAM.hunter]) need.push(TEAM.hunter); var ms = team_state[TEAM.merch]; if (team_on.merch && act[TEAM.merch] && ms && /levelt|folgt/.test(ms.state || "")) need.push(TEAM.merch); var missing = need.filter(function (nm) { return !(character.party && parent.party && parent.party[nm]); }); if (missing.length) { last_party_try = Date.now(); missing.forEach(function (nm) { try { send_party_invite(nm); } catch (e) {} }); } }
 }
 var team_inject_t = {};
 function team_windows() { // Fenster der mitgestarteten Charaktere finden (gleiche Herkunft, daher zugreifbar)
@@ -307,12 +335,13 @@ function team_windows() { // Fenster der mitgestarteten Charaktere finden (gleic
     return out;
 }
 function team_inject() { // läuft im Fenster des Teammitglieds nicht unser Skript (falscher Code-Slot), spielen wir es direkt ein
+    if (SOLO) return;
     var wins = team_windows();
     for (var k in TEAM) {
         var nm = TEAM[k], w = wins[nm]; if (!w || !team_on[k]) continue;
         if (Date.now() - (team_inject_t[nm] || 0) < 45000) continue;
         var cw = w.code, have = null;
-        try { have = cw && (cw.MERCH_VERSION || cw.PRIEST_VERSION || cw.RANGER_VERSION); } catch (e) {}
+        try { have = cw && (cw.MERCH_VERSION || cw.PRIEST_VERSION || cw.RANGER_VERSION || cw.HUNTER_VERSION); } catch (e) {}
         if (have == BOT_VERSION) continue;
         team_inject_t[nm] = Date.now();
         if (!cw) { // das Spiel hat für den Charakter noch keinen Code-Frame angelegt: Code-Start anstoßen (läuft dessen eigenen, meist leeren Slot), danach spielen wir unser Skript ein
@@ -326,6 +355,11 @@ function team_inject() { // läuft im Fenster des Teammitglieds nicht unser Skri
         })(nm, cw, role);
     }
 }
+var solo_last_st = 0;
+function mh_missing_for_me() { // Token-Set-Teile, die ich weder trage noch im Inventar/Bank habe – mit Kosten, günstigstes zuerst
+    var bank = character.bank || bank_cache || {}, in_bank = {}; try { for (var pk in bank) if (pk.indexOf("items") == 0 && Array.isArray(bank[pk])) bank[pk].forEach(function (it) { if (it) in_bank[it.name] = true; }); } catch (e) {}
+    return MH_SET.filter(function (n) { var def = G.items[n]; var sl = slot_for_item(def); var worn = character.slots[sl]; return !(worn && worn.name == n) && locate_item(n) < 0 && !in_bank[n]; }).map(function (n) { return { name: n, cost: (G.tokens.monstertoken || {})[n] || 99 }; }).sort(function (a, b) { return a.cost - b.cost; });
+}
 var team_log_seen = {};
 function team_read_logs() { // Händler/Priester schreiben ihr Log in den gemeinsamen Speicher (localStorage), der Magier zeigt es an
     for (var k in TEAM) { var nm = TEAM[k]; try { if (!team_log_seen[nm]) { team_log_seen[nm] = Date.now() - 3000; continue; } var arr = JSON.parse(localStorage.getItem("lp_tlog_" + nm) || "[]"); var seen = team_log_seen[nm]; var lab2 = TEAM_LABEL[k]; for (var i = 0; i < arr.length; i++) { var ln = arr[i]; if (ln.t > seen) { team_log_seen[nm] = ln.t; game_log("[" + lab2 + "] " + ln.m); } } } catch (e) {} }
@@ -333,11 +367,14 @@ function team_read_logs() { // Händler/Priester schreiben ihr Log in den gemein
 var cm_selftest = 0;
 function team_broadcast() { // alle 5 s: wo bin ich, was mache ich (für Händler und Priester)
     if (Date.now() - last_team_cast < 5000) return; last_team_cast = Date.now();
+    if (SOLO) { if (Date.now() - solo_last_st > 30000) { solo_last_st = Date.now(); try { var hq0 = mh_quest(); send_cm(MAIN_NAME, { t: "st", level: character.level, state: character.rip ? "tot" : paused ? "Pause" : (hq0 && hq0.c > 0 ? "jagt " + hq0.id + " (" + hq0.c + ")" : "farmt " + (current_spot || "?")), gold: character.gold, tokens: tokens(), hp: character.hp, max_hp: character.max_hp, map: character.map, free: character.esize }); } catch (e) {} } return; }
+    try { window.localStorage.setItem("lp_mh_missing", JSON.stringify(mh_missing_for_me())); } catch (e) {} // für Jäger/Priest/Ranger: welche Set-Teile mir fehlen
     var act = active_chars(), ml = character.s && character.s.mluck;
-    var msg = { t: "me", map: character.map, x: Math.round(character.x), y: Math.round(character.y), level: character.level, hp: character.hp, max_hp: character.max_hp, paused: paused || !bot_running, spot: current_spot, tgt: last_target_id, mluck: ml ? { f: ml.f, ms: ml.ms, strong: !!ml.strong } : null, in: character.in };
+    var msg = { t: "me", map: character.map, x: Math.round(character.x), y: Math.round(character.y), level: character.level, hp: character.hp, max_hp: character.max_hp, paused: paused || !bot_running, spot: current_spot, event: event_mode, tgt: (function () { if (!paused) return last_target_id; try { var mt = get_target(); return mt && mt.type == "monster" && !mt.dead ? mt.id : null; } catch (e) { return null; } })(), mluck: ml ? { f: ml.f, ms: ml.ms, strong: !!ml.strong } : null, in: character.in };
     for (var k in TEAM) { var nm = TEAM[k]; if (team_on[k] && act[nm]) { try { send_cm(nm, msg); } catch (e) {} } }
 }
 function team_send(name, data) { try { send_cm(name, data); } catch (e) {} }
+var merch_needs = {}; // Material, das der Händler angefragt hat (z. B. spidersilk für Werkzeuge)
 function on_cm(name, data) { // Nachrichten der eigenen Charaktere
     if (name == character.name && data && data.t == "ping") { cm_selftest = 2; game_log("Team: Nachrichtenkanal funktioniert (Selbsttest)"); return; }
     if (TEAM_NAMES.indexOf(name) < 0 || !data || typeof data != "object") return;
@@ -346,18 +383,320 @@ function on_cm(name, data) { // Nachrichten der eigenen Charaktere
         if (data.t == "log") { /* kommt bereits über den gemeinsamen Speicher */ }
         else if (data.t == "st") { team_state[name] = Object.assign({ t: Date.now() }, data); last_panel = 0; }
         else if (data.t == "ready") { if (pickup_state) pickup_state.ready = true; }
+        else if (data.t == "sold") { game_log("[" + who + "] VERKAUFT: " + data.name + " für " + fmt(data.price) + " Gold – Gold kommt bei der nächsten Abholung/Übergabe"); if (stand_orders[data.name]) { delete stand_orders[data.name]; save_stand_orders(); } }
         else if (data.t == "delivered") { if (pickup_state) pickup_state.done = true; if (data.pots) game_log("[Merch] Tränke erhalten: " + data.pots); if (data.gold) game_log("[Merch] " + fmt(data.gold) + " Gold Verkaufserlös erhalten"); }
-        else if (data.t == "hello") { game_log("[" + who + "] verbunden (" + (data.v || "?") + ")"); team_send(name, { t: "state", paused: paused || !bot_running, spot: current_spot }); team_broadcast(); }
+        else if (data.t == "hello") { game_log("[" + who + "] verbunden (" + (data.v || "?") + (data.sv ? ", Server " + pretty_server(data.sv) : "") + ")"); if (merch_test && name == TEAM.merch) merch_test_result(data.sv); team_send(name, { t: "state", paused: paused || !bot_running, spot: current_spot }); team_broadcast(); }
+        else if (data.t == "need") { var np = get_player(name); var ni = locate_item(data.item); if (np && ni >= 0 && distance(character, np) < 400) { var nq = Math.min(data.q || 1, character.items[ni].q || 1); try { send_item(name, ni, nq); game_log("[" + who + "] " + nq + "x " + data.item + " übergeben"); } catch (e) {} } else if (ni < 0) { merch_needs[data.item] = Date.now(); game_log("[" + who + "] braucht " + data.item + " – wird beim nächsten Fund/Abholung mitgegeben"); } }
         else if (data.t == "gold?") { var p = get_player(name); var amt = Math.min(data.amount || 100000, Math.max(0, character.gold - WISH_RESERVE)); if (p && distance(character, p) < 400 && amt >= 1000) { send_gold(name, amt); game_log("[" + who + "] " + fmt(amt) + " Gold übergeben"); } else team_send(name, { t: "nogold", near: !!(p && distance(character, p) < 400) }); }
         else if (data.t == "pots?") { var pp = get_player(name); if (pp && distance(character, pp) < 400) { var gave = 0; [POTS_HP, POTS_MP].forEach(function (list) { var idx = -1, q = 0; for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && list.indexOf(it.name) >= 0 && (it.q || 0) > q) { idx = i; q = it.q; } } if (idx >= 0 && q >= 60) { send_item(name, idx, 25); gave++; } }); if (gave) game_log("[" + who + "] Tränke übergeben"); } }
     } catch (e) { game_log("Team-Nachricht: " + err_txt(e)); }
 }
 try { window.on_cm = on_cm; parent.window.__lp_on_cm = on_cm; } catch (e) {} // Hook global machen (eval-Scope ist nicht global)
 setTimeout(function () { try { cm_selftest = 1; send_cm(character.name, { t: "ping" }); setTimeout(function () { if (cm_selftest != 2) game_log("Team: Selbsttest – keine Nachricht angekommen (on_cm greift nicht)"); }, 5000); } catch (e) { game_log("Team: send_cm-Fehler " + err_txt(e)); } }, 3000);
+
+// ---------- Team-Zielbau: Zielitem + Stufe je Slot für Priest/Ranger; der Magier kauft, baut und übergibt ----------
+var team_wish = {}; try { team_wish = JSON.parse(localStorage.getItem("lp_teamwish_" + character.name) || "{}"); } catch (e) {}
+var team_wish_mode = 1; try { team_wish_mode = parseInt(localStorage.getItem("lp_teamwish_mode") || "1") || 1; } catch (e) {}
+var team_wish_stat = true; try { team_wish_stat = localStorage.getItem("lp_teamwish_stat") != "0"; } catch (e) {} // fertige Teile bekommen den Klassen-Attribut-Scroll (int/dex)
+var tw_stat_failed = {}; // name+level, bei denen der Scroll nicht angenommen wurde (ein Versuch je Teil)
+function tw_stat_type(key) { return TEAM_CTYPE[key] == "priest" ? "int" : TEAM_CTYPE[key] == "warrior" ? "str" : "dex"; }
+async function tw_apply_stat(key, name) { // Attribut-Scroll auf die fertige Team-Kopie
+    var cp = tw_copies(name)[0]; if (!cp) return; var it = character.items[cp.i]; if (!it || it.stat_type) return;
+    var scroll = tw_stat_type(key) + "scroll", price = (G.items[scroll] || {}).g || 0, k = name + "+" + cp.level;
+    if (tw_stat_failed[k] || !price) return;
+    if (!stat_possible(it)) { tw_stat_failed[k] = true; game_log("Team-Zielbau [" + TEAM_LABEL[key] + "]: " + name + "+" + cp.level + " – Attribut nicht möglich (" + (G.items[name].stat ? "schon Qualität 1, Scroll nur bis +" + grade0_max(name) : "Teil hat keinen Attributwert") + ") – wird ohne übergeben"); return; }
+    if (spendable() < price) { game_log("Team-Zielbau: Attribut-Scroll – Reserve erreicht"); return; }
+    await travel_place("scrolls");
+    if (quantity(scroll) < 1) { buy(scroll, 1); await sleep(600); }
+    var sc = locate_item(scroll); if (sc < 0) { game_log("Team-Zielbau: " + scroll + " nicht gekauft"); return; }
+    var idx = find_inv_index(name, cp.level); if (idx < 0) return;
+    set_message(name + " +" + tw_stat_type(key).toUpperCase());
+    try { await upgrade(idx, sc); } catch (e) {}
+    await wait_queue("upgrade");
+    var idx2 = find_inv_index(name, cp.level), it2 = idx2 >= 0 ? character.items[idx2] : null;
+    if (it2 && it2.stat_type == tw_stat_type(key)) game_log("Team-Zielbau [" + TEAM_LABEL[key] + "]: " + name + "+" + cp.level + " hat jetzt " + tw_stat_type(key).toUpperCase());
+    else { tw_stat_failed[k] = true; game_log("Team-Zielbau [" + TEAM_LABEL[key] + "]: " + name + ": Attribut-Scroll nicht angenommen – wird ohne übergeben"); }
+} // 1 = nur NPC-Teile, 2 = auch Marktangebote auf diesem Server unter Limit
+var TEAM_BUILD_BUDGET = 1000000, TEAM_BUILD_MAX_LEVEL = 8, TEAM_BUILD_DEFAULT_MAX = 500000;
+var TEAM_WISH_SLOTS = ["mainhand", "offhand", "helmet", "chest", "pants", "shoes", "gloves", "cape", "ring1", "ring2", "earring1", "earring2", "amulet", "belt", "orb"];
+function save_team_wish() { try { localStorage.setItem("lp_teamwish_" + character.name, JSON.stringify(team_wish)); } catch (e) {} last_panel = 0; }
+function tw_cfg(key, slot) { return (team_wish[key] || {})[slot] || null; }
+function tw_names() { var o = {}; for (var k in team_wish) for (var sl in team_wish[k]) { var c = team_wish[k][sl]; if (c && c.item) o[c.item] = true; } return o; }
+function is_team_wish(name) { return !!tw_names()[name]; }
+function tw_overlap(name) { return !!equipped_names()[name] || on_wishlist(name); } // Teil, das der Magier selbst trägt/anstrebt: Reserven gehören ihm, nur Kopien über Reserve-Stufe sind Team-Teile
+function is_team_wish_item(it) { return is_team_wish(it.name) && (!tw_overlap(it.name) || (it.level || 0) > BACKUP_LEVEL); }
+function tw_market_offer(name) { // günstigstes Angebot auf diesem Server (Stufe egal – höhere Stufe ist willkommen)
+    var best = null; (global_offers || []).forEach(function (o) { if (o.same && o.name == name && (!best || o.price < best.price)) best = o; }); return best;
+}
+function tw_candidates(key, slot) { // "leichte" Teile: NPC-kaufbar (Stufe 1) bzw. zusätzlich Marktangebote hier unter Limit (Stufe 2)
+    var ctype = TEAM_CTYPE[key], out = [], cfg = tw_cfg(key, slot), max = cfg && cfg.max || TEAM_BUILD_DEFAULT_MAX, lvl = cfg && typeof cfg.level == "number" ? cfg.level : 0;
+    for (var name in G.items) {
+        var d = G.items[name]; if (!d || d.ignore || !fits_class(d, ctype, slot)) continue;
+        if (d.compound) continue; // Schmuck-Compound: später
+        var npc = is_buyable(name), off = !npc && team_wish_mode >= 2 ? tw_market_offer(name) : null;
+        if (!npc && !(off && off.price <= max)) continue;
+        out.push({ name: name, def: d, npc: npc, offer: off, score: gear_score_for(d, lvl, ctype) });
+    }
+    out.sort(function (a, b) { return b.score - a.score; });
+    return out;
+}
+function gear_score_for(def, level, ctype) { // Bewertung mit dem Hauptattribut der anderen Klasse
+    var ms = ctype == "priest" || ctype == "mage" ? "int" : ctype == "warrior" || ctype == "paladin" ? "str" : "dex";
+    function w(st) { return ((st[ms] || 0) + (st.stat || 0)) * 30 + (st.attack || 0) * 3 + (st.range || 0) * 0.5 + (st.frequency || 0) * 5 + (st.hp || 0) * 0.05 + (st.mp || 0) * 0.1 + (st.armor || 0) * 0.5 + (st.resistance || 0) * 0.5 + (st.rpiercing || 0) * 0.8; }
+    var sc = w(def); if (level > 0 && def.upgrade) sc += level * w(def.upgrade); return sc;
+}
+function tw_copies(name) { // Inventarkopien, die dem Team-Zielbau gehören, höchste Stufe zuerst
+    var out = []; for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && it.name == name && !it.p) out.push({ i: i, level: it.level || 0 }); }
+    out.sort(function (a, b) { return b.level - a.level; });
+    if (!tw_overlap(name)) return out;
+    var team = out.filter(function (c) { return c.level > BACKUP_LEVEL; }); if (team.length) return team; // über Reserve-Stufe: eindeutig Team
+    var res = out.filter(function (c) { return c.level <= BACKUP_LEVEL; }); return res.length > RESERVE_COPIES ? res.slice(RESERVE_COPIES) : []; // sonst nur Überschuss über die Reserven des Magiers
+}
+function tw_build_copy(name) { // Kopie zum Weiterbauen: Team-Kopie, sonst (bei Überschneidung mit dem Magier) die niedrigste Kopie, die nicht seine Reserve ist
+    var c = tw_copies(name)[0]; if (c) return c;
+    if (!tw_overlap(name)) return null;
+    var bi = backup_index(name), out = [];
+    for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && it.name == name && !it.p && i != bi && (it.level || 0) <= BACKUP_LEVEL) out.push({ i: i, level: it.level || 0 }); }
+    out.sort(function (a, b) { return a.level - b.level; });
+    return out[0] || null;
+}
+function tw_status(key, slot) { // {state, text}
+    var c = tw_cfg(key, slot); if (!c || !c.item) return null;
+    var st = team_state[TEAM[key]], worn = st && st.slots && st.slots[slot];
+    if (worn && worn.name == c.item && (worn.level || 0) >= c.level) return { state: "fertig", text: "fertig ✓" };
+    var cp = tw_copies(c.item)[0];
+    if (cp && cp.level >= c.level) { var ci = character.items[cp.i]; if (team_wish_stat && ci && stat_possible(ci) && !tw_stat_failed[c.item + "+" + cp.level] && (G.items[tw_stat_type(key) + "scroll"] || {}).g) return { state: "stat", text: "Attribut " + tw_stat_type(key).toUpperCase() + " (+" + cp.level + " liegt bereit)" }; return { state: "handover", text: "übergeben (+" + cp.level + " liegt bereit)" }; }
+    if (cp) return { state: "build", text: "bauen +" + cp.level + " → +" + c.level };
+    if (tw_overlap(c.item) && c.level <= BACKUP_LEVEL) return { state: "wait", text: "wartet auf Reserve-Überschuss des Magiers (Ziel ≤ +" + BACKUP_LEVEL + ")" };
+    if (is_buyable(c.item)) return { state: "buy", text: "kaufen (NPC " + fmt(G.items[c.item].g || 0) + ")" };
+    var off = tw_market_offer(c.item); if (off && off.price <= (c.max || TEAM_BUILD_DEFAULT_MAX)) return { state: "buy", text: "kaufen (Markt " + fmt(off.price) + ", " + off.seller + ")" };
+    return { state: "wait", text: "kein Angebot" + (team_wish_mode < 2 ? " (nicht beim NPC)" : "") };
+}
+function team_build_todo(only) { // offene Aufträge in Reihenfolge
+    var out = [];
+    ["priest", "ranger"].forEach(function (key) { if (!team_on[key] || (only && key != only)) return; TEAM_WISH_SLOTS.forEach(function (slot) { var s = tw_status(key, slot); if (s && (s.state == "buy" || s.state == "build" || s.state == "stat")) out.push({ key: key, slot: slot, cfg: tw_cfg(key, slot), state: s.state }); }); });
+    return out;
+}
+async function team_build_step(only, manual) { // in der Ausrüstungsroutine: bis zu 2 Team-Teile kaufen/aufwerten, Budget je Durchlauf begrenzt
+    if (focus_mode && !manual) return;
+    var todo = team_build_todo(only); if (!todo.length) { if (manual) game_log("Team-Zielbau" + (only ? " " + TEAM_LABEL[only] : "") + ": nichts zu tun"); return; }
+    var g0 = character.gold, done = 0;
+    for (var i = 0; i < todo.length && done < 2; i++) {
+        check_pause();
+        var t = todo[i], c = t.cfg, name = c.item, lab = TEAM_LABEL[t.key];
+        if (g0 - character.gold > TEAM_BUILD_BUDGET) { game_log("Team-Zielbau: Budget für diesen Durchlauf (" + fmt(TEAM_BUILD_BUDGET) + ") ausgeschöpft"); break; }
+        if (character.esize < 2) { game_log("Team-Zielbau: Inventar zu voll"); break; }
+        var rebuys = 0, stopped = false;
+        while (true) { // bei Zerstörung im selben Durchlauf neu kaufen und weiterbauen, bis es steht (Grenzen: Budget je Durchlauf, Gold-Reserve, Pause)
+            check_pause();
+            if (g0 - character.gold > TEAM_BUILD_BUDGET) { game_log("Team-Zielbau: Budget für diesen Durchlauf (" + fmt(TEAM_BUILD_BUDGET) + ") ausgeschöpft"); stopped = true; break; }
+            if (!tw_build_copy(name)) { // beschaffen
+                if (is_buyable(name)) { if (!await buy_items(name, 1)) break; game_log("Team-Zielbau [" + lab + "]: " + name + " beim NPC gekauft" + (rebuys ? " (Neukauf " + rebuys + ")" : "")); }
+                else { var off = tw_market_offer(name); if (!off || off.price > (c.max || TEAM_BUILD_DEFAULT_MAX) || off.price > spendable()) break; if (!await tw_buy_offer(off)) break; game_log("Team-Zielbau [" + lab + "]: " + name + "+" + (off.level || 0) + " am Markt gekauft (" + fmt(off.price) + ")"); }
+            }
+            var cp = tw_build_copy(name); if (!cp) break;
+            if (cp.level >= c.level) break;
+            var lv = Math.min(c.level, TEAM_BUILD_MAX_LEVEL);
+            await travel_place("upgrade");
+            game_log("Team-Zielbau [" + lab + "]: " + name + " +" + cp.level + " → +" + lv + " (Chance +" + cp.level + "→+" + (cp.level + 1) + ": " + success_txt("u", cp.level) + ")");
+            var r = await upgrade_inv(name, cp.level, lv, team_wish_stat ? tw_stat_type(t.key) : null);
+            if (r.stopped) { stopped = true; break; }
+            if (r.destroyed) { rebuys++; game_log("Team-Zielbau [" + lab + "]: " + name + " zerstört (" + rebuys + ". Mal) – kaufe neu"); continue; }
+            break;
+        }
+        if (stopped) break;
+        var cp2 = tw_copies(name)[0];
+        if (team_wish_stat && cp2 && cp2.level >= c.level) { check_pause(); await tw_apply_stat(t.key, name); }
+        done++;
+    }
+    if (g0 != character.gold) game_log("Team-Zielbau: " + fmt(g0 - character.gold) + " Gold ausgegeben");
+}
+async function tw_buy_offer(o) { // Marktangebot auf diesem Server direkt kaufen (ohne eigene Wunschlisten-Logik)
+    try {
+        if (o.map && o.x != null) await travel({ map: o.map, x: o.x, y: o.y + 30 });
+        var lo = await locate_offer({ name: o.name, level: o.level || 0, price: o.price, seller: o.seller, tslot: o.tslot }); if (!lo) return false;
+        var n0 = tw_copies(o.name).length; trade_buy(lo.seller, lo.slot, 1); await sleep(1200);
+        return tw_copies(o.name).length > n0;
+    } catch (e) { game_log("Team-Zielbau Marktkauf: " + err_txt(e)); return false; }
+}
+async function team_build_now(key) { // Knopf: nur den Team-Zielbau eines Mitglieds abarbeiten (ohne die restliche Ausrüstungsroutine)
+    if (upgrading) { game_log("Upgrade läuft bereits"); return; }
+    var saved_reserve = GOLD_RESERVE; GOLD_RESERVE = Math.max(GOLD_RESERVE, WISH_RESERVE);
+    upgrading = true; busy = true; set_message("Zielbau " + TEAM_LABEL[key]);
+    game_log("Team-Zielbau " + TEAM_LABEL[key] + ": starte (frei: " + fmt(spendable()) + " Gold)");
+    try { await team_build_step(key, true); }
+    catch (e) { if (e == "PAUSE") game_log("Team-Zielbau durch Pause abgebrochen"); else game_log("Team-Zielbau: " + err_txt(e)); }
+    finally { GOLD_RESERVE = saved_reserve; upgrading = false; busy = false; }
+    try { last_tw_handover = 0; team_wish_handover_tick(); } catch (e) {}
+    game_log("Team-Zielbau " + TEAM_LABEL[key] + " beendet (Gold: " + fmt(character.gold) + ")");
+    after_action("Zielbau " + TEAM_LABEL[key]);
+}
+var last_tw_handover = 0;
+function team_wish_handover_tick() { // fertige Teile übergeben, sobald der Kollege neben uns steht
+    if (Date.now() - last_tw_handover < 20000 || busy || upgrading || handing) return; last_tw_handover = Date.now();
+    ["priest", "ranger"].forEach(function (key) {
+        if (!team_on[key]) return; var nm = TEAM[key], lab = TEAM_LABEL[key];
+        TEAM_WISH_SLOTS.forEach(function (slot) {
+            var c = tw_cfg(key, slot); if (!c || !c.item) return; var s = tw_status(key, slot); if (!s || s.state != "handover") return;
+            var p = get_player(nm); if (!p || p.rip || p.map != character.map || distance(character, p) > 350) return;
+            var st = team_state[nm]; if (st && typeof st.free == "number" && st.free < 1) return;
+            var cp = tw_copies(c.item)[0]; if (!cp || cp.level < c.level) return;
+            try { team_send(nm, { t: "gear", name: c.item, level: cp.level, slot: slot, manual: true }); send_item(nm, cp.i, 1); game_log("Team-Zielbau [" + lab + "]: " + c.item + "+" + cp.level + " übergeben (" + slot + ")"); } catch (e) { game_log("Team-Zielbau Übergabe: " + err_txt(e)); }
+        });
+    });
+}
+function team_wish_html(panel) {
+    var h = "";
+    ["priest", "ranger"].forEach(function (key) {
+        if (!team_on[key]) return;
+        var lab = TEAM_LABEL[key], open = panel["__tw_" + key], st = team_state[TEAM[key]], cfgs = team_wish[key] || {}, n = 0, done = 0;
+        TEAM_WISH_SLOTS.forEach(function (sl) { var c = cfgs[sl]; if (c && c.item) { n++; var s = tw_status(key, sl); if (s && s.state == "fertig") done++; } });
+        h += "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Zielbau " + lab + (n ? " " + done + "/" + n : "") + (st && st.slots ? "" : " <small>(keine Statusmeldung)</small>") + "</span><button data-act='twtoggle' data-k='" + key + "'>" + (open ? "▾" : "▸") + " Zielbau</button>" + (open ? "<button data-act='twnow' data-k='" + key + "' class='on' title='Zielbau jetzt abarbeiten: kaufen, aufwerten, übergeben'>Jetzt</button><button data-act='twist' data-k='" + key + "' title='alle Slots auf das setzen, was er gerade trägt'>Ist</button><button data-act='twmode'" + (team_wish_mode >= 2 ? " class='on'" : "") + " title='Stufe 1: nur NPC-Teile · Stufe 2: auch Marktangebote auf diesem Server unter dem Preislimit'>leicht: " + (team_wish_mode >= 2 ? "NPC + Markt" : "nur NPC") + "</button><button data-act='twstat'" + (team_wish_stat ? " class='on'" : "") + " title='fertige Teile bekommen vor der Übergabe den Klassen-Attribut-Scroll (Priest int, Ranger dex)'>Attribut</button><button data-act='twclear' data-k='" + key + "' title='alle Ziele löschen'>✕</button>" : "") + "</div>";
+        if (!open) return;
+        h += "<table class='lp_t' style='font-size:11px'><tr><th style='text-align:left'>Slot</th><th style='text-align:left'>getragen</th><th style='text-align:left'>Ziel</th><th>Stufe</th><th>Limit</th><th style='text-align:left'>Stand</th></tr>";
+        TEAM_WISH_SLOTS.forEach(function (sl) {
+            var c = cfgs[sl] || {}, worn = st && st.slots && st.slots[sl], cands = tw_candidates(key, sl), cur = c.item || "";
+            if (cur && !cands.some(function (x) { return x.name == cur; })) { var d0 = G.items[cur]; if (d0) cands.unshift({ name: cur, def: d0, npc: is_buyable(cur), offer: null, score: gear_score_for(d0, c.level || 0, TEAM_CTYPE[key]) }); }
+            var sel = "<select data-twslot='" + key + ":" + sl + "' style='font-size:11px;background:#1c2029;color:#eee;border:1px solid #555;max-width:190px'><option value=''" + (!cur ? " selected" : "") + ">– kein Ziel –</option>";
+            cands.forEach(function (x) { sel += "<option value='" + x.name + "'" + (x.name == cur ? " selected" : "") + ">" + esc((x.def.name && x.def.name != x.name ? x.def.name + " [" + x.name + "]" : x.name) + " (" + Math.round(x.score) + ")" + (x.npc ? " NPC " + fmt(x.def.g || 0) : x.offer ? " Markt " + fmt(x.offer.price) : "")) + "</option>"; });
+            sel += "</select>";
+            var lv = ""; if (cur) { var mx = G.items[cur] && G.items[cur].upgrade ? TEAM_BUILD_MAX_LEVEL : 0; lv = "<select data-twlvl='" + key + ":" + sl + "' style='font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'>"; for (var L = 0; L <= mx; L++) lv += "<option value='" + L + "'" + (L == (c.level || 0) ? " selected" : "") + ">+" + L + "</option>"; lv += "</select>"; }
+            var s = tw_status(key, sl);
+            h += "<tr><td>" + sl + "</td><td>" + (worn ? esc(worn.name + "+" + (worn.level || 0)) : "<span style='color:#666'>–</span>") + "</td><td>" + sel + "</td><td>" + lv + "</td><td>" + (cur ? "<input data-twmax='" + key + ":" + sl + "' value='" + (c.max ? esc(fmt_mio(c.max)) : "") + "' placeholder='0,5' style='width:40px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'>" : "") + "</td><td style='color:" + (s && s.state == "fertig" ? "#4caf50" : "#e6e6e6") + "'>" + (s ? esc(s.text) : "") + "</td></tr>";
+        });
+        h += "</table>";
+    });
+    return h;
+}
+
+// ---------- Server-Event Giga Crab (crabxx): hinspringen, Huge Crabs farmen, Boss von außen anschießen; Team springt mit ----------
+var event_on = true; try { event_on = localStorage.getItem("lp_event_on") != "0"; } catch (e) {}
+var event_mode = null, event_prev = null, last_event_check = 0, event_boss_hits = 0, event_since = 0, event_empty_since = 0;
+var EVENT_BOSS_MIN_DIST = 110, EVENT_BOSS_MAX_DIST = 190;
+function event_status() { try { var st = (typeof server != "undefined" && server && server.status) || parent.S || {}; var e = st.crabxx; return e && (e.live !== false) ? e : null; } catch (e) { return null; } }
+function event_boss() { try { for (var id in parent.entities) { var m = parent.entities[id]; if (m && m.type == "monster" && m.mtype == "crabxx" && !m.dead) return m; } } catch (e) {} return null; }
+function event_tick() {
+    if (Date.now() - last_event_check < 10000) return; last_event_check = Date.now();
+    var st = event_status();
+    if (!event_mode) {
+        if (!event_on || !st || paused || busy || upgrading || server_trip || focus_mode || arb_job || merch_test) return;
+        if (st.hp != null && st.hp <= 0) return; // Boss schon tot, Meldung hängt nach
+        event_prev = { manual_spot: manual_spot, user_manual: user_manual }; event_mode = "crabxx"; event_since = Date.now(); event_boss_hits = 0; event_empty_since = 0;
+        manual_spot = "crabx"; user_manual = null; current_spot = "crabx"; need_repick = true; meas = null; if (hunt_spot) { hunt_spot = null; }
+        game_log("Event: Giga Crab läuft (HP " + (st.max_hp ? Math.round((st.hp || 0) / st.max_hp * 100) + " %" : "?") + ", Status " + JSON.stringify(st).slice(0, 120) + ") – springe hin, Team folgt"); last_panel = 0;
+        event_join();
+        return;
+    }
+    if (!st) { event_leave("Event vorbei"); return; }
+    if (!event_on) { event_leave("Teilnahme abgeschaltet"); return; }
+    if (st.hp != null && st.hp <= 0) { event_leave("Giga Crab besiegt"); return; }
+    // am Event-Ort, aber weder Boss noch Huge Crabs in Sicht: nach 60 s aufgeben (Meldung hängt nach)
+    var near = st.map && character.map == st.map && st.x != null && distance(character, { x: st.x, y: st.y }) < 600;
+    var seen = !!event_boss() || !!get_nearest_monster({ type: "crabx" });
+    if (near && !seen) { if (!event_empty_since) event_empty_since = Date.now(); else if (Date.now() - event_empty_since > 60000) { event_leave("am Event-Ort nichts mehr zu sehen"); return; } }
+    else event_empty_since = 0;
+    // nicht am Event-Ort (anderer Kartenbereich)? nochmal springen
+    if (st.map && (character.map != st.map || (st.x != null && distance(character, { x: st.x, y: st.y }) > 900)) && !busy && !fleeing) event_join();
+}
+function event_join() {
+    try { var r = join("crabxx"); if (r && typeof r.then == "function") r.then(function () { game_log("Event: angekommen"); }, function (e) { game_log("Event: Sprung fehlgeschlagen: " + JSON.stringify(e).slice(0, 120)); }); } catch (e) { game_log("Event: join-Fehler " + err_txt(e)); }
+    ["priest", "ranger"].forEach(function (k) { if (team_on[k] && team_running(TEAM[k])) team_send(TEAM[k], { t: "join", event: "crabxx" }); });
+}
+function event_leave(why) {
+    game_log("Event: " + why + " – zurück zum normalen Betrieb" + (event_boss_hits ? " (" + event_boss_hits + " Treffer auf Giga Crab)" : ""));
+    if (event_prev) { manual_spot = event_prev.manual_spot; user_manual = event_prev.user_manual; } event_prev = null; event_mode = null;
+    current_spot = null; need_repick = true; meas = null; last_hunt_check = 0; last_panel = 0;
+    stop("smart"); change_target(null); if (!paused) go_to_farm_spot();
+}
+function event_boss_step() { // kein crabx in Sicht: Giga Crab von außerhalb seiner Reichweite anschießen, Abstand halten
+    var bx = event_boss(); if (!bx) return false;
+    if (bx.target && (bx.target == character.name || TEAM_NAMES.indexOf(bx.target) >= 0)) { // Boss hat einen von uns im Visier: weg (16k Schaden = Tod)
+        var dx = character.x - bx.x, dy = character.y - bx.y, len = Math.hypot(dx, dy) || 1; try { move(character.x + dx / len * 200, character.y + dy / len * 200); } catch (e) {} set_message("Boss-Abstand!"); return true;
+    }
+    var d = distance(character, bx);
+    if (d < EVENT_BOSS_MIN_DIST) { var dx2 = character.x - bx.x, dy2 = character.y - bx.y, l2 = Math.hypot(dx2, dy2) || 1; try { move(bx.x + dx2 / l2 * (EVENT_BOSS_MIN_DIST + 30), bx.y + dy2 / l2 * (EVENT_BOSS_MIN_DIST + 30)); } catch (e) {} return true; }
+    var rng = Math.min(character.range || 150, EVENT_BOSS_MAX_DIST);
+    if (d > rng) { var dx3 = character.x - bx.x, dy3 = character.y - bx.y, l3 = Math.hypot(dx3, dy3) || 1, want = Math.max(EVENT_BOSS_MIN_DIST, rng - 15); try { move(bx.x + dx3 / l3 * want, bx.y + dy3 / l3 * want); } catch (e) {} set_message("Zum Boss"); return true; }
+    if (can_attack(bx)) { try { attack(bx); event_boss_hits++; last_target_id = bx.id; set_message("Giga Crab " + fmt(bx.hp) + "/" + fmt(bx.max_hp)); } catch (e) {} }
+    return true;
+}
+function event_html() {
+    var st = event_status(); if (!st && !event_mode) return "";
+    return "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Event: <span style='color:#e6e6e6'>Giga Crab" + (st && st.max_hp ? " " + Math.round((st.hp || 0) / st.max_hp * 100) + " % HP" : "") + (event_mode ? " – dabei seit " + Math.round((Date.now() - event_since) / 60000) + " min, " + event_boss_hits + " Treffer" : "") + "</span></span><button data-act='eventon'" + (event_on ? " class='on'" : "") + " title='am Server-Event teilnehmen (Vorrang vor Jagd)'>Teilnehmen</button></div>";
+}
 function team_html() {
     var parts = [];
-    for (var k in TEAM) { var nm = TEAM[k], st = team_state[nm], run = team_running(nm), lab = TEAM_LABEL[k]; var raw = active_chars()[nm]; try { var pe = get_player(nm); if (pe && pe.rip && st) st.state = "tot"; } catch (e) {} parts.push("<span style='color:" + (team_on[k] ? (run ? "#4caf50" : "#ffb74d") : "#9aa3b2") + "'>" + lab + (st && Date.now() - st.t < 60000 ? " Lv " + st.level + " · " + esc(st.state || "") : run ? " (" + esc(String(raw)) + ", keine Meldung)" : team_on[k] ? " (aus/offline)" : "") + "</span> <button data-act='team' data-k='" + k + "'" + (team_on[k] ? " class='on'" : "") + " style='padding:0 5px'>" + (team_on[k] ? "an" : "aus") + "</button>"); }
-    return "<div class='lp_row' style='flex-wrap:wrap;line-height:1.6'><span class='lp_k'>Team:</span> " + parts.join(" · ") + "</div>";
+    for (var k in TEAM) { var nm = TEAM[k], st = team_state[nm], run = team_running(nm), lab = TEAM_LABEL[k]; var raw = active_chars()[nm]; try { var pe = get_player(nm); if (pe && pe.rip && st) st.state = "tot"; } catch (e) {} parts.push("<span style='color:" + (team_on[k] ? (run ? "#4caf50" : "#ffb74d") : "#9aa3b2") + "'>" + lab + (st && Date.now() - st.t < 60000 ? " Lv " + st.level + " · " + esc(st.state || "") + (st.tokens != null ? " · " + st.tokens + " Tok" : "") + (st.hunt && st.hunt.c > 0 ? " · Jagd " + esc(st.hunt.id) + " " + st.hunt.c : "") : run ? " (" + esc(String(raw)) + ", keine Meldung)" : team_on[k] ? " (aus/offline)" : "") + "</span> <button data-act='team' data-k='" + k + "'" + (team_on[k] ? " class='on'" : "") + " style='padding:0 5px'>" + (team_on[k] ? "an" : "aus") + "</button>"); }
+    if (team_on.merch) { var mst = team_state[TEAM.merch]; parts.push("<button data-act='goldback' title='Händler bringt sein Gold (bis auf 150k) zum Magier'>Gold holen" + (mst && mst.gold ? " (" + fmt(mst.gold) + ")" : "") + "</button>"); }
+    parts.push("<button data-act='teamlogs' title='gespeicherte Logs von Merch/Priest/Ranger (letzte 40 Zeilen je Char) ins Log holen'>Team-Logs</button>");
+    if (team_on.merch) parts.push("<button data-act='merchtest' title='Testet, ob der Händler auf einen anderen Server gestartet werden kann (Grundlage für Handel im Hintergrund); dauert ca. 1 min, Händler kommt danach zurück'" + (merch_test ? " class='on'" : "") + " style='padding:0 5px'>" + (merch_test ? "Servertest läuft (" + merch_test.stage + ")" : "Merch-Servertest") + "</button>");
+    if (team_on.hunter) { var hst = team_state[TEAM.hunter]; if (hst && hst.hunt && hst.hunt.c > 0) { var hid = hst.hunt.id, ok = G.monsters[hid] && is_safe_monster(hid) && hunt_danger_ok(hid), dg = G.monsters[hid] ? Math.round(mon_danger(G.monsters[hid]) * 100) : 0; if (hunter_only) parts.push("<span style='color:#8ab4f8'>Jäger-Jagd: " + esc(hid) + " " + hst.hunt.c + " übrig · " + fmt_time(hst.hunt.ms || 0) + " – wird gefarmt (Gefahr " + dg + " %)</span>"); else parts.push("<span style='color:" + (ok ? "#8ab4f8" : "#ffb74d") + "'>Jäger-Jagd: " + esc(hid) + " " + hst.hunt.c + " übrig" + (ok ? (current_spot == hid ? " – Team farmt dort" : "") : " – zu gefährlich (" + dg + " %), läuft aus") + "</span>"); } else if (hunter_only) parts.push("<span style='color:#9aa3b2'>Jäger-Jagd: keine – warte, bis der Jäger eine neue holt</span>"); }
+    var give = "";
+    if (team_on.priest || team_on.ranger) { // manuelle Übergabe: Inventarteil auswählen, an Priest/Ranger geben (der legt es an, wenn es besser ist)
+        var opts = "", any = false;
+        for (var gi = 0; gi < character.items.length; gi++) { var git = character.items[gi]; if (!git) continue; var gd = G.items[git.name]; if (!gd || KEEP_ITEMS.test(git.name) || EVENT_ITEMS.test(git.name)) continue; var ok = false; for (var gsl in SLOT_TYPES) { if ((team_on.priest && fits_class(gd, "priest", gsl)) || (team_on.ranger && fits_class(gd, "ranger", gsl))) { ok = true; break; } } if (!ok) continue; any = true; opts += "<option value='" + gi + "'" + (give_sel == gi ? " selected" : "") + ">" + esc((gd.name || git.name) + "+" + (git.level || 0) + (git.q > 1 ? " ×" + git.q : "") + " [" + (gi + 1) + "]") + "</option>"; }
+        if (any) give = "<div class='lp_row' style='flex-wrap:wrap'><span class='lp_k' title='Teil aus dem Inventar an ein Teammitglied geben – es muss neben dir stehen; angelegt wird es dort, wenn es besser ist'>Geben:</span> <select data-give='1' style='font-size:11px;background:#1c2029;color:#eee;border:1px solid #555;max-width:220px'><option value=''" + (give_sel < 0 ? " selected" : "") + ">– Teil wählen –</option>" + opts + "</select>" + (team_on.priest ? " <button data-act='give' data-k='priest' style='padding:0 6px'>→ Priest</button>" : "") + (team_on.ranger ? " <button data-act='give' data-k='ranger' style='padding:0 6px'>→ Ranger</button>" : "") + "</div>";
+    }
+    return "<div class='lp_row' style='flex-wrap:wrap;line-height:1.6'><span class='lp_k'>Team:</span> " + parts.join(" · ") + "</div>" + give;
+}
+// ---------- Test: kann ein Nebencharakter auf einem anderen Server gestartet werden? ----------
+var merch_test = null; // { stage: "stopped"|"started", t, target: {region, id}, sv }
+function other_server() { var me = split_server(my_server().toUpperCase()); if (!me) return null; var id = me.id.toUpperCase() == "I" ? "II" : "I"; return { region: me.region, id: id }; }
+function start_merch_test() {
+    if (merch_test) { game_log("Servertest läuft schon (" + merch_test.stage + ")"); return; }
+    var tgt = other_server(); if (!tgt) { game_log("Servertest: eigenen Server nicht erkannt (" + my_server() + ")"); return; }
+    try { game_log("Servertest: start_character = " + String(start_character).replace(/\s+/g, " ").slice(0, 160)); } catch (e) {}
+    try { var r = parent.start_character_runner; game_log("Servertest: start_character_runner = " + (r ? String(r).replace(/\s+/g, " ").slice(0, 400) : "nicht vorhanden")); } catch (e) {}
+    var nm = TEAM.merch;
+    try { if (active_chars()[nm]) stop_character(nm); } catch (e) {}
+    try { parent.__lp_team_restart_after = Date.now() + 120000; } catch (e) {}
+    merch_test = { stage: "stopped", t: Date.now(), target: tgt, sv: null };
+    game_log("Servertest: Händler gestoppt, Start auf " + pretty_server(tgt.region + tgt.id) + " in 15 s"); last_panel = 0;
+}
+function merch_test_tick() {
+    if (!merch_test) return; var nm = TEAM.merch, el = Date.now() - merch_test.t;
+    if (merch_test.stage == "stopped" && el > 15000) {
+        merch_test.stage = "started"; merch_test.t = Date.now();
+        try { start_char_on_server(nm, merch_test.target.region, merch_test.target.id); game_log("Servertest: eigenes Fenster für " + nm + " auf " + pretty_server(merch_test.target.region + merch_test.target.id) + " angelegt"); } catch (e) { game_log("Servertest: Fenster-Fehler " + err_txt(e)); merch_test_finish(); }
+        setTimeout(function () { try { var w = team_windows()[nm]; if (w && w.win) { var fr = null; try { fr = w.win.frameElement; } catch (e) {} game_log("Servertest: Fenster-URL " + String((fr && fr.src) || "?").slice(0, 160) + " · server_region/identifier " + (w.win.server_region || "?") + "/" + (w.win.server_identifier || "?") + " · aktiv: " + JSON.stringify(active_chars())); } else game_log("Servertest: kein Fenster für " + nm + " gefunden (Fenster lädt noch?)"); } catch (e) { game_log("Servertest: Fenster-Prüfung " + err_txt(e)); } }, 20000);
+        return;
+    }
+    if (merch_test.stage == "started") { try { var wh = JSON.parse(localStorage.getItem("lp_where_" + nm) || "null"); if (wh && wh.t > merch_test.t) { merch_test_result(wh.sv); return; } } catch (e) {} } // Rückmeldung über den gemeinsamen Speicher (Nachrichten gehen nur auf demselben Server)
+    if (merch_test.stage == "started" && el > 75000) { game_log("Servertest: keine Meldung vom Händler nach 75 s – Ergebnis unklar (Log prüfen)"); merch_test_finish(); }
+}
+function start_char_on_server(nm, region, id) { // Nebencharakter-Fenster wie das Spiel anlegen, aber mit Wunschserver in der Adresse
+    var doc = parent.document, rid = "ichar" + nm.toLowerCase();
+    var old = doc.getElementById(rid); if (old) { try { old.remove(); } catch (e) {} }
+    var ref = null; try { var wins = team_windows(); for (var k in wins) { if (wins[k].win && wins[k].win.frameElement) { ref = wins[k].win.frameElement; break; } } } catch (e) {}
+    var f = ref ? ref.cloneNode(false) : doc.createElement("iframe");
+    if (!ref) { f.style.display = "none"; }
+    f.id = rid; f.removeAttribute("src");
+    f.src = "https://adventure.land/character/" + encodeURIComponent(nm) + "/in/" + region + "/" + id + "/?no_html=true&is_bot=1&code=1";
+    (ref && ref.parentNode ? ref.parentNode : doc.body).appendChild(f);
+    return f;
+}
+function merch_test_result(sv) {
+    var want = (merch_test.target.region + merch_test.target.id).toLowerCase(), got = String(sv || "").replace(/\s+/g, "").toLowerCase();
+    game_log("Servertest: Händler meldet sich von " + (sv ? pretty_server(sv) : "unbekannt") + " → " + (got == want ? "FUNKTIONIERT – Nebencharakter läuft über eigenes Fenster auf einem anderen Server" : "landet trotzdem zuhause (gewollt " + pretty_server(want.toUpperCase()) + ")"));
+    merch_test.sv = sv; merch_test.stage = "fertig"; setTimeout(merch_test_finish, 3000);
+}
+function merch_test_finish() {
+    if (!merch_test) return; merch_test = null; var nm = TEAM.merch;
+    try { if (active_chars()[nm]) stop_character(nm); } catch (e) {}
+    try { var f = parent.document.getElementById("ichar" + nm.toLowerCase()); if (f) f.remove(); } catch (e) {} // unser eigenes Fenster wieder entfernen
+    try { parent.__lp_team_restart_after = Date.now() + 20000; } catch (e) {}
+    game_log("Servertest beendet – Händler wird in 20 s zuhause neu gestartet"); last_panel = 0;
+}
+var give_sel = -1;
+function give_to_team(key) { // ausgewähltes Inventarteil an Priest/Ranger senden
+    var nm = TEAM[key], lab = TEAM_LABEL[key], i = give_sel, it = i >= 0 ? character.items[i] : null;
+    if (!it) { game_log("Geben: erst ein Teil auswählen"); return; }
+    var p = get_player(nm); if (!p || p.rip) { game_log("Geben: " + lab + " nicht in Sicht"); return; }
+    if (p.map != character.map || distance(character, p) > 350) { game_log("Geben: " + lab + " zu weit weg (" + (p.map != character.map ? "andere Karte" : Math.round(distance(character, p)) + " Einheiten") + ") – er muss neben dir stehen"); return; }
+    var st = team_state[nm]; if (st && typeof st.free == "number" && st.free < 1) { game_log("Geben: " + lab + " hat keinen freien Inventarplatz – er verkauft Reste beim nächsten Stadtgang"); return; }
+    var def = G.items[it.name], slot = null; for (var sl in SLOT_TYPES) { if (fits_class(def, TEAM_CTYPE[key], sl)) { slot = sl; break; } }
+    if (!slot) { game_log("Geben: " + it.name + " passt nicht zu " + lab); return; }
+    try { team_send(nm, { t: "gear", name: it.name, level: it.level || 0, slot: slot, manual: true }); send_item(nm, i, it.q || 1); game_log("[" + lab + "] bekommt " + it.name + "+" + (it.level || 0) + " (manuell, " + slot + ")"); give_sel = -1; last_panel = 0; } catch (e) { game_log("Geben: " + err_txt(e)); }
 }
 function team_threat() { // Monster, das ein Teammitglied angreift und in meiner Nähe ist
     var best = null, bd = 260;
@@ -383,7 +722,7 @@ try { unmap_key("P"); unmap_key("U"); unmap_key("K"); unmap_key("L"); unmap_key(
 // alten Handler (von vorherigem Run) entfernen, dann neu registrieren
 if (parent.__logicplan_keyhandler) parent.document.removeEventListener("keydown", parent.__logicplan_keyhandler);
 parent.__logicplan_keyhandler = on_key;
-parent.document.addEventListener("keydown", on_key);
+if (!SOLO) parent.document.addEventListener("keydown", on_key);
 
 // Diagnose: Event-Daten (Serverstatus, Emotes, Items) als Fenster anzeigen
 function event_debug() {
@@ -415,10 +754,10 @@ function reload_bot() {
             return fetch(BOT_BASE + "bot_" + v + ".js", { cache: "no-store" }).then(function (r) { if (!r.ok) throw "HTTP " + r.status + " bei bot_" + v + ".js"; return r.text(); });
         })
         .then(function (code) {
-            parent.__lp_resume = { paused: paused, t: Date.now(), timers: { last_ponty: last_ponty, last_market: last_market, shells_retry_at: shells_retry_at, hunt_cooldown_until: hunt_cooldown_until, cake_next: cake_next, last_hunt_check: last_hunt_check, last_global_scan: last_global_scan, last_auto_gear: last_auto_gear } }; // Zustand für die neue Version
+            parent.__lp_resume = { paused: paused, t: Date.now(), timers: { last_ponty: last_ponty, last_market: last_market, shells_retry_at: shells_retry_at, hunt_cooldown_until: hunt_cooldown_until, cake_next: cake_next, last_hunt_check: last_hunt_check, last_global_scan: last_global_scan, last_auto_gear: last_auto_gear, last_arb_trip: last_arb_trip } }; // Zustand für die neue Version
             if (main_timer) clearInterval(main_timer); main_timer = null; parent.__lp_main_timer = null;
             stop("smart"); stop("move");
-            try { var ac = active_chars(); TEAM_NAMES.forEach(function (nm) { if (ac[nm]) { try { stop_character(nm); } catch (e) {} } }); parent.__lp_team_restart_after = Date.now() + 15000; } catch (e) {} // Team lädt danach ebenfalls die neue Version (Neustart erst nach dem Abmelden)
+            // Team bleibt eingeloggt und bekommt die neue Version per Einspielen (team_inject), kein Neustart mehr
             try { eval(code); } catch (e) { game_log("Startfehler: " + e); start_main(); }
         })
         .catch(function (e) { game_log("Neu laden fehlgeschlagen: " + e); });
@@ -540,7 +879,14 @@ function candidate_list() {
     list.sort(function (a, b) { return estimate(b) - estimate(a); });
     return list.slice(0, MEASURE_TOP);
 }
+function team_hunt_pick() { // Jagdmonster von Priest/Ranger, das für uns sicher ist (nur wenn keine eigene Jagd läuft)
+    if (SOLO || hunt_spot) return null;
+    var out = null; ["hunter", "priest", "ranger"].forEach(function (k) { if (out || !team_on[k]) return; var st = team_state[TEAM[k]]; if (!st || Date.now() - st.t > 90000 || !st.hunt || !(st.hunt.c > 0)) return; var id = st.hunt.id; if (G.monsters[id] && is_safe_monster(id) && hunt_danger_ok(id) && !hidden_mons[id] && !spot_blocked(id) && spawn_count(id) > 0) out = { id: id, who: TEAM_LABEL[k] }; });
+    return out;
+}
+var team_hunt_logged = "";
 function choose_spot() {
+    var th = team_hunt_pick(); if (th) { if (team_hunt_logged != th.id) { team_hunt_logged = th.id; game_log("Team-Jagd: " + th.who + " jagt " + th.id + " – farme dort mit"); } return th.id; }
     var cands = candidate_list();
     if (!cands.length) return team_escort() ? "bee" : "goo";
     // 1. noch nicht (oder veraltet) gemessene Spots zuerst
@@ -560,8 +906,15 @@ function choose_spot() {
 }
 function pick_farm_monster() {
     if (!has_weapon()) return NO_WEAPON_MONSTER;
+    if (hunter_only && !event_mode) { // Nur Jäger-Jagd: Jagdmonster des Jägers ist der einzige Spot, ohne Gefahr-/Sperrprüfung; ohne Jagd wird gewartet
+        var hm = hunter_only_mon();
+        if (hm) { if (current_spot != hm) { current_spot = hm; need_repick = false; meas = null; save_state(); game_log("Nur Jäger-Jagd: farme " + hm + " (" + hunter_hunt().c + " übrig, Gefahr " + Math.round(mon_danger(G.monsters[hm]) * 100) + " %)"); } return hm; }
+        if (current_spot) { current_spot = null; save_state(); }
+        return null;
+    }
     if (manual_spot && !spot_blocked(manual_spot)) { if (current_spot != manual_spot) { current_spot = manual_spot; need_repick = false; meas = null; save_state(); } if (!team_safe(manual_spot) && Date.now() - team_safe_warned > 600000) { team_safe_warned = Date.now(); game_log("Achtung: Spot " + manual_spot + " ist für " + escort_name() + " zu gefährlich – fester Spot bleibt, aber er wird dort sterben"); } return current_spot; }
     if (current_spot && !team_safe(current_spot)) { if (Date.now() - team_safe_warned > 600000) { team_safe_warned = Date.now(); game_log("Spot " + current_spot + " für " + escort_name() + " zu gefährlich – wähle einen leichteren"); } need_repick = true; }
+    var th2 = team_hunt_pick(); if (th2 && current_spot != th2.id && !manual_spot) need_repick = true; else if (!th2 && team_hunt_logged && current_spot == team_hunt_logged) { team_hunt_logged = ""; need_repick = true; }
     if (!current_spot || need_repick) { current_spot = choose_spot(); need_repick = false; save_state(); }
     return current_spot;
 }
@@ -634,7 +987,7 @@ function finish_measure(died) {
     var st = record_stat(meas.mon, meas.xp / h, meas.gold / h);
     if (died) { st.deaths = (st.deaths || 0) + 1; if (!manual_spot) { st.unsafe_until = character.level + 3; st.xp_h = 0; } }
     save_stats();
-    game_log("Spot " + meas.mon + ": " + Math.round(st.xp_h) + " XP/h, " + Math.round(st.gold_h) + " Gold/h" + (died ? " – GESTORBEN, gesperrt bis Level " + st.unsafe_until : ""));
+    game_log("Spot " + meas.mon + ": " + Math.round(st.xp_h) + " XP/h, " + Math.round(st.gold_h) + " Gold/h" + (died ? (st.unsafe_until ? " – GESTORBEN, gesperrt bis Level " + st.unsafe_until : " – GESTORBEN (fester Spot, nicht gesperrt)") : ""));
     meas = null; need_repick = true; save_state();
 }
 function log_stats() {
@@ -663,7 +1016,21 @@ var last_go = 0, roam_logged = false;
 function go_to_farm_spot() {
     if (paused || Date.now() - last_go < 5000) return;
     last_go = Date.now();
+    if (event_mode) { // Event: beim Boss bleiben (Huge Crabs spawnen um ihn herum)
+        var est = event_status(), bx = event_boss();
+        var tp = bx ? { map: character.map, x: bx.x, y: bx.y } : est && est.x != null ? { map: est.map, x: est.x, y: est.y } : null;
+        if (!tp) return;
+        if (character.map != tp.map || distance(character, tp) > 900) { event_join(); return; }
+        if (distance(character, tp) > 300) { busy = true; set_message("Zum Event"); var ang = Math.random() * Math.PI * 2; smart_move({ map: tp.map, x: tp.x + Math.cos(ang) * 180, y: tp.y + Math.sin(ang) * 180 }).catch(function () {}).then(function () { busy = false; }); }
+        return;
+    }
     var mon = pick_farm_monster();
+    if (!mon) { // Nur Jäger-Jagd ohne laufende Jagd: beim Jäger bleiben und warten
+        set_message("Warte auf Jäger");
+        var hp = null; try { hp = get_player(TEAM.hunter); } catch (e) {}
+        if (hp && !hp.rip && hp.map == character.map && distance(character, hp) > 250) { busy = true; smart_move({ x: hp.x + 60, y: hp.y }).catch(function () {}).then(function () { busy = false; }); }
+        return;
+    }
     var areas = spawn_areas(mon);
     // Schon im Spawngebiet, aber nichts in Sicht -> umherstreifen statt Weg neu suchen
     if (areas.length && !get_nearest_monster({ type: mon })) {
@@ -864,23 +1231,37 @@ function init_panel() {
         else if (act == "wishist") { var slots_ = b.getAttribute("data-slot") == "*" ? Object.keys(SLOT_TYPES) : [b.getAttribute("data-slot")]; slots_.forEach(function (is_) { var iw = character.slots[is_]; var keep = wish_cfg[is_] && wish_cfg[is_].max; wish_cfg[is_] = iw && G.items[iw.name] ? { item: iw.name, level: iw.level || 0 } : { item: "" }; if (keep) wish_cfg[is_].max = keep; }); save_wish_cfg(); game_log("Zielbau: Ist-Stand übernommen (" + slots_.length + " Slots, Limits bleiben)"); }
         else if (act == "buyoffer") { var bo = offers_for_slot(b.getAttribute("data-slot"))[parseInt(b.getAttribute("data-idx"))]; if (bo) buy_confirm = { key: offer_key(bo), offer: bo, slot: b.getAttribute("data-slot"), t: Date.now() }; }
         else if (act == "buyno") buy_confirm = null;
+        else if (act == "give") give_to_team(b.getAttribute("data-k"));
+        else if (act == "merchtest") start_merch_test();
+        else if (act == "teamlogs") { for (var tk2 in TEAM) { try { var arr = JSON.parse(localStorage.getItem("lp_tlog_" + TEAM[tk2]) || "[]"); game_log("=== " + TEAM_LABEL[tk2] + " – gespeichertes Log (" + arr.length + " Zeilen) ==="); arr.forEach(function (e) { game_log("[" + TEAM_LABEL[tk2] + " " + new Date(e.t).toLocaleTimeString() + "] " + e.m); }); } catch (x) { game_log(TEAM_LABEL[tk2] + ": Log nicht lesbar"); } } var so = null; try { so = localStorage.getItem("lp_stand_orders_" + TEAM.merch); } catch (x) {} game_log("Stand-Aufträge: " + (so || "keine") + " · Händler-Stand (gespeichert): " + (function () { try { return localStorage.getItem("lp_listed_" + TEAM.merch) || "leer"; } catch (x) { return "?"; } })()); }
+        else if (act == "goldback") { team_send(TEAM.merch, { t: "goldback" }); game_log("Händler: Gold anfordern – er kommt zu dir"); }
+        else if (act == "eventon") { event_on = !event_on; try { localStorage.setItem("lp_event_on", event_on ? "1" : "0"); } catch (x) {} game_log("Event-Teilnahme: " + (event_on ? "an" : "aus")); last_event_check = 0; }
+        else if (act == "arbtrip") start_arb_trip(b.getAttribute("data-sv"));
+        else if (act == "arbauto") { arb_auto = !arb_auto; try { localStorage.setItem("lp_arb_auto", arb_auto ? "1" : "0"); } catch (x) {} game_log("Handelsreisen automatisch: " + (arb_auto ? "an (ab " + fmt(ARB_TRIP_MIN) + " Gewinn)" : "aus")); last_panel = 0; }
         else if (act == "team") { var tk = b.getAttribute("data-k"); team_on[tk] = !team_on[tk]; save_team(); last_team_tick = 0; game_log("Team: " + TEAM[tk] + " " + (team_on[tk] ? "an" : "aus")); }
         else if (act == "arbtoggle") { div.__arb = !div.__arb; try { localStorage.setItem("lp_panel_arb", div.__arb ? "1" : "0"); } catch (x) {} }
         else if (act == "buyok") { if (buy_confirm) { var bc = buy_confirm; buy_confirm = null; preempt("Kauf " + bc.offer.name, function () { return buy_offer_now(bc.slot, bc.offer); }); } }
+        else if (act == "twnow") { var nk = b.getAttribute("data-k"); preempt("Zielbau " + TEAM_LABEL[nk], function () { return team_build_now(nk); }); }
+        else if (act == "twstat") { team_wish_stat = !team_wish_stat; try { localStorage.setItem("lp_teamwish_stat", team_wish_stat ? "1" : "0"); } catch (x) {} game_log("Team-Zielbau: Attribut-Scroll " + (team_wish_stat ? "an" : "aus")); }
+        else if (act == "twtoggle") { var tk = b.getAttribute("data-k"); div["__tw_" + tk] = !div["__tw_" + tk]; }
+        else if (act == "twmode") { team_wish_mode = team_wish_mode >= 2 ? 1 : 2; try { localStorage.setItem("lp_teamwish_mode", String(team_wish_mode)); } catch (x) {} game_log("Team-Zielbau: " + (team_wish_mode >= 2 ? "NPC + Marktangebote" : "nur NPC-Teile")); }
+        else if (act == "twclear") { team_wish[b.getAttribute("data-k")] = {}; save_team_wish(); }
+        else if (act == "twist") { var ik = b.getAttribute("data-k"), ist = team_state[TEAM[ik]]; if (!ist || !ist.slots) game_log("Team-Zielbau: keine Statusmeldung von " + TEAM_LABEL[ik]); else { team_wish[ik] = {}; TEAM_WISH_SLOTS.forEach(function (sl) { var w = ist.slots[sl]; if (w && G.items[w.name]) team_wish[ik][sl] = { item: w.name, level: w.level || 0 }; }); save_team_wish(); game_log("Team-Zielbau " + TEAM_LABEL[ik] + ": Ist-Stand übernommen"); } }
         else if (act == "wishtoggle") { div.__wish = !div.__wish; try { localStorage.setItem("lp_panel_wish", div.__wish ? "1" : "0"); } catch (x) {} }
         else if (act == "pauseafter") { pause_after = !pause_after; try { localStorage.setItem("lp_pause_after", pause_after ? "1" : "0"); } catch (x) {} game_log("Nach manueller Aktion: " + (pause_after ? "pausieren" : "weiterfarmen")); last_panel = 0; }
+        else if (act == "hunteronly") { hunter_only = !hunter_only; try { localStorage.setItem("lp_hunter_only", hunter_only ? "1" : "0"); } catch (x) {} game_log("Nur Jäger-Jagd " + (hunter_only ? "an – Team farmt ausschließlich die Jagd von " + TEAM.hunter : "aus")); need_repick = true; meas = null; if (!hunter_only) current_spot = null; stop("smart"); busy = false; change_target(null); save_state(); }
         else if (act == "hunt") { hunt_on = !hunt_on; try { localStorage.setItem("lp_hunt", hunt_on ? "1" : "0"); } catch (x) {} game_log("Monster Hunt " + (hunt_on ? "an" : "aus")); }
         else if (act == "huntabandon") preempt("Jagd aufgeben", hunt_abandon);
         else if (act == "focus") { focus_mode = !focus_mode; try { localStorage.setItem("lp_focus", focus_mode ? "1" : "0"); } catch (x) {} tidy_next = 0; if (focus_mode && pending_upgrade == "auto") pending_upgrade = null; game_log("Fokus-Modus " + (focus_mode ? "an – nur farmen/hunten, Nebenroutinen aus" : "aus – alle Routinen wieder aktiv")); }
         else if (act == "bycatch") { bycatch = !bycatch; try { localStorage.setItem("lp_bycatch", bycatch ? "1" : "0"); } catch (x) {} game_log("Beifang " + (bycatch ? "an" : "aus")); }
-        else if (act == "sortinv") preempt("Inventar sortieren", sort_inventory);
+        else if (act == "sortinv") preempt("Inventar sortieren", sort_inventory, true);
         else if (act == "compound") preempt("Compound", compound_only);
         else if (act == "tidy") preempt("Aufräumen", tidy_now);
         else if (act == "bank") preempt("Bank aufräumen", bank_cleanup_now);
         else if (act == "banksort") preempt("Bank sortieren", bank_sort_now);
         else if (act == "copylog") copy_log();
         else if (act == "goal") start_goal(b.getAttribute("data-slot"));
-        else if (act == "focus") { var fs = b.getAttribute("data-slot"); preempt("Slot " + fs, function () { return focus_slot(fs); }); }
+        else if (act == "slotnow") { var fs = b.getAttribute("data-slot"); preempt("Slot " + fs, function () { return focus_slot(fs); }); }
         else if (act == "goalstop") stop_goal("manuell");
         else if (act == "goalskip") { goal_skip[b.getAttribute("data-item")] = Date.now(); save_goal_skip(); goal_cache_t = 0; }
         else if (act == "chartoggle") toggle_char_panel();
@@ -898,6 +1279,17 @@ function init_panel() {
         if (!inside(e)) return;
         var t = e.target; if (!t || (t.tagName != "SELECT" && t.tagName != "INPUT")) return;
         var ws = t.getAttribute("data-wslot"), wl = t.getAttribute("data-wlvl"), wm = t.getAttribute("data-wmax");
+        var tws = t.getAttribute("data-twslot"), twl = t.getAttribute("data-twlvl"), twm = t.getAttribute("data-twmax");
+        if (tws || twl || twm) {
+            var parts = (tws || twl || twm).split(":"), tk = parts[0], tsl = parts[1]; if (!team_wish[tk]) team_wish[tk] = {}; var tc = team_wish[tk][tsl] || {};
+            if (tws) { var v0 = t.value; if (!v0) tc = {}; else { var d1 = G.items[v0]; tc.item = v0; if (typeof tc.level != "number") tc.level = d1 && d1.upgrade ? Math.min(TEAM_BUILD_MAX_LEVEL, is_buyable(v0) ? 7 : 5) : 0; } game_log("Zielbau " + TEAM_LABEL[tk] + " " + tsl + ": " + (tc.item ? tc.item + " +" + tc.level : "kein Ziel")); }
+            else if (twl) { tc.level = parseInt(t.value) || 0; game_log("Zielbau " + TEAM_LABEL[tk] + " " + tsl + ": " + tc.item + " +" + tc.level); }
+            else { var mv2 = parse_mio(t.value); if (mv2 > 0) tc.max = mv2; else delete tc.max; game_log("Zielbau " + TEAM_LABEL[tk] + " " + tsl + ": Preislimit " + (mv2 > 0 ? fmt(mv2) : "Standard " + fmt(TEAM_BUILD_DEFAULT_MAX))); }
+            team_wish[tk][tsl] = tc; save_team_wish(); try { t.blur(); } catch (x) {} return;
+        }
+        if (t.getAttribute("data-fixprice")) { var fpn = t.getAttribute("data-fixprice"), fpv = parse_mio(t.value); var fo = stand_orders[fpn] || (stand_orders[fpn] = { since: Date.now() }); if (fpv > 0) { fo.fixed = fpv; fo.price = fpv; } else { delete fo.fixed; } fo.t = Date.now(); save_stand_orders(); game_log("Stand-Auftrag " + fpn + ": " + (fpv > 0 ? "fester Preis " + fmt(fpv) : "automatische Preisleiter") + " – Händler passt den Stand an, sobald er den Slot sieht"); try { t.blur(); } catch (x) {} last_panel = 0; return; }
+        if (t.getAttribute("data-arbmin")) { var am = parse_mio(t.value); if (am > 0) { ARB_TRIP_MIN = am; try { localStorage.setItem("lp_arb_min", String(am)); } catch (x) {} game_log("Handelsreise ab " + fmt(am) + " Gewinn"); } try { t.blur(); } catch (x) {} last_panel = 0; return; }
+        if (t.getAttribute("data-give")) { give_sel = t.value === "" ? -1 : parseInt(t.value); try { t.blur(); } catch (x) {} return; }
         if (t.getAttribute("data-huntmax")) { var hv = parseFloat(String(t.value).replace(",", ".")); if (isFinite(hv) && hv > 0 && hv <= 100) { hunt_max_danger = hv / 100; try { localStorage.setItem("lp_hunt_max_danger", String(hunt_max_danger)); } catch (x) {} game_log("Jagd-Gefahrgrenze: " + Math.round(hv) + " %"); hunt_skipped = null; last_hunt_check = 0; } try { t.blur(); } catch (x) {} last_panel = 0; return; }
         if (wm) { var mv = parse_mio(t.value), cm = wish_cfg[wm] || { item: wish_item(wm) || "", level: wish_level(wm) }; if (mv > 0) cm.max = mv; else delete cm.max; wish_cfg[wm] = cm; save_wish_cfg(); game_log("Zielbau " + wm + ": Preislimit " + (mv > 0 ? fmt(mv) : "automatisch")); try { t.blur(); } catch (x) {} return; }
         if (ws) { var v = t.value, oldmax = wish_cfg[ws] && wish_cfg[ws].max; if (!v) wish_cfg[ws] = { item: "" }; else wish_cfg[ws] = { item: v, level: default_target_level(G.items[v]) }; if (oldmax) wish_cfg[ws].max = oldmax; save_wish_cfg(); game_log("Zielbau " + ws + ": " + (v ? v + " +" + wish_cfg[ws].level : "kein Ziel")); }
@@ -905,7 +1297,7 @@ function init_panel() {
     };
     win.addEventListener("change", onChange, true);
     var onInput = function (e) { var t = e.target; if (t && t.id == "lp_wiki_q") { wiki.q = t.value; wiki.page = null; render_wiki(); } };
-    var onKeyCap = function (e) { var t = e.target; if (t && (t.id == "lp_wiki_q" || (t.tagName == "INPUT" && inside(e)))) { e.stopPropagation(); if (e.key == "Escape") t.blur(); if (e.key == "Enter" && (t.getAttribute("data-wmax") || t.getAttribute("data-huntmax")) && e.type == "keydown") { try { t.dispatchEvent(new Event("change", { bubbles: true })); } catch (x) {} } } }; // Tasten im Suchfeld nicht ans Spiel/Bot weitergeben
+    var onKeyCap = function (e) { var t = e.target; if (t && (t.id == "lp_wiki_q" || (t.tagName == "INPUT" && inside(e)))) { e.stopPropagation(); if (e.key == "Escape") t.blur(); if (e.key == "Enter" && (t.getAttribute("data-wmax") || t.getAttribute("data-huntmax") || t.getAttribute("data-arbmin") || t.getAttribute("data-twmax") || t.getAttribute("data-fixprice")) && e.type == "keydown") { try { t.dispatchEvent(new Event("change", { bubbles: true })); } catch (x) {} } } }; // Tasten im Suchfeld nicht ans Spiel/Bot weitergeben
     win.addEventListener("input", onInput, true);
     ["keydown", "keyup", "keypress"].forEach(function (t) { win.addEventListener(t, onKeyCap, true); });
     parent.__lp_panel_h = { down: onDown, move: onMove, up: onUp, click: onClick, change: onChange, input: onInput, key: onKeyCap };
@@ -995,18 +1387,38 @@ function my_dps_vs(d) {
 }
 function mon_dps(d) { return (d.attack || 0) * (d.frequency || 1) * (1 + (d.crit || 0) / 100); }
 function mon_dps_on_me(d) {
+    if (d.damage_type == "pure") return mon_dps(d); // "pure": ignoriert Rüstung und Widerstand
     var def = d.damage_type == "magical" ? (character.resistance || 0) - (d.rpiercing || 0) : (character.armor || 0) - (d.apiercing || 0);
     return mon_dps(d) * dmg_mult(def);
 }
+function pack_factor(d) { // aggressive Monster mit großer Reichweite ziehen im Pulk: bis zu 3 gleichzeitige Angreifer einrechnen
+    if (!(d.aggro > 0) || !(d.range >= 250)) return 1;
+    var n = 3; try { var id = null; for (var k in G.monsters) if (G.monsters[k] === d) { id = k; break; } if (id) n = Math.min(3, Math.max(1, spawn_count(id))); } catch (e) {}
+    return n;
+}
+// Team-Beitrag: Ranger-Schaden und Priester-Heilung zählen, wenn sie leben, gemeldet haben und neben mir stehen
+function team_member_active(key) {
+    if (!team_on[key]) return null; var nm = TEAM[key], st = team_state[nm]; if (!st || Date.now() - st.t > 90000 || st.state == "tot" || !(st.attack > 0)) return null;
+    var p = null; try { p = get_player(nm); } catch (e) {} if (!p || p.rip || p.map != character.map || distance(character, p) > 400) return null;
+    return st;
+}
+function team_dps_vs(d) { // zusätzlicher Schaden des Rangers (physisch, gegen Rüstung) und des Priesters (magisch, anteilig – er heilt auch)
+    var out = 0, r = team_member_active("ranger"), pr = team_member_active("priest");
+    if (r) out += r.attack * (r.frequency || 1) * dmg_mult((d.armor || 0)) * (1 - (d.evasion || 0) / 100);
+    if (pr) out += pr.attack * (pr.frequency || 1) * dmg_mult((d.resistance || 0)) * 0.4;
+    return out;
+}
+function team_heal_rate() { var pr = team_member_active("priest"); return pr ? pr.attack * (pr.frequency || 1) * 0.6 : 0; } // Heilung ≈ Angriffswert je Zauber, ein Teil der Zeit geht in Angriffe
+function team_bonus_txt() { var r = team_member_active("ranger"), pr = team_member_active("priest"); return r || pr ? " mit Team (" + (r ? "Ranger" : "") + (r && pr ? "+" : "") + (pr ? "Priest" : "") + ")" : ""; }
 function mon_ttk(d) { // Sekunden pro Kill inkl. Lebensraub
-    var dps = my_dps_vs(d); if (dps <= 0) return Infinity;
+    var dps = my_dps_vs(d) + team_dps_vs(d); if (dps <= 0) return Infinity;
     var heal = mon_dps(d) * (d.lifesteal || 0) / 100;
     var net = dps - heal; if (net <= 0) return Infinity;
     return (d.hp || 0) / net;
 }
 function mon_danger(d) { // Anteil meiner HP, den ein Kill kostet
     var ttk = mon_ttk(d); if (!isFinite(ttk)) return Infinity;
-    var incoming = mon_dps_on_me(d) + my_dps_vs(d) * (d.reflection || 0) / 100;
+    var incoming = Math.max(0, mon_dps_on_me(d) * pack_factor(d) + my_dps_vs(d) * (d.reflection || 0) / 100 - team_heal_rate());
     return incoming * ttk / character.max_hp;
 }
 // Anzahl gleichzeitiger Spawns eines Monstertyps (alle Karten)
@@ -1105,15 +1517,17 @@ function update_panel() {
       + "<div class='lp_k'>Session " + fmt(sess.xp / sh) + " XP/h · " + fmt(sess.gold / sh) + " G/h · nächstes Level in " + (rate > 0 ? fmt_time((G.levels[character.level] - character.xp) / rate * 3600000) : "-") + "</div></div>";
     h += "<div class='lp_row'><span class='lp_mode'>Modus: " + (manual_spot ? "fest (" + esc(manual_spot) + ")" : "automatisch") + "</span><button data-act='auto'" + (manual_spot ? "" : " class='on'") + ">Auto</button><button data-act='reset'>Neu messen</button><button data-act='worth'" + (only_worth ? " class='on'" : "") + " title='nur die 5 besten nach geschätzten XP/h'>Top 5</button><button data-act='bycatch'" + (bycatch ? " class='on'" : "") + " title='andere sichere Monster in der Nähe mit angreifen'>Beifang</button><button data-act='focus'" + (focus_mode ? " class='on'" : "") + " title='nur farmen/hunten: kein Kuss, Ponty, Markt, Kuchen, keine Ausrüstungsautomatik; Inventar erst unter 3 freien Plätzen bis 20 frei aufräumen (mit Tränken)'>Fokus</button><button data-act='sortinv' title='Inventar sortieren'>Inv ⇅</button></div>"
       + "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Aktionen</span><button data-act='compound' title='Schmuck compounden (getragen + ungetragen)'>Compound</button><button data-act='tidy' title='Schrott verkaufen, Rest in die Bank'>Aufräumen</button><button data-act='bank' title='Schrott aus der Bank holen und verkaufen'>Bank aufräumen</button><button data-act='banksort' title='Bank nach Gruppen sortieren, Reiter lückenlos füllen'>Bank ⇅</button><button data-act='copylog' title='Bot-Log in die Zwischenablage'>Log kopieren</button><button data-act='pauseafter'" + (pause_after ? " class='on'" : "") + " title='Nach Buttons/Tasten pausieren statt weiterfarmen'>Danach: " + (pause_after ? "Pause" : "Farmen") + "</button><button data-act='clearlog' title='Log-Puffer leeren' style='padding:1px 5px'>✕</button></div>";
-    h += "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Hunt: <span style='color:#e6e6e6'>" + esc(mh_txt()) + "</span> · " + tokens() + " Tokens</span><button data-act='hunt'" + (hunt_on ? " class='on'" : "") + " title='Monster Hunt automatisch'>Hunt</button><input data-huntmax='1' value='" + Math.round(hunt_max_danger * 100) + "' title='Jagden nur bis zu dieser Gefahr in % (HP-Anteil je Kill); darüber wird die Jagd übersprungen' style='width:34px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555;text-align:right'><span class='lp_k' style='font-size:11px'>%</span>" + (mh_quest() ? "<button data-act='huntabandon'>Abbrechen</button>" : "") + "</div>";
+    h += event_html();
+    h += "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Hunt: <span style='color:#e6e6e6'>" + esc(mh_txt()) + "</span> · " + tokens() + " Tokens</span><button data-act='hunt'" + (hunt_on ? " class='on'" : "") + " title='Monster Hunt automatisch'>Hunt</button>" + (team_on.hunter ? "<button data-act='hunteronly'" + (hunter_only ? " class='on'" : "") + " title='Nur die Jagd des Jäger-Chars farmen (ohne Gefahrgrenze), keine eigene Jagd'>Nur Jäger</button>" : "") + "<input data-huntmax='1' value='" + Math.round(hunt_max_danger * 100) + "' title='Jagden nur bis zu dieser Gefahr in % (HP-Anteil je Kill); darüber wird die Jagd übersprungen' style='width:34px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555;text-align:right'><span class='lp_k' style='font-size:11px'>%</span>" + (mh_quest() ? "<button data-act='huntabandon'>Abbrechen</button>" : "") + "</div>";
     h += "<div class='lp_row' style='flex-wrap:wrap;line-height:1.6'><span class='lp_k'>Serverwechsel:</span> <span style='font-size:11px'>" + server_tip_html() + "</span></div>";
-    h += arb_html(panel);
+    h += arb_html(panel) + arb_trip_html() + watch_html();
     h += team_html();
     h += "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Zielbau " + wish_text() + (AUTO_GEAR ? " · automatisch, Reserve " + fmt(WISH_RESERVE) : "") + "</span><button data-act='wishist' data-slot='*' title='alle Slots auf das setzen, was du gerade trägst – Preislimits bleiben erhalten'>Ist</button><button data-act='wishreset' title='alle Ziele auf das Getragene setzen und alle Limits löschen'>Zielbau = aktuelle Ausrüstung</button><button data-act='wishtoggle'>" + (panel.__wish ? "▾" : "▸") + " Zielbau</button></div>";
     if (panel.__wish) h += wish_ui_html();
+    h += team_wish_html(panel);
     if (!panel.__collapsed) {
         var cols = [["name", "Monster"], ["danger", "Gefahr"], ["ttk", "s/Kill"], ["xpk", "XP/Kill"], ["xpest", "XP/h*"], ["xph", "XP/h"], ["gph", "G/h"], ["ang", "ANG"]];
-        h += "<div class='lp_k' style='font-size:11px;margin-top:4px'>Schätzung kalibriert ×" + xp_calibration().toFixed(1) + " (aus " + Object.keys(farm_stats).length + " gemessenen Spots)</div>";
+        h += "<div class='lp_k' style='font-size:11px;margin-top:4px'>Schätzung kalibriert ×" + xp_calibration().toFixed(1) + " (aus " + Object.keys(farm_stats).length + " gemessenen Spots)" + (team_bonus_txt() ? " · Gefahr" + team_bonus_txt() : "") + "</div>";
         h += "<table class='lp_t'><tr>" + cols.map(function (c) { return "<th data-sort='" + c[0] + "'" + (sort_key == c[0] ? " class='sorted'" : "") + ">" + c[1] + (sort_key == c[0] ? (sort_dir < 0 ? " ▾" : " ▴") : "") + "</th>"; }).join("") + "<th></th></tr>";
         var mons = visible_mons();
         mons.sort(function (x, y) { var a1 = sort_value(x, sort_key), b1 = sort_value(y, sort_key); return (a1 < b1 ? -1 : a1 > b1 ? 1 : 0) * sort_dir; });
@@ -1175,6 +1589,7 @@ function status_message(prefix) {
 var EQUIP_TYPES = ["helmet", "chest", "pants", "shoes", "gloves", "cape", "weapon", "shield", "quiver", "source", "misc_offhand"]; // Schmuck nie verkaufen (Compound)
 function is_junk(it) { // kaufbare Standardausrüstung ohne Level/Attribut; ungetragener kaufbarer Schmuck +0 in Einzelstücken; fremde Elixiere; HP-Schmuck
     var def = G.items[it.name]; if (!def) return false;
+    if (is_team_wish_item(it)) return false; // Team-Zielbau-Teile bleiben
     if (HP_JEWELRY.test(it.name)) return true;
     if (def.type == "elixir" && !/^elixirint/.test(it.name)) return true;
     if (def.compound) return is_buyable(it.name) && (it.level || 0) == 0 && !equipped_names()[it.name] && find_inv_indices(it.name, 0).length < 3;
@@ -1199,6 +1614,7 @@ function all_copies(name) { // Inventar + Bank (bzw. letzter Bankstand), ohne ge
 }
 function dup_protected(it) {
     var def = G.items[it.name] || {};
+    if (is_team_wish_item(it)) return true;
     if (it.p || it.stat_type || EVENT_ITEMS.test(it.name)) return true;
     if (def.compound) return (it.level || 0) < COMPOUND_SPARE_MAX || (it.level || 0) > COMPOUND_TARGET; // fertiger Schmuck: nur die Stufe(n) am Ziel zählen als Duplikate
     return (it.level || 0) > DUP_MAX_LEVEL || !def.upgrade;
@@ -1240,6 +1656,7 @@ async function sell_duplicates() { // im Laden stehen
 // Lohnt sich Aufbewahrung (Inventar/Bank)? Sonst verkaufen.
 function worth_keeping(it) {
     var def = G.items[it.name]; if (!def) return true;
+    if (is_team_wish_item(it)) return true;
     if (HP_JEWELRY.test(it.name)) return false;
     if (on_wishlist(it.name)) return true;
     if (should_keep(it)) return true;
@@ -1251,7 +1668,7 @@ function worth_keeping(it) {
     if (bought_recently(it.name)) return true;
     return false;
 }
-function should_keep(it) { return (equipped_names()[it.name] && ((it.level || 0) > 0 || !is_buyable(it.name))) || (G.items[it.name] && G.items[it.name].compound && (equipped_names()[it.name] || find_inv_indices(it.name, it.level || 0).length >= 3)) || KEEP_ITEMS.test(it.name) || EVENT_ITEMS.test(it.name) || EVENT_ITEMS.test(G.items[it.name] && G.items[it.name].name || ""); }
+function should_keep(it) { return is_team_wish_item(it) || (equipped_names()[it.name] && ((it.level || 0) > 0 || !is_buyable(it.name))) || (G.items[it.name] && G.items[it.name].compound && (equipped_names()[it.name] || find_inv_indices(it.name, it.level || 0).length >= 3)) || KEEP_ITEMS.test(it.name) || EVENT_ITEMS.test(it.name) || EVENT_ITEMS.test(G.items[it.name] && G.items[it.name].name || ""); }
 var tidy_next = 0;
 // ---------- Priester ausrüsten: überzählige Teile des Magiers, die für ihn besser sind ----------
 var last_priest_gear = 0;
@@ -1272,7 +1689,7 @@ function spare_for_priest(key) { // [{i, slot, gain}] – Inventarteile, die der
         var worn = st.slots[slot], ws = worn && G.items[worn.name] ? gear_score(G.items[worn.name], worn.level || 0) : 0, best = null;
         for (var i = 0; i < character.items.length; i++) {
             var it = character.items[i]; if (!it || used[i]) continue; var def = G.items[it.name]; if (!def || !fits_class(def, ctype, slot)) continue;
-            if (KEEP_ITEMS.test(it.name) || EVENT_ITEMS.test(it.name)) continue;
+            if (KEEP_ITEMS.test(it.name) || EVENT_ITEMS.test(it.name) || is_team_wish_item(it)) continue;
             if (on_wishlist(it.name)) { // Zielbau-Teil des Magiers
                 if (def.compound) { // Schmuck: Kopien nur abgeben, wenn alle Slots mit diesem Teil ihr Ziel erreicht haben (dann ist das Compound-Material übrig)
                     var all_done = true, any = false; for (var sl2 in SLOT_TYPES) { var w2 = character.slots[sl2]; if (w2 && w2.name == it.name) { any = true; if ((w2.level || 0) < wish_level(sl2)) all_done = false; } }
@@ -1309,7 +1726,7 @@ function energize_tick() { // Mana an den Ranger, wenn er leer läuft und wir ge
 // ---------- Stufe 2: Händler holt Loot ab (statt Stadtgang des Magiers) ----------
 var handing = false, last_pickup = 0, pickup_state = null; // pickup_state: {t, ready, done}
 function merchant_available() { // Händler läuft, meldet sich, lebt, ist nicht gerade selbst unterwegs mit einer Abholung
-    if (!team_on.merch || !team_running(TEAM.merch)) return false;
+    if (!team_on.merch || !team_running(TEAM.merch) || arb_job) return false;
     var st = team_state[TEAM.merch]; if (!st || Date.now() - st.t > 90000) return false;
     if (st.state == "tot" || /Abholung|verkauft|Bank/.test(st.state || "")) return false;
     return Date.now() - last_pickup > 3 * 60000;
@@ -1318,6 +1735,7 @@ function handover_plan() { // was der Händler mitnehmen soll: [{i, action}] –
     var out = [], eq = equipped_names(), dups = duplicate_indices();
     for (var i = 0; i < character.items.length; i++) {
         var it = character.items[i]; if (!it || it.name.indexOf("stand") == 0) continue;
+        if (merch_needs[it.name]) { out.push({ i: i, action: "bank", name: it.name, level: it.level || 0, q: it.q || 1 }); continue; } // vom Händler angefragt (behält, was er braucht)
         if (KEEP_ITEMS.test(it.name) || EVENT_ITEMS.test(it.name)) continue;
         var def = G.items[it.name]; if (!def) continue;
         var action = null;
@@ -1560,13 +1978,25 @@ function attackers_on_me() {
     for (var id in parent.entities) { var e = parent.entities[id]; if (e && e.type == "monster" && !e.dead && e.target == character.name) n++; }
     return n;
 }
+var flee_log = {}; // Spot -> Zeitpunkte der Rückzüge (für die Sperre)
+function note_retreat() { // >3 Rückzüge am selben Spot in 10 min -> Spot 30 min sperren (Jagd: übersprungen)
+    var m = pick_farm_monster(); if (!m) return;
+    if (hunter_only && m == hunter_only_mon()) return; // Nur Jäger-Jagd: Spot wird nie gesperrt
+    var now = Date.now(), arr = (flee_log[m] || []).filter(function (t) { return now - t < 10 * 60000; }); arr.push(now); flee_log[m] = arr;
+    if (arr.length <= 3) return;
+    flee_log[m] = [];
+    if (hunt_spot == m) { game_log("4 Rückzüge bei " + m + " in 10 min – Jagd wird übersprungen, Monster 30 min gesperrt"); hunt_skipped = m; hunt_reset(LEVELED_BLOCK_MS); try { var q = mh_quest(); hunt_cooldown_until = Date.now() + ((q && q.ms) || 1800000); } catch (e) {} return; }
+    blocked_spots[m] = now + LEVELED_BLOCK_MS; need_repick = true; meas = null;
+    game_log("4 Rückzüge bei " + m + " in 10 min – Spot 30 min " + (manual_spot == m ? "ausgesetzt, solange wählt die Automatik" : "gesperrt"));
+}
 async function check_flee() {
     if (fleeing || paused || upgrading || kissing) return;
     var hp = character.hp / character.max_hp;
     var n = attackers_on_me();
-    var strong = false; for (var sid in parent.entities) { var se = parent.entities[sid]; if (se && se.type == "monster" && !se.dead && se.target == character.name && too_strong(se)) { strong = true; break; } }
-    if (strong && hp < 0.8) {
-        fleeing = true; busy = true;
+    var strong = false, oneshot = false; for (var sid in parent.entities) { var se = parent.entities[sid]; if (se && se.type == "monster" && !se.dead && se.target == character.name && too_strong(se)) { strong = true; if ((se.attack || (G.monsters[se.mtype] || {}).attack || 0) >= character.max_hp * 0.5) oneshot = true; break; } }
+    if (!strong && !event_mode) { for (var bid2 in parent.entities) { var be = parent.entities[bid2]; if (be && be.type == "monster" && !be.dead && (G.monsters[be.mtype] || {}).boss && distance(character, be) < 350 && (be.attack || (G.monsters[be.mtype] || {}).attack || 0) >= character.max_hp * 0.3) { strong = true; oneshot = true; game_log("Boss " + be.mtype + " in der Nähe – weg hier"); break; } } } // Event-/Weltbosse (Icegolem usw.) nicht abwarten
+    if (strong && (hp < 0.8 || oneshot)) {
+        fleeing = true; busy = true; if (!event_mode) note_retreat();
         var pr = null; try { pr = team_on.priest ? get_player(TEAM.priest) : null; } catch (e) {}
         var pst = team_state[TEAM.priest], priest_ok = pr && !pr.rip && pst && Date.now() - pst.t < 60000 && pr.map == character.map && distance(character, pr) < 400;
         if (priest_ok) { // Heiler in der Nähe: zu ihm laufen und dort hochheilen lassen, statt in die Stadt
@@ -1578,8 +2008,9 @@ async function check_flee() {
         } else game_log("Zu starker Angreifer – sofortiger Rückzug (HP " + Math.round(hp * 100) + "%)");
         try { stop("smart"); change_target(null); await travel_place("town"); while (character.hp < character.max_hp * 0.9 && !character.rip) await sleep(1000); } catch (e) {} fleeing = false; busy = false; return;
     }
+    if (hunter_only && n > 0 && hp <= KITE_HP) n = Math.max(n, FLEE_ATTACKERS); // Nur Jäger-Jagd: starkes Monster zählt nicht als "zu stark", darum wenigstens bei wenig HP kurz zurückweichen
     if (n < FLEE_ATTACKERS || hp > KITE_HP) return;
-    fleeing = true; busy = true;
+    fleeing = true; busy = true; if (!event_mode) note_retreat();
     try {
         if (hp > FLEE_HP) {
             // Kiten: vom Schwarm wegziehen, heilen, zurück
@@ -1643,7 +2074,7 @@ function kiss_round_open() {
     return true;
 }
 async function kiss_routine() {
-    if (kissing || upgrading || fleeing || !kiss_round_open()) return;
+    if (SOLO || kissing || upgrading || fleeing || busy || marketing || server_trip || !kiss_round_open()) return; // nicht während Kauf/Routine/Serverreise
     var a = anniv(); var round = a.round, name = a.target;
     kissing = true; busy = true;
     game_log("Kuss-Runde " + round + ": laufe zu " + name + " (" + a.map + " " + a.x + "," + a.y + ")");
@@ -1772,8 +2203,9 @@ async function daisy() { var pos = find_npc("monsterhunter"); if (!pos) throw "D
 var hunt_max_danger = 0.10; try { var hmd = parseFloat(localStorage.getItem("lp_hunt_max_danger")); if (isFinite(hmd) && hmd > 0) hunt_max_danger = hmd; } catch (e) {} // Jagden nur bis zu dieser Gefahr (Anteil HP je Kill)
 function hunt_danger_ok(id) { var d = G.monsters[id]; return !!d && mon_danger(d) <= hunt_max_danger; }
 function hunt_target_ok(id) { return id && G.monsters[id] && is_safe_monster(id) && hunt_danger_ok(id) && !hidden_mons[id] && !EXCLUDE[id] && !spot_blocked(id) && team_safe(id); }
-function hunt_skip_reason(id) { var d = G.monsters[id]; if (!d) return "unbekannt"; if (!hunt_danger_ok(id)) return Math.round(mon_danger(d) * 100) + " % > " + Math.round(hunt_max_danger * 100) + " %"; if (!is_safe_monster(id)) return "nicht sicher"; if (spot_blocked(id)) return "gesperrt"; if (!team_safe(id)) return "zu stark für den Priester"; return "ausgeblendet"; }
+function hunt_skip_reason(id) { var d = G.monsters[id]; if (!d) return "unbekannt"; if (!hunt_danger_ok(id)) return Math.round(mon_danger(d) * 100) + " % > " + Math.round(hunt_max_danger * 100) + " %" + team_bonus_txt(); if (!is_safe_monster(id)) return "nicht sicher"; if (spot_blocked(id)) return "gesperrt"; if (!team_safe(id)) return "zu stark für den Priester"; return "ausgeblendet"; }
 async function spend_tokens() { // Set-Teile kaufen, günstigstes fehlendes zuerst
+    if (SOLO) { await spend_tokens_for_main(); return; }
     var want = MH_SET.filter(function (n) { var def = G.items[n]; var sl = slot_for_item(def); var worn = character.slots[sl]; return !(worn && worn.name == n) && locate_item(n) < 0; })
         .sort(function (a, b) { return (G.tokens.monstertoken[a] || 99) - (G.tokens.monstertoken[b] || 99); });
     for (var i = 0; i < want.length; i++) {
@@ -1782,7 +2214,16 @@ async function spend_tokens() { // Set-Teile kaufen, günstigstes fehlendes zuer
         if (locate_item(want[i]) >= 0) game_log("Tokens: " + want[i] + " gekauft (" + cost + " Tokens, " + tokens() + " übrig)"); else game_log("Tokens: Kauf von " + want[i] + " nicht bestätigt");
     }
 }
+async function spend_tokens_for_main() { // Zweit-Charakter: Set-Teile, die dem Hauptmagier fehlen, kaufen und in die Bank legen (Bank ist accountweit)
+    var miss = []; try { miss = JSON.parse(window.localStorage.getItem("lp_mh_missing") || "[]"); } catch (e) {}
+    var bought = [];
+    for (var i = 0; i < miss.length; i++) { var m = miss[i]; if (!m.cost || tokens() < m.cost || character.esize < 2 || locate_item(m.name) >= 0) continue; try { exchange_buy("monstertoken", m.name); await sleep(1500); } catch (e) {} if (locate_item(m.name) >= 0) { bought.push(m.name); game_log("Tokens: " + m.name + " für " + MAIN_NAME + " gekauft (" + m.cost + " Tokens, " + tokens() + " übrig)"); } }
+    if (!bought.length) return;
+    try { await travel_place("bank"); await sleep(800); for (var b = 0; b < bought.length; b++) { var bi = locate_item(bought[b]); if (bi >= 0) { bank_store(bi); await sleep(400); } } game_log("Tokens: " + bought.join(", ") + " in die Bank gelegt – " + MAIN_NAME + " holt es beim nächsten Bankgang"); } catch (e) { game_log("Tokens: Bank-Fehler " + err_txt(e)); }
+}
 async function check_monsterhunt() {
+    if (event_mode) return; // Event hat Vorrang
+    if (hunter_only) { if (hunt_spot) { game_log("Nur Jäger-Jagd: eigene Jagd auf " + hunt_spot + " wird nicht weiterverfolgt"); hunt_reset(0); } return; } // keine eigenen Jagden, kein Daisy-Besuch
     if (!hunt_on || hunting || busy || upgrading || kissing || fleeing || exchanging || paused || !has_weapon()) return;
     if (Date.now() - last_hunt_check < 15000) return;
     last_hunt_check = Date.now();
@@ -1885,8 +2326,9 @@ function equipped_slots(kind) {
 function slots_to_upgrade(manual) {
     return equipped_slots("upgrade").filter(function (s) { var it = character.slots[s]; return (it.level || 0) < target_level(it.name, manual) || (is_buyable(it.name) && backup_index(it.name) < 0); });
 }
+var stat_impossible_logged = {};
 function slots_without_stat() {
-    return equipped_slots("upgrade").filter(function (s) { return character.slots[s].stat_type != STAT_TYPE; });
+    return equipped_slots("upgrade").filter(function (s) { var it = character.slots[s]; if (it.stat_type == STAT_TYPE) return false; var d = G.items[it.name]; var ok = d && d.stat && (it.level || 0) <= grade0_max(it.name); if (!ok) { var k = it.name + "+" + (it.level || 0); if (!stat_impossible_logged[k]) { stat_impossible_logged[k] = true; game_log(it.name + "+" + (it.level || 0) + ": Attribut nicht möglich (" + (d && d.stat ? "Qualität 1 ab +" + (grade0_max(it.name) + 1) + ", Scroll nur davor" : "kein Attributwert") + ")"); } } return !!ok; });
 }
 function inv_count(name, level) { return find_inv_indices(name, level).length; }
 function base_equiv(name) { var sum = 0; for (var l = 0; l < COMPOUND_TARGET; l++) sum += inv_count(name, l) * Math.pow(3, l); return sum; }
@@ -2505,7 +2947,7 @@ function wiki_npc(id) {
 }
 // ---------- Wunschliste: fester Zielbau für den Magier ----------
 // Schaden kommt aus INT und Waffenangriff. Rüstung gibt je Stufe nur +1 INT, deshalb zuerst Waffe, Buch und INT-Schmuck.
-var WISH_RESERVE = 1000000;          // so viel Gold bleibt bei Käufen/Upgrades immer übrig
+var WISH_RESERVE = SOLO ? 30000 : 1000000;          // so viel Gold bleibt bei Käufen/Upgrades immer übrig
 var DEFAULT_WISHLIST = {              // Vorgabe je Slot (beste Wahl zuerst) – per Zielbau-Auswahl im Panel überschreibbar
     mainhand: ["harbringer", "firestaff", "froststaff"],
     offhand:  ["wbook1", "wbook0"],
@@ -2643,7 +3085,7 @@ function wish_ui_html() { // Zielbau-Tabelle
         var cands = slot_candidates(slot).slice(0, 60), cur = wish_item(slot), worn = character.slots[slot];
         var sel = "<select data-wslot='" + slot + "' style='max-width:150px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'>";
         sel += "<option value=''" + (!cur ? " selected" : "") + ">– kein Ziel –</option>";
-        cands.forEach(function (c) { sel += "<option value='" + c.name + "'" + (c.name == cur ? " selected" : "") + " title='" + esc(item_tooltip(c.name, c.level)) + "'>" + esc(c.def.name || c.name) + " (" + Math.round(c.score) + ")</option>"; });
+        cands.forEach(function (c) { sel += "<option value='" + c.name + "'" + (c.name == cur ? " selected" : "") + " title='" + esc(item_tooltip(c.name, c.level)) + "'>" + esc((c.def.name && c.def.name != c.name ? c.def.name + " [" + c.name + "]" : c.name)) + " (" + Math.round(c.score) + ")</option>"; });
         sel += "</select>";
         var lv = "";
         if (cur) { var d = G.items[cur], mx = d.compound ? 7 : 12, wl = wish_level(slot); lv = "<select data-wlvl='" + slot + "' style='font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'>"; for (var L = 0; L <= mx; L++) lv += "<option value='" + L + "'" + (L == wl ? " selected" : "") + ">+" + L + "</option>"; lv += "</select>"; }
@@ -2651,7 +3093,7 @@ function wish_ui_html() { // Zielbau-Tabelle
         var stand = worn ? esc(worn.name) + "+" + (worn.level || 0) : "<span style='color:#ef5350'>leer</span>";
         if (cur && !is_buyable(cur) && G.items[cur].upgrade) stand += " <small style='color:#9aa3b2'>Reserve " + reserve_count(cur) + "/" + RESERVE_COPIES + "</small>";
         if (cur) { var ok = worn && worn.name == cur, done = ok && (worn.level || 0) >= wish_level(slot); stand = "<span style='color:" + (done ? "#4caf50" : ok ? "#8ab4f8" : "#e57373") + "' title='" + esc(cur + " – " + item_tooltip(cur, wish_level(slot))) + "'>" + stand + (done ? " ✓" + (wish_cfg[slot] && wish_cfg[slot].auto ? " <small>(Ist-Stand)</small>" : "") : ok ? " → +" + wish_level(slot) : " → " + esc(cur)) + "</span>"; }
-        h += "<tr><td style='text-align:left'>" + slot + "</td><td style='text-align:left'>" + sel + "</td><td style='text-align:center'>" + lv + "</td><td style='text-align:left'>" + stand + "</td><td style='text-align:left;font-size:11px'>" + (cur ? bvb_html(slot) + farm_html(slot) : "-") + "</td><td style='text-align:left'>" + offers_html(slot) + "</td><td style='text-align:left;font-size:11px'>" + alt_html(slot) + "</td><td style='text-align:center'><button data-act='focus' data-slot='" + slot + "' title='diesen Slot jetzt angehen'>Jetzt</button></td></tr>";
+        h += "<tr><td style='text-align:left'>" + slot + "</td><td style='text-align:left'>" + sel + "</td><td style='text-align:center'>" + lv + "</td><td style='text-align:left'>" + stand + "</td><td style='text-align:left;font-size:11px'>" + (cur ? bvb_html(slot) + farm_html(slot) : "-") + "</td><td style='text-align:left'>" + offers_html(slot) + "</td><td style='text-align:left;font-size:11px'>" + alt_html(slot) + "</td><td style='text-align:center'><button data-act='slotnow' data-slot='" + slot + "' title='diesen Slot jetzt angehen'>Jetzt</button></td></tr>";
     }
     return h + "</table>";
 }
@@ -2733,6 +3175,30 @@ async function wish_buy_from_offer(o, buy_fn) { // o: {name, level, price, force
     }
     return true;
 }
+async function rebuild_with_stat(slot, tgt) { // neue Kopie mit Attribut (Scroll vor dem Sprung auf Qualität 1) bauen, anlegen, altes Teil verkaufen
+    var worn = character.slots[slot], name = worn.name;
+    game_log("Slot " + slot + ": " + name + "+" + (worn.level || 0) + " hat kein " + STAT_TYPE.toUpperCase() + " und nimmt keinen Scroll mehr – baue neue Kopie mit Attribut bis +" + tgt);
+    await travel_place("upgrade");
+    for (var tries = 0; tries < 30; tries++) {
+        check_pause();
+        // Startkopie: beste Kopie ohne Attribut-Konflikt unter Qualität 1 (Reserve), sonst neu kaufen
+        var start = -1, sl = -1;
+        for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && it.name == name && !it.p && (it.stat_type == STAT_TYPE || !it.stat_type) && (it.level || 0) <= grade0_max(name) && (it.level || 0) > sl) { sl = it.level || 0; start = i; } }
+        if (start < 0) { if (!is_buyable(name)) { game_log(name + " nicht nachkaufbar – kein Neubau"); return; } if (!await buy_items(name, 1)) return; sl = 0; }
+        var r = await upgrade_inv(name, sl, tgt, STAT_TYPE);
+        if (r.stopped) return;
+        if (r.destroyed) { game_log(name + " beim Neubau zerstört – nächster Versuch"); continue; }
+        var ni = -1; for (var j = 0; j < character.items.length; j++) { var it2 = character.items[j]; if (it2 && it2.name == name && (it2.level || 0) >= tgt && it2.stat_type == STAT_TYPE) { ni = j; break; } }
+        if (ni < 0) { game_log(name + "+" + tgt + " ohne Attribut geworden – bleibt als Reserve, nächster Versuch"); continue; }
+        equip(ni, slot); await sleep(800);
+        game_log("Slot " + slot + ": " + name + "+" + tgt + " mit " + STAT_TYPE.toUpperCase() + " angelegt");
+        // altes Teil (ohne Attribut, Qualität 1) verkaufen
+        var oi = -1; for (var k = 0; k < character.items.length; k++) { var it3 = character.items[k]; if (it3 && it3.name == name && (it3.level || 0) >= tgt && it3.stat_type != STAT_TYPE) { oi = k; break; } }
+        if (oi >= 0) { await travel_place("potions"); var g0 = character.gold; await sell_measured(oi, 1); game_log("Altes " + name + "+" + tgt + " verkauft (+" + fmt(character.gold - g0) + ")"); }
+        if (backup_index(name) < 0 && is_buyable(name)) { await travel_place("upgrade"); await ensure_backup(name); }
+        return;
+    }
+}
 async function focus_slot(slot) { // Button "Jetzt": diesen Slot sofort verbessern – Wunschliste am Markt/Ponty, sonst getragenes Teil ausbauen
     if (upgrading) { game_log("Upgrade läuft bereits"); return; }
     var worn = character.slots[slot], want = (WISHLIST[slot] || [])[0];
@@ -2756,6 +3222,7 @@ async function focus_slot(slot) { // Button "Jetzt": diesen Slot sofort verbesse
         else if (worn && G.items[worn.name].upgrade) {
             var tgt = slot_target(slot, is_buyable(worn.name) ? UPGRADE_TARGET : (slot == "mainhand" ? WEAPON_SAFE_TARGET : SAFE_TARGET_DROP), 0);
             if ((worn.level || 0) < tgt) { check_pause(); game_log("Slot " + slot + ": " + worn.name + " +" + (worn.level || 0) + " → +" + tgt + " (Chance nächste Stufe " + success_txt("u", worn.level || 0) + ")"); await travel_place("upgrade"); await process_slot(slot, tgt); }
+            else if (wish_item(slot) == worn.name && worn.stat_type != STAT_TYPE && G.items[worn.name].stat && (worn.level || 0) > grade0_max(worn.name)) { check_pause(); await rebuild_with_stat(slot, tgt); }
             else game_log("Slot " + slot + ": " + worn.name + "+" + (worn.level || 0) + " ist schon auf Zielstufe +" + tgt);
         }
         worn = character.slots[slot];
@@ -2809,14 +3276,121 @@ function arb_html(panel) {
     list.slice(0, 15).forEach(function (o) { h += "<tr><td>" + esc(o.name) + (o.level ? "+" + o.level : "") + (o.q > 1 ? " ×" + o.q : "") + "</td><td>" + fmt(o.price) + "</td><td>" + fmt(Math.round(npc_sell_price(o.name, o.level))) + "</td><td style='color:#4caf50'>" + fmt(Math.round(o.profit)) + "</td><td style='text-align:left'>" + esc(pretty_server(o.server)) + (o.same ? " ★" : "") + "</td><td style='text-align:left'>" + esc(o.seller) + "</td></tr>"; });
     return h + "</table>";
 }
+// ---------- Wertsachen über den Händlerstand verkaufen (aus der Bank): Preisspiegel aller Server, Preis wird automatisch gesetzt ----------
+var WATCH_ITEMS = { scroll3: true }; // Items, für die Kaufaufträge/Verkaufspreise gesammelt und die der Händler am Stand anbietet
+var watch_prices = {}, watch_logged = {};
+var stand_orders = {}; try { stand_orders = JSON.parse(localStorage.getItem("lp_stand_orders_" + TEAM.merch) || "{}"); } catch (e) {} // name -> { price, t, floor, since }
+function save_stand_orders() { try { localStorage.setItem("lp_stand_orders_" + TEAM.merch, JSON.stringify(stand_orders)); } catch (e) {} }
+function watch_summary(name) { var w = watch_prices[name]; if (!w) return null; var bid = w.bids.slice().sort(function (a, b) { return b.price - a.price; })[0], ask = w.asks.slice().sort(function (a, b) { return a.price - b.price; })[0]; return { bid: bid, ask: ask, n_ask: w.asks.length, n_bid: w.bids.length }; }
+function stand_price_for(name) { // Zielpreis: unter dem günstigsten Verkäufer, deutlich über dem besten Kaufauftrag; sinkt 5 % pro Tag bis zum Boden (bester Kaufauftrag +10 %)
+    var g = (G.items[name] || {}).g || 0, ws = watch_summary(name), bid = ws && ws.bid ? ws.bid.price : 0, ask = ws && ws.ask ? ws.ask.price : 0;
+    var start = ask ? Math.min(ask * 0.97, g) : g * 0.9; if (bid) start = Math.max(start, bid * 1.3);
+    var floor = Math.max(bid * 1.1, g * 0.5);
+    var o = stand_orders[name]; var days = o && o.since ? (Date.now() - o.since) / 86400000 : 0;
+    var price = Math.max(floor, start * Math.pow(0.95, Math.floor(days)));
+    return Math.round(price / 1000000) * 1000000;
+}
+function watch_after_scan() {
+    for (var name in WATCH_ITEMS) {
+        var ws = watch_summary(name), o = stand_orders[name];
+        var txt = name + ": " + (ws && ws.bid ? "bester Kaufauftrag " + fmt(ws.bid.price) + " (" + pretty_server(ws.bid.server) + ", " + ws.bid.seller + ")" : "kein Kaufauftrag") + " · " + (ws && ws.ask ? "günstigster Verkäufer " + fmt(ws.ask.price) + " (" + pretty_server(ws.ask.server) + ", " + ws.ask.seller + ", " + ws.n_ask + " Anbieter)" : "kein Verkäufer");
+        if (watch_logged[name] != txt) { watch_logged[name] = txt; game_log("Preisspiegel " + txt); }
+        // Auftrag an den Händler: Item liegt in der Bank (oder er hat es schon) -> am Stand anbieten
+        var in_bank = false; try { var bk = character.bank || bank_cache || {}; for (var pk in bk) if (pk.indexOf("items") == 0 && Array.isArray(bk[pk])) bk[pk].forEach(function (it) { if (it && it.name == name) in_bank = true; }); } catch (e) {}
+        var ms = team_state[TEAM.merch], merch_has = ms && ms.orders && ms.orders[name];
+        if (in_bank || merch_has || o) {
+            if (!o) { o = stand_orders[name] = { since: Date.now() }; }
+            var np = o.fixed ? o.fixed : stand_price_for(name);
+            if (np != o.price) { o.price = np; o.t = Date.now(); save_stand_orders(); game_log("Stand-Auftrag " + name + ": " + fmt(np) + (ws && ws.bid ? " (Kaufauftrag " + fmt(ws.bid.price) + ")" : "") + " – Händler holt es aus der Bank und stellt es aus"); }
+        }
+    }
+}
+function watch_html() {
+    var h = "";
+    for (var name in WATCH_ITEMS) { var ws = watch_summary(name), o = stand_orders[name], ms = team_state[TEAM.merch], st = ms && ms.orders && ms.orders[name]; if (!ws && !o) continue;
+        h += "<div class='lp_row' style='flex-wrap:wrap;line-height:1.6'><span class='lp_k'>" + esc((G.items[name] || {}).name || name) + ":</span> " + (ws && ws.bid ? "Kaufauftrag " + fmt(ws.bid.price) : "kein Kaufauftrag") + " · " + (ws && ws.ask ? "Verkäufer ab " + fmt(ws.ask.price) + " (" + ws.n_ask + ")" : "kein Verkäufer") + (o ? " · <span style='color:#8ab4f8'>Stand: " + fmt(o.price) + (st ? " – " + esc(st) : " – wartet auf Händler") + "</span>" : "") + " <input data-fixprice='" + name + "' value='" + (o && o.fixed ? esc(fmt_mio(o.fixed)) : "") + "' placeholder='fest, Mio.' title='fester Standpreis in Mio. (leer = automatische Preisleiter)' style='width:60px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'></div>"; }
+    return h;
+}
+// ---------- Arbitrage Stufe 2: der Händler reist im Hintergrund (eigenes Fenster auf dem Zielserver) ----------
+var ARB_TRIP_MIN = 100000; try { ARB_TRIP_MIN = parseInt(localStorage.getItem("lp_arb_min") || "0") || 100000; } catch (e) {}
+var arb_auto = true; try { arb_auto = localStorage.getItem("lp_arb_auto") != "0"; } catch (e) {}
+var arb_job = null; try { arb_job = JSON.parse(localStorage.getItem("lp_arb_job_" + TEAM.merch) || "null"); if (arb_job && arb_job.done) arb_job = null; } catch (e) {}
+var arb_hist = []; try { arb_hist = JSON.parse(localStorage.getItem("lp_arb_hist") || "[]"); } catch (e) {}
+var last_arb_trip = rt("last_arb_trip", 0), last_arb_check = 0;
+function arb_save_job() { try { if (arb_job) localStorage.setItem("lp_arb_job_" + TEAM.merch, JSON.stringify(arb_job)); else localStorage.removeItem("lp_arb_job_" + TEAM.merch); } catch (e) {} }
+function arb_by_server() { // lohnende Angebote je fremdem Server (kein PVP), nach Gewinn sortiert
+    var by = {};
+    arb_list().forEach(function (o) { if (o.same || is_pvp_server(o.server)) return; var k = norm_server(o.server); if (!by[k]) by[k] = { key: k, server: o.server, offers: [], profit: 0 }; by[k].offers.push(o); by[k].profit += o.profit; });
+    return Object.keys(by).map(function (k) { return by[k]; }).sort(function (a, b) { return b.profit - a.profit; });
+}
+function arb_blocked() { // warum gerade keine Reise möglich ist (null = möglich)
+    if (!team_on.merch) return "Händler aus";
+    if (arb_job) return "Reise läuft";
+    if (merch_test) return "Servertest läuft";
+    if (server_trip) return "Magier auf Serverreise";
+    if (handing || pickup_state) return "Abholung läuft";
+    if (Date.now() - last_arb_trip < 15 * 60000) return "Pause bis " + Math.ceil((15 * 60000 - (Date.now() - last_arb_trip)) / 60000) + " min";
+    return null;
+}
+function start_arb_trip(server_key) {
+    var why = arb_blocked(); if (why) { game_log("Handelsreise nicht möglich: " + why); return; }
+    var g = arb_by_server().filter(function (x) { return x.key == server_key; })[0]; if (!g) { game_log("Handelsreise: keine Angebote für " + server_key); return; }
+    var sp = split_server(norm_server(g.server).toUpperCase()); if (!sp) { game_log("Handelsreise: Server unbekannt (" + g.server + ")"); return; }
+    var nm = TEAM.merch, ms = team_state[nm], gold = ms && ms.gold || 0;
+    arb_job = { id: Date.now(), server: g.server, region: sp.region, sid: sp.id, offers: g.offers.slice(0, 20).map(function (o) { return { name: o.name, level: o.level, price: o.price, q: o.q, seller: o.seller, map: o.map, x: o.x, y: o.y, tslot: o.tslot, profit: Math.round(o.profit) }; }), t: Date.now(), stage: "stopped", profit: Math.round(g.profit) };
+    arb_save_job(); try { localStorage.removeItem("lp_arb_result_" + nm); } catch (e) {}
+    last_arb_trip = Date.now();
+    try { if (active_chars()[nm]) stop_character(nm); } catch (e) {}
+    try { parent.__lp_team_restart_after = Date.now() + 12 * 60000; } catch (e) {}
+    game_log("Handelsreise: Händler fährt nach " + pretty_server(g.server) + " (" + g.offers.length + " Angebote, Gewinn ~" + fmt(g.profit) + (gold ? ", Kapital " + fmt(gold) : "") + ")"); last_panel = 0;
+}
+function arb_tick() {
+    if (!arb_job) {
+        if (arb_auto && Date.now() - last_arb_check > 30000) { last_arb_check = Date.now(); if (!arb_blocked()) { var g = arb_by_server()[0]; if (g && g.profit >= ARB_TRIP_MIN) start_arb_trip(g.key); } }
+        return;
+    }
+    var nm = TEAM.merch, el = Date.now() - arb_job.t;
+    if (arb_job.stage == "stopped" && el > 15000) {
+        try { start_char_on_server(nm, arb_job.region, arb_job.sid); arb_job.stage = "away"; arb_job.t = Date.now(); arb_save_job(); game_log("Handelsreise: Händler-Fenster auf " + pretty_server(arb_job.server) + " angelegt"); } catch (e) { game_log("Handelsreise: Fenster-Fehler " + err_txt(e)); arb_finish(null, "Fenster-Fehler"); }
+        return;
+    }
+    if (arb_job.stage == "away") {
+        var res = null; try { res = JSON.parse(localStorage.getItem("lp_arb_result_" + nm) || "null"); } catch (e) {}
+        if (res && res.id == arb_job.id) { arb_job.res = res; if (res.done) { arb_finish(res); return; } }
+        if (el > 10 * 60000) { arb_finish(res, "Zeitüberschreitung"); }
+    }
+}
+function arb_finish(res, why) {
+    var nm = TEAM.merch, sv = arb_job.server;
+    if (res && res.wrong_server) game_log("Handelsreise: Händler ist auf " + (res.server || "?").toUpperCase() + " gelandet statt " + pretty_server(sv) + " – abgebrochen");
+    else if (res && res.done) game_log("Handelsreise " + pretty_server(sv) + ": " + res.bought + " gekauft (" + fmt(res.spent) + "), " + res.sold + " verkauft (" + fmt(res.earned) + ") → Gewinn " + fmt(res.profit || 0) + (res.skipped ? ", " + res.skipped + " übersprungen" : "") + " · Händler hat jetzt " + fmt(res.gold || 0) + " Gold");
+    else game_log("Handelsreise " + pretty_server(sv) + " abgebrochen: " + (why || "keine Rückmeldung") + (res && res.log ? " – zuletzt: " + res.log.slice(-2).join(" | ") : ""));
+    arb_hist.push({ t: Date.now(), server: sv, profit: res && res.done ? (res.profit || 0) : null, bought: res ? res.bought || 0 : 0, why: why || null }); if (arb_hist.length > 20) arb_hist = arb_hist.slice(-20); try { localStorage.setItem("lp_arb_hist", JSON.stringify(arb_hist)); } catch (e) {}
+    try { var f = parent.document.getElementById("ichar" + nm.toLowerCase()); if (f) f.remove(); } catch (e) {}
+    try { if (active_chars()[nm]) stop_character(nm); } catch (e) {}
+    try { parent.__lp_team_restart_after = Date.now() + 20000; } catch (e) {}
+    arb_offers = arb_offers.filter(function (o) { return norm_server(o.server) != norm_server(sv); }); try { parent.__lp_arb_offers = arb_offers; } catch (e) {}
+    arb_job = null; arb_save_job(); last_panel = 0;
+}
+function arb_trip_html() {
+    var h = "";
+    if (arb_job) { var el = Math.round((Date.now() - arb_job.t) / 1000), r = arb_job.res; h += "<div class='lp_row'><span class='lp_k'>Handelsreise:</span> <span style='color:#8ab4f8'>" + esc(pretty_server(arb_job.server)) + " – " + (arb_job.stage == "stopped" ? "Händler wird abgemeldet" : r ? r.bought + "/" + arb_job.offers.length + " gekauft" + (r.sold ? ", " + r.sold + " verkauft" : "") + (r.log && r.log.length ? " · " + esc(r.log[r.log.length - 1]) : "") : "unterwegs") + " (" + el + " s)</span></div>"; }
+    else {
+        var groups = arb_by_server(), bl = arb_blocked();
+        h += "<div class='lp_row' style='flex-wrap:wrap'><span class='lp_k'>Handelsreise:</span> <button data-act='arbauto'" + (arb_auto ? " class='on'" : "") + " title='Händler fährt automatisch, sobald ein Server diesen Gewinn hergibt'>Auto</button> ab <input data-arbmin='1' value='" + esc(fmt_mio(ARB_TRIP_MIN)) + "' style='width:52px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'> Gewinn" + (bl ? " <span style='color:#9aa3b2'>(" + esc(bl) + ")</span>" : "") + (groups.length ? " · " + groups.slice(0, 4).map(function (g) { return esc(pretty_server(g.server)) + " ~" + fmt(Math.round(g.profit)) + " <button data-act='arbtrip' data-sv='" + esc(g.key) + "' style='padding:0 5px'" + (bl ? " disabled" : "") + ">Reise</button>"; }).join(" · ") : " <span style='color:#9aa3b2'>keine lohnenden Server</span>");
+        var last = arb_hist[arb_hist.length - 1]; if (last) h += " <small style='color:#6b7280'>· letzte: " + esc(pretty_server(last.server)) + " " + (last.profit != null ? (last.profit >= 0 ? "+" : "") + fmt(last.profit) : "abgebrochen") + "</small>";
+        h += "</div>";
+    }
+    return h;
+}
 function offers_for_slot(slot) { // beste Angebote aller Server für einen Slot: Wunschliste zuerst, dann nach Wert je Gold; nur besser als getragen und bezahlbar
     var worn = character.slots[slot], ws = worn ? item_score(worn) * 1.02 : 0;
     var list = global_offers.filter(function (o) { var def = G.items[o.name]; return def && fits_slot(def, slot) && o.score > ws && o.price <= character.gold; }); // bis zum vollen Goldstand anzeigen – gekauft wird automatisch nur innerhalb der Grenze, darüber per Kaufen-Knopf
     list.forEach(function (o) { o.wish = wish_rank(slot, o.name); });
-    list.sort(function (a, b) { if ((b.wish > 0) != (a.wish > 0)) return (b.wish > 0) - (a.wish > 0); if (a.wish > 0 && b.wish > 0 && a.wish != b.wish) return b.wish - a.wish; return (b.score - ws) / b.price - (a.score - ws) / a.price; });
+    list.sort(function (a, b) { if ((b.wish > 0) != (a.wish > 0)) return (b.wish > 0) - (a.wish > 0); if (a.wish > 0 && b.wish > 0 && a.wish != b.wish) return b.wish - a.wish; var sa = a.stat_type == STAT_TYPE, sb = b.stat_type == STAT_TYPE; if (sa != sb) return sb - sa; return (b.score - ws) / b.price - (a.score - ws) / a.price; });
     return list;
 }
-function offer_txt(o) { return o.name + "+" + o.level + " " + fmt(o.price) + " (" + pretty_server(o.server) + (o.same ? " ★" : "") + ", " + o.seller + ")"; }
+function offer_txt(o) { return o.name + "+" + o.level + (o.stat_type ? " [" + o.stat_type + "]" : "") + " " + fmt(o.price) + " (" + pretty_server(o.server) + (o.same ? " ★" : "") + ", " + o.seller + ")"; }
 var buy_confirm = null; // { key, offer, slot, t } – Kaufen-Knopf wartet auf Bestätigung
 function offer_key(o) { return o.name + "|" + o.level + "|" + o.price + "|" + o.seller + "|" + o.server; }
 function offers_html(slot) {
@@ -2827,7 +3401,7 @@ function offers_html(slot) {
         var k = offer_key(o), btn;
         if (buy_confirm && buy_confirm.key == k) btn = "<br><span style='color:#ffb74d'>für " + fmt(o.price) + (o.same ? " hier" : " auf " + esc(pretty_server(o.server)) + " (Serverwechsel)") + " kaufen?</span> <button data-act='buyok' data-slot='" + slot + "' data-idx='" + i + "' class='on'>Ja</button> <button data-act='buyno'>Nein</button>";
         else btn = " <button data-act='buyoffer' data-slot='" + slot + "' data-idx='" + i + "' style='padding:0 5px' title='dieses Angebot kaufen – ohne Preisgrenze, nur Gold muss reichen" + (o.same ? "" : "; auf anderem Server: hin, kaufen, zurück") + "'>" + (o.price > character.gold ? "zu teuer" : "Kaufen") + "</button>";
-        return "<span style='color:" + (o.same ? "#4caf50" : (o.wish > 0 ? "#8ab4f8" : "#e6e6e6")) + "' title='" + esc((o.wish > 0 ? "Wunschliste · " : "Alternative · ") + "Wert " + Math.round(o.score) + " · Händler " + o.seller + " auf " + o.server + (o.same ? " (dieser Server)" : "")) + "'>" + esc(o.name) + "+" + o.level + " " + fmt(o.price) + " <small>" + esc(pretty_server(o.server)) + (o.same ? " ★" : "") + "</small></span>" + btn;
+        return "<span style='color:" + (o.same ? "#4caf50" : (o.wish > 0 ? "#8ab4f8" : "#e6e6e6")) + "' title='" + esc((o.wish > 0 ? "Wunschliste · " : "Alternative · ") + "Wert " + Math.round(o.score) + " · Händler " + o.seller + " auf " + o.server + (o.same ? " (dieser Server)" : "")) + "'>" + esc(o.name) + "+" + o.level + (o.stat_type ? " <b style='color:" + (o.stat_type == STAT_TYPE ? "#4caf50" : "#9aa3b2") + "'>[" + esc(o.stat_type) + "]</b>" : "") + " " + fmt(o.price) + " <small>" + esc(pretty_server(o.server)) + (o.same ? " ★" : "") + "</small></span>" + btn;
     }).join("<br>");
 }
 async function buy_offer_now(slot, o) { // vom Nutzer bestätigter Kauf eines konkreten Angebots (Preisgrenze übersteuert)
@@ -2878,8 +3452,10 @@ function switch_server(region, id) { // wie der Klick auf "Wechseln" im Welt-Fen
     try { parent.location.href = "/character/" + encodeURIComponent(character.name) + "/in/" + region + "/" + id + "/"; } catch (e) { game_log("Serverwechsel fehlgeschlagen: " + err_txt(e)); }
 }
 function start_trip(f) { // f: Fund auf anderem Server
+    if (SOLO) return;
     var home = { region: parent.server_region, id: parent.server_identifier }, tgt = split_server(f.server);
     if (!home.region || !tgt) { game_log("Serverwechsel: Server unbekannt"); return; }
+    if (arb_job) { game_log("Serverwechsel verschoben: Händler ist gerade auf Handelsreise"); return; }
     server_trip = { home: home, target: tgt, find: f, t: Date.now(), stage: "out" }; save_trip();
     switch_server(tgt.region, tgt.id);
 }
@@ -2920,22 +3496,25 @@ async function scan_all_merchants(force, only_slot) {
         try { if (typeof parent.load_merchants == "function") { parent.load_merchants(); await sleep(3000); } collect_merchants(parent.merchants, merchants, 0); } catch (e) {}
     }
     if (!global_debug_done) { global_debug_done = true; try { game_log("Händler-Abfrage: " + merchants.length + " Händler" + (merchants[0] ? ", Felder: " + Object.keys(merchants[0]).slice(0, 14).join(",") : "") + " | Antwort: " + String(raw).slice(0, 220).replace(/\s+/g, " ") + " | parent.merchants: " + (parent.merchants ? (Array.isArray(parent.merchants) ? "Array[" + parent.merchants.length + "]" : "Keys " + Object.keys(parent.merchants).slice(0, 8).join(",")) : "-")); } catch (e) {} }
-    var finds = [], mine = my_server(), all = [], arb = [];
+    var finds = [], mine = my_server(), all = [], arb = []; watch_prices = {};
     merchants.forEach(function (m) {
         for (var sl in m.slots) {
             if (sl.indexOf("trade") != 0) continue;
-            var it = m.slots[sl]; if (!it || !it.price || it.b) continue;
+            var it = m.slots[sl]; if (!it || !it.price) continue;
+            if (WATCH_ITEMS[it.name]) { var wl = (watch_prices[it.name] = watch_prices[it.name] || { asks: [], bids: [], t: Date.now() }); (it.b ? wl.bids : wl.asks).push({ price: it.price, q: it.q || 1, seller: m.name, server: m.server || "?", level: it.level || 0 }); }
+            if (it.b) continue;
             var d0 = G.items[it.name];
             if (d0) { var ao = { name: it.name, level: it.level || 0, price: it.price, q: it.q || 1, seller: m.name, server: m.server || "?", same: norm_server(m.server) == mine, map: m.map, x: m.x, y: m.y, tslot: sl, t: Date.now() }; ao.profit = arb_profit(ao); if (ao.profit > 0) arb.push(ao); }
-            if (d0 && slot_for_item(d0)) all.push({ name: it.name, level: it.level || 0, price: it.price, seller: m.name, server: m.server || "?", same: norm_server(m.server) == mine, map: m.map, x: m.x, y: m.y, tslot: sl, score: gear_score(d0, it.level || 0, it.stat_type), t: Date.now() });
+            if (d0 && slot_for_item(d0)) all.push({ name: it.name, level: it.level || 0, price: it.price, seller: m.name, server: m.server || "?", same: norm_server(m.server) == mine, map: m.map, x: m.x, y: m.y, tslot: sl, stat_type: it.stat_type || null, score: gear_score(d0, it.level || 0, it.stat_type), t: Date.now() });
             if (!on_wishlist(it.name)) continue;
             if (norm_server(m.server) != mine && is_pvp_server(m.server)) continue; // kein Serverwechsel auf PVP-Server
             var slot = wish_wants(it.name, it.level || 0, it.price);
             if (!slot || (only_slot && slot != only_slot)) continue;
-            finds.push({ name: it.name, level: it.level || 0, price: it.price, seller: m.name, server: m.server || "?", map: m.map, x: m.x, y: m.y, slot: slot, tslot: sl, same: norm_server(m.server) == mine, t: Date.now() });
+            finds.push({ name: it.name, level: it.level || 0, price: it.price, seller: m.name, server: m.server || "?", map: m.map, x: m.x, y: m.y, slot: slot, tslot: sl, same: norm_server(m.server) == mine, stat_type: it.stat_type || null, t: Date.now() });
         }
     });
-    finds.sort(function (a, b) { return (b.same - a.same) || (a.price - b.price); });
+    try { watch_after_scan(); } catch (e) {}
+    finds.sort(function (a, b) { return (b.same - a.same) || ((b.stat_type == STAT_TYPE) - (a.stat_type == STAT_TYPE)) || (a.price - b.price); }); // hier zuerst, dann mit passendem Attribut, dann Preis
     global_finds = finds; global_offers = all; arb_offers = arb; try { parent.__lp_global_offers = all; parent.__lp_arb_offers = arb; } catch (e) {}
     var al = arb_list(); if (al.length) { var ak = al.slice(0, 3).map(function (o) { return o.name + (o.level ? "+" + o.level : "") + " " + fmt(o.price) + "→" + fmt(Math.round(npc_sell_price(o.name, o.level))) + " (" + pretty_server(o.server) + ")"; }).join(", "); if (!global_logged["arb:" + ak]) { global_logged["arb:" + ak] = true; game_log("Handel: " + al.length + " Angebote unter NPC-Wert, z. B. " + ak); } }
     server_targets = finds.filter(function (f) { return !f.same; }); save_server_targets();
@@ -2947,15 +3526,21 @@ async function scan_all_merchants(force, only_slot) {
     if (force) game_log("Händlerscan" + (only_slot ? " für " + only_slot : "") + ": " + finds.length + " passende Angebote" + (finds.length ? " (" + finds.filter(function (f) { return f.same; }).length + " auf diesem Server)" : ""));
     return here || null;
 }
+async function locate_offer(f) { // Händler anlaufen und das Angebot in seinen Stand-Slots suchen; null mit Log, wenn nicht da
+    var seller = get_player(f.seller);
+    if (seller && distance(character, seller) > 250) { try { await travel({ map: seller.map || character.map, x: seller.x, y: seller.y + 30 }); } catch (e) {} seller = get_player(f.seller); }
+    if (!seller || !seller.slots) { game_log("Händler " + f.seller + " nicht (mehr) hier" + (seller ? " (keine Stand-Daten, Abstand " + Math.round(distance(character, seller)) + ")" : "")); return null; }
+    var it = seller.slots[f.tslot], slot = f.tslot;
+    if (!it || it.name != f.name || (it.level || 0) != (f.level || 0) || it.price > f.price * 1.05) { it = null; for (var sl in seller.slots) { var c = seller.slots[sl]; if (sl.indexOf("trade") == 0 && c && !c.b && c.name == f.name && (c.level || 0) == (f.level || 0) && c.price <= f.price * 1.05) { it = c; slot = sl; break; } } }
+    if (!it) { var cur = seller.slots[f.tslot]; game_log("Angebot bei " + f.seller + " nicht mehr da (Abstand " + Math.round(distance(character, seller)) + ", Slot " + f.tslot + ": " + (cur ? cur.name + "+" + (cur.level || 0) + " " + fmt(cur.price || 0) : "leer") + ", Stand-Slots: " + Object.keys(seller.slots).filter(function (k) { return k.indexOf("trade") == 0 && seller.slots[k]; }).length + ")"); return null; }
+    return { seller: seller, it: it, slot: slot };
+}
 async function buy_find(f) { // Treffer auf eigenem Server sofort kaufen (innerhalb einer laufenden Routine)
     if (!f || !wish_wants(f.name, f.level, f.price, f.force ? f.slot : null)) return false;
     set_message("Kauf " + f.name);
     if (f.map && f.x != null) await travel({ map: f.map, x: f.x, y: f.y + 30 });
-    var seller = get_player(f.seller);
-    if (!seller || !seller.slots) { game_log("Händler " + f.seller + " nicht (mehr) hier"); return false; }
-    var it = seller.slots[f.tslot];
-    if (!it || it.name != f.name || it.price > f.price * 1.05) { game_log("Angebot bei " + f.seller + " nicht mehr da"); return false; }
-    return wish_buy_from_offer({ name: it.name, level: it.level || 0, price: it.price, force: !!f.force, slot: f.slot, seller: f.seller }, async function () { trade_buy(seller, f.tslot, 1); return true; });
+    var lo = await locate_offer(f); if (!lo) return false; var seller = lo.seller, it = lo.it;
+    return wish_buy_from_offer({ name: it.name, level: it.level || 0, price: it.price, force: !!f.force, slot: f.slot, seller: f.seller }, async function () { trade_buy(seller, lo.slot, 1); return true; });
 }
 async function run_pending_buy() { // zum Händler auf diesem Server laufen und kaufen
     if (!pending_buy || busy || upgrading || kissing || fleeing || paused) return;
@@ -2965,13 +3550,8 @@ async function run_pending_buy() { // zum Händler auf diesem Server laufen und 
     try {
         set_message("Kauf " + f.name);
         if (f.map && f.x != null) await travel({ map: f.map, x: f.x, y: f.y + 30 });
-        var seller = get_player(f.seller);
-        if (!seller || !seller.slots) { game_log("Händler " + f.seller + " nicht (mehr) hier"); }
-        else {
-            var it = seller.slots[f.tslot];
-            if (!it || it.name != f.name || it.price > f.price * 1.05) { game_log("Angebot bei " + f.seller + " nicht mehr da"); }
-            else await wish_buy_from_offer({ name: it.name, level: it.level || 0, price: it.price, force: !!f.force, slot: f.slot, seller: f.seller }, async function () { trade_buy(seller, f.tslot, 1); return true; });
-        }
+        var lo = await locate_offer(f);
+        if (lo) { var seller = lo.seller, it = lo.it; await wish_buy_from_offer({ name: it.name, level: it.level || 0, price: it.price, force: !!f.force, slot: f.slot, seller: f.seller }, async function () { trade_buy(seller, lo.slot, 1); return true; }); }
     } catch (e) { game_log("Händler-Kauf: " + err_txt(e)); }
     busy = false; marketing = false;
     if (trip_buying) { trip_buying = false; server_targets = server_targets.filter(function (x) { return !(x.name == f.name && x.seller == f.seller); }); save_server_targets(); end_trip("Kauf auf " + pretty_server(my_server()) + (locate_item(f.name) >= 0 || (character.slots[f.slot] && character.slots[f.slot].name == f.name) ? " erledigt" : " nicht möglich")); return; }
@@ -3118,11 +3698,29 @@ async function compound_spares() {
 
 // ---------- Upgrade + Attribut + Compound ----------
 // Ein Inventar-Item (name, level) schrittweise bis target upgraden. Rückgabe: {level, destroyed}
-async function upgrade_inv(name, level, target) {
+function grade0_max(name) { var g = (G.items[name] || {}).grades; return g && g.length ? g[0] - 1 : 99; } // höchste Stufe, auf der ein Teil noch Qualität 0 hat (Attribut-Scroll möglich)
+function stat_possible(it) { var d = G.items[it.name]; return !!(d && d.stat && !it.stat_type && (it.level || 0) <= grade0_max(it.name)); }
+var stat_scroll_failed = {};
+async function apply_stat_scroll(idx, st) { // Attribut-Scroll auf ein Inventarteil (muss noch Qualität 0 sein)
+    var it = character.items[idx]; if (!it || !st || !stat_possible(it)) return false;
+    var scroll = st + "scroll", price = (G.items[scroll] || {}).g || 0, key = it.name + "+" + (it.level || 0);
+    if (stat_scroll_failed[key] || !price || spendable() < price) return false;
+    if (quantity(scroll) < 1) { buy(scroll, 1); await sleep(600); }
+    var sc = locate_item(scroll); if (sc < 0) { game_log(scroll + " nicht gekauft"); return false; }
+    var nm = it.name, lv = it.level || 0;
+    set_message(nm + " +" + st.toUpperCase());
+    try { await upgrade(idx, sc); } catch (e) {}
+    await wait_queue("upgrade");
+    var i2 = find_inv_index(nm, lv), it2 = i2 >= 0 ? character.items[i2] : null;
+    if (it2 && it2.stat_type == st) { game_log(nm + "+" + lv + " hat jetzt " + st.toUpperCase() + " (vor dem Schritt auf Qualität 1)"); return true; }
+    stat_scroll_failed[key] = true; game_log(nm + "+" + lv + ": Attribut-Scroll nicht angenommen"); return false;
+}
+async function upgrade_inv(name, level, target, stat_want) { // stat_want: Attribut, das vor dem Sprung auf Qualität 1 gesetzt wird
     while (level < target) {
         check_pause();
         var idx = find_inv_index(name, level);
         if (idx < 0) return { level: level, destroyed: true };
+        if (stat_want && level == grade0_max(name)) { try { await apply_stat_scroll(idx, stat_want); } catch (e) {} idx = find_inv_index(name, level); if (idx < 0) return { level: level, destroyed: true }; } // letzter Schritt mit Qualität 0: Attribut jetzt oder nie
         var scroll = "scroll" + best_scroll_grade(G.items[name], level, "u", cost_to_reach(name, level));
         if (spendable() < G.items[scroll].g) { game_log("Reserve erreicht – Upgrade gestoppt"); return { level: level, destroyed: false, stopped: true }; }
         if (quantity(scroll) < 1) { buy(scroll, 1); await sleep(600); }
@@ -3245,7 +3843,7 @@ async function process_slot_inner(slot, goal) {
         if (buyable && backup_index(name) < 0) { if (!await ensure_backup(name)) { game_log(name + ": keine Reserve möglich – kein Risiko-Upgrade"); break; } }
         if (lvl >= goal) break;
         unequip(slot); await sleep(600);
-        var r = await upgrade_inv(name, lvl, goal);
+        var r = await upgrade_inv(name, lvl, goal, wish_item(slot) == name ? STAT_TYPE : null);
         if (r.destroyed) { rebuys++; continue; } // Schleifenanfang legt Reserve an / baut neu
         var best = -1, bl = -1;
         for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && it.name == name && (it.level || 0) > bl) { best = i; bl = it.level || 0; } }
@@ -3281,7 +3879,7 @@ async function upgrade_by_recommendation() {
                 var c5 = step_cost(iv.name, lv2); if (c5 > spendable()) { skipped["inv" + iv.name] = true; continue; }
                 game_log("Nächster Schritt (Inventar): " + iv.name + " +" + lv2 + " → +" + (lv2 + 1) + " (~" + fmt(c5) + ")");
                 await travel_place("upgrade");
-                var r5 = await upgrade_inv(iv.name, lv2, lv2 + 1);
+                var r5 = await upgrade_inv(iv.name, lv2, lv2 + 1, wish_item(sl2) == iv.name ? STAT_TYPE : null);
                 if (r5.stopped) skipped["inv" + iv.name] = true;
                 var bi = -1, bl = -1; for (var j = 0; j < character.items.length; j++) { var it2 = character.items[j]; if (it2 && it2.name == iv.name && (it2.level || 0) > bl) { bi = j; bl = it2.level || 0; } }
                 if (bi >= 0 && item_score(character.items[bi]) > item_score(character.slots[sl2])) { equip(bi, sl2); await sleep(600); game_log(iv.name + " +" + bl + " ist jetzt besser – angelegt"); }
@@ -3346,6 +3944,7 @@ async function upgrade_routine_inner(manual) {
         if (mh && G.items[mh.name].upgrade && wish_item("mainhand") == mh.name) { check_pause(); await process_slot("mainhand", slot_target("mainhand", is_buyable(mh.name) ? UPGRADE_TARGET : WEAPON_SAFE_TARGET, 0)); }
         // 2. Rest nach Wert je Aufwand
         await upgrade_by_recommendation();
+        // Team-Zielbau (Priest/Ranger) läuft NICHT hier mit – nur über den Knopf "Jetzt" (team_build_now)
 
         stat_slots = spendable() >= stat_price ? slots_without_stat().filter(function (sl) { return wish_item(sl) == character.slots[sl].name; }) : [];
         if (stat_slots.length) {
@@ -3396,7 +3995,7 @@ function start_main() {
     rip_counted = false;
     session_tick();
     if (Date.now() - last_panel > 2000) { last_panel = Date.now(); try { update_panel(); update_char_panel(); } catch (e) {} }
-    try { team_tick(); team_broadcast(); team_read_logs(); team_inject(); bank_snapshot(); if (!manual_lock && !paused) { priest_gear_tick(); energize_tick(); } } catch (e) {}
+    try { if (!SOLO) { merch_test_tick(); arb_tick(); event_tick(); } team_tick(); team_broadcast(); if (!SOLO) { team_read_logs(); team_inject(); } bank_snapshot(); if (!manual_lock && !paused && !SOLO) { priest_gear_tick(); energize_tick(); team_wish_handover_tick(); } } catch (e) {}
     if (paused) return;
     measure_tick();
 
@@ -3442,6 +4041,7 @@ function start_main() {
         if (!target) { // Angreifer nur erledigen, wenn sie nah sind; sonst weiter zum Spot
             for (var id in parent.entities) { var e = parent.entities[id]; if (is_valid_target(e) && e.target == character.name && distance(character, e) < 120) { target = e; break; } }
         }
+        if (!target && event_mode && !fleeing) { if (event_boss_step()) return; }
         if (target) change_target(target); else { go_to_farm_spot(); return; }
     }
 

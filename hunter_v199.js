@@ -2,7 +2,7 @@
 // Zweit-Magier, der nur Monsterjagden hält: folgt dem Magier in sicherem Abstand, greift nie an, flieht vor allem,
 // holt bei Daisy die Jagd, das Team killt (Party-Kills zählen), er gibt ab und holt die nächste.
 // Tokens setzt er in Set-Teile um, die dem Magier fehlen, und legt sie in die Bank.
-var HUNTER_VERSION = "v197";
+var HUNTER_VERSION = "v199";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // globale Namen werden beim Neu-Einspielen überschrieben, daher Generation lokal (g) festhalten
@@ -10,7 +10,7 @@ var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // globale Namen werden beim
 var MAGE = "F4llen";
 try { localStorage.setItem("lp_tlog_" + character.name, JSON.stringify([{ t: Date.now(), m: "Skript geladen (" + character.ctype + ", Lv " + character.level + ", Server " + (typeof server != "undefined" && server ? (server.region + " " + server.id) : "?") + ")" }])); } catch (e) {}
 var FOLLOW_DIST = 220, FOLLOW_MAX = 320, FLEE_DIST = 260; // weiter hinten als der Priester: nichts soll uns treffen
-var POT_MIN = 20, POT_BUY = 40, GOLD_MIN = 5000, GOLD_WANT = 30000;
+var POT_MIN = 20, POT_BUY = 40, GOLD_MIN = 5000, GOLD_WANT = 30000, SPEND_TOKENS = false; // Tokens nur sammeln
 var mage = null, p_paused = false, last_log = {}, last_status = 0, last_move = 0, moving = false, last_gold_ask = 0, last_pots_ask = 0;
 var town_busy = false, last_town = 0, last_hunt_state = "";
 function say(msg) { try { send_cm(MAGE, { t: "log", msg: msg }); } catch (e) {} try { game_log("[Jäger] " + msg); } catch (e) {} try { var k = "lp_tlog_" + character.name, arr = JSON.parse(localStorage.getItem(k) || "[]"); arr.push({ t: Date.now(), m: msg }); if (arr.length > 40) arr = arr.slice(-40); localStorage.setItem(k, JSON.stringify(arr)); } catch (e) {} }
@@ -63,11 +63,13 @@ async function town_trip() { // Daisy: abgeben/holen; Tokens -> Set-Teile für d
         if (q && q.c == 0) { try { await interact("monsterhunt"); } catch (e) {} await sleep(800); say("Jagd abgegeben (+" + (pot_count("monstertoken") - t0) + " Tokens, " + pot_count("monstertoken") + " gesamt)"); }
         q = mh_q();
         if (!q) { try { await interact("monsterhunt"); } catch (e) {} await sleep(800); q = mh_q(); if (q) say("Neue Jagd: " + q.c + "x " + q.id + " (" + Math.round((q.ms || 0) / 60000) + " min)"); else say("Keine Jagd bekommen"); }
-        // Tokens: fehlende Set-Teile des Magiers kaufen und in die Bank legen
-        var miss = []; try { miss = JSON.parse(window.localStorage.getItem("lp_mh_missing") || "[]"); } catch (e) {}
-        var bought = [];
-        for (var i = 0; i < miss.length; i++) { var m = miss[i]; if (!m.cost || pot_count("monstertoken") < m.cost || character.esize < 2) continue; try { exchange_buy("monstertoken", m.name); await sleep(1500); } catch (e) {} if (have_item(m.name) >= 0) { bought.push(m.name); say("Tokens: " + m.name + " für " + MAGE + " gekauft (" + m.cost + ")"); } }
-        if (bought.length) { try { await smart_move("bank"); await sleep(800); for (var b = 0; b < bought.length; b++) { var bi = have_item(bought[b]); if (bi >= 0) { bank_store(bi); await sleep(400); } } say("Tokens: " + bought.join(", ") + " in die Bank gelegt"); } catch (e) { say("Bank: " + (e && e.message || e)); } }
+        // Tokens werden nur gesammelt, nicht ausgegeben (SPEND_TOKENS = false)
+        if (SPEND_TOKENS) {
+            var miss = []; try { miss = JSON.parse(window.localStorage.getItem("lp_mh_missing") || "[]"); } catch (e) {}
+            var bought = [];
+            for (var i = 0; i < miss.length; i++) { var m = miss[i]; if (!m.cost || pot_count("monstertoken") < m.cost || character.esize < 2) continue; try { exchange_buy("monstertoken", m.name); await sleep(1500); } catch (e) {} if (have_item(m.name) >= 0) { bought.push(m.name); say("Tokens: " + m.name + " für " + MAGE + " gekauft (" + m.cost + ")"); } }
+            if (bought.length) { try { await smart_move("bank"); await sleep(800); for (var b = 0; b < bought.length; b++) { var bi = have_item(bought[b]); if (bi >= 0) { bank_store(bi); await sleep(400); } } say("Tokens: " + bought.join(", ") + " in die Bank gelegt"); } catch (e) { say("Bank: " + (e && e.message || e)); } }
+        }
         // Tränke
         if (pot_count("hpot") < POT_MIN && character.gold >= POT_BUY * 100) { try { await smart_move("potions"); await buy("hpot0", POT_BUY); await sleep(500); say("Tränke gekauft: " + POT_BUY); } catch (e) {} }
     } catch (e) { say("Stadtgang: " + (e && e.message || e)); }
