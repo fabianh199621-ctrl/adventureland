@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v207";
+var BOT_VERSION = "v208";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -139,7 +139,7 @@ function is_worth(m) {
         .sort(function (a, b) { return mon_xph_est(G.monsters[b], b) - mon_xph_est(G.monsters[a], a); }).slice(0, WORTH_TOP);
     return top.indexOf(m) >= 0;
 }
-function visible_mons() { return CANDIDATES.filter(function (m) { return is_safe_monster(m) && !hidden_mons[m] && is_worth(m); }); }
+function visible_mons() { return CANDIDATES.filter(function (m) { return !hidden_mons[m] && is_worth(m); }); } // Liste zeigt alle farmbaren Monster (auch gefährliche, mit Gefahr-%); die Sicherheitsprüfung greift nur bei der automatischen Wahl
 var EVAL_MS = 3 * 60 * 1000;         // Messdauer je Spot
 var MEASURE_TOP = 6;                 // nur die 6 vielversprechendsten Spots werden gemessen
 var REEVAL_MS = 6 * 60 * 60 * 1000;  // Messwerte gelten so lange
@@ -877,6 +877,7 @@ var team_safe_warned = 0;
 function escort_name() { var e = team_escort(); if (!e) return "das Team"; var nm = e.name || ""; for (var k in TEAM) if (team_state[TEAM[k]] === e) nm = (k == "merch" ? "den Händler" : k == "ranger" ? "den Ranger" : "den Priester"); return nm + " (Lv " + e.level + ")"; }
 function candidate_list() {
     var list = visible_mons().filter(function (m) {
+        if (!is_safe_monster(m)) return false; // Automatik nur auf sichere Spots
         if (spot_blocked(m)) return false;
         if (!team_safe(m)) return false;
         var st = farm_stats[m];
