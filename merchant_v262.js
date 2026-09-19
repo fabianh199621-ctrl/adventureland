@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Händler (F4llenMerch) – Stufe 1 =====
 // Läuft unsichtbar neben dem Magier. Aufgaben: Stand kaufen und öffnen, Loot abholen/verkaufen/einlagern,
 // Startgold vom Magier holen. mluck ist abgeschaltet (braucht Lv 40, Händler levelt praktisch nicht) – USE_MLUCK/LEVEL_MODE. Meldungen gehen per Charakter-Nachricht an den Magier und erscheinen dort als "[Merch] …".
-var MERCH_VERSION = "v261";
+var MERCH_VERSION = "v262";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -28,6 +28,18 @@ var listed = {}; try { listed = JSON.parse(localStorage.getItem("lp_listed_" + c
 function save_listed() { try { localStorage.setItem("lp_listed_" + character.name, JSON.stringify(listed)); } catch (e) {} }
 function item_key(name, level) { return name + "+" + (level || 0); }
 function npc_val(name, level) { try { if (typeof parent.calculate_item_value == "function") { var v = parent.calculate_item_value({ name: name, level: level || 0 }); if (isFinite(v) && v > 0) return v; } } catch (e) {} var d = G.items[name]; return d && d.g ? d.g : 0; }
+var tidy_req = 0;
+var GEAR_TYPES = { helmet: 1, chest: 1, pants: 1, shoes: 1, gloves: 1, cape: 1, weapon: 1, ring: 1, earring: 1, amulet: 1, belt: 1, orb: 1, quiver: 1, shield: 1, source: 1, misc_offhand: 1 };
+async function do_tidy() { // auf Befehl des Magiers: billige Ausrüstung verkaufen, alles andere in die Bank (Stand-Item, Werkzeug, Tränke, Auftrags- und Einkaufsitems bleiben)
+    tidy_req = 0; stand_off(); status("räumt auf");
+    manifest = {}; var n_sell = 0, n_bank = 0;
+    for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (!it || it.name == STAND_ITEM || /^(hpot|mpot)/.test(it.name)) continue;
+        if (it.name == "rod" || it.name == "pickaxe" || it.name == "staff" || it.name == "blade" || it.name == "tracker" || it.name == "computer" || stand_orders[it.name] || hold_items[item_key(it.name, it.level)]) continue;
+        var d = G.items[it.name] || {}, cheap = (d.type && GEAR_TYPES[d.type]) && (d.g || 0) < 10000 && (it.level || 0) <= 2;
+        manifest[item_key(it.name, it.level)] = cheap ? "sell" : "bank"; if (cheap) n_sell++; else n_bank++; }
+    say("Aufräumen: " + n_sell + " verkaufen, " + n_bank + " in die Bank");
+    await process_inventory();
+}
 var hold_items = {}; try { hold_items = JSON.parse(localStorage.getItem("lp_hold_" + character.name) || "{}"); } catch (e) {} // gekaufte Items für den Magier: nicht verkaufen/einlagern
 function hold_save() { try { localStorage.setItem("lp_hold_" + character.name, JSON.stringify(hold_items)); } catch (e) {} }
 function on_cm(name, data) {
@@ -35,6 +47,7 @@ function on_cm(name, data) {
     if (data.t == "pickup") { pickup = data; pickup.t = Date.now(); pickup_done = false; manifest = {}; if (data.buy) say("Einkauf angefordert: " + data.buy.name + (data.buy.level ? "+" + data.buy.level : "") + (data.buy.mode == "trip" ? " auf " + data.buy.server : " bei " + data.buy.seller)); say("Abholung angefordert (" + (data.reason || "") + ", " + (data.items || 0) + " Items" + (data.pots && (data.pots.hp || data.pots.mp) ? ", Tränke " + data.pots.hp + "/" + data.pots.mp : "") + ")"); }
     else if (data.t == "pickup_cancel") { pickup = null; }
     else if (data.t == "goldback") { goldback_req = Date.now(); }
+    else if (data.t == "tidy") { tidy_req = Date.now(); say("Aufräumen angefordert"); }
     else if (data.t == "item") { manifest[item_key(data.name, data.level)] = data.action || "bank"; }
     else if (data.t == "done") { pickup_done = true; }
     else if (data.t == "me") { mage = data; mage.t = Date.now(); if (typeof data.paused == "boolean") m_paused = data.paused; }
@@ -385,6 +398,7 @@ async function loop() {
             if (m_paused) { status("Pause"); if (!stand_open() && locate_item(STAND_ITEM) >= 0 && dist_to(home_spot()) < 80) stand_on(); await sleep(3000); continue; } // Pause: Stand bleibt offen (Wertsachen bleiben ausgestellt)
             if (locate_item(STAND_ITEM) < 0) { status("kein Stand"); await do_buy_stand(); if (locate_item(STAND_ITEM) < 0 && mage && character.gold < (G.items[STAND_ITEM].g || 0) && Date.now() - last_gold_ask > 120000) { await do_mluck(); } await sleep(5000); continue; }
             if (pickup) { await do_pickup(); continue; }
+            if (tidy_req) { await do_tidy(); continue; }
             if (LEVEL_MODE && character.level < MLUCK_LEVEL) { // Level-Phase: Stand zu, beim Magier mitlaufen (Party-XP), bei Angriff zum Magier flüchten
                 if (stand_open()) stand_off();
                 say_once("levelmode", "Lv " + character.level + " – mluck erst ab Lv " + MLUCK_LEVEL + ", levle in der Party beim Magier mit", 1800000);
