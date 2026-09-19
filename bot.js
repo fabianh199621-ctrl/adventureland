@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v237";
+var BOT_VERSION = "v238";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -2365,6 +2365,9 @@ async function check_monsterhunt() {
     if (q && q.c > 0) {
         if (!hunt_target_ok(q.id)) { if (hunt_spot || !hunt_skipped) { hunt_skipped = q.id; game_log("Jagd auf " + q.id + " übersprungen (" + hunt_skip_reason(q.id) + ") – läuft aus, normal farmen"); if (hunt_spot) hunt_reset(0); hunt_cooldown_until = Date.now() + (q.ms || 1800000); } return; } // unsicher -> läuft ab, normal weiterfarmen
         if (q.ms && q.ms < MH_MIN_LEFT_MS && q.c > 3) return; // kaum noch Zeit: nicht mehr wechseln
+        if (hunt_spot != q.id && team_hunt_logged && current_spot == team_hunt_logged && team_hunt_logged != q.id) { // laufende Team-Jagd zuerst zu Ende bringen
+            var th0 = team_hunt_pick(); if (th0 && th0.id == team_hunt_logged) { if (Date.now() - own_hunt_wait_logged > 120000) { own_hunt_wait_logged = Date.now(); game_log("Eigene Jagd " + q.c + "x " + q.id + " wartet, bis die Team-Jagd " + team_hunt_logged + " (" + th0.who + ") fertig ist"); } return; }
+        }
         if (hunt_spot != q.id) { hunt_spot = q.id; game_log("Monster Hunt: " + q.c + "x " + q.id + " (" + fmt_time(q.ms || 0) + ")"); set_manual_spot(q.id); }
         return;
     }
@@ -2395,7 +2398,7 @@ async function check_monsterhunt() {
     hunting = false; busy = false;
     if (!paused) go_to_farm_spot();
 }
-var hunt_skipped = null;
+var hunt_skipped = null, own_hunt_wait_logged = 0;
 function hunt_reset(block_ms) { // Jagd-Spot verlassen, zum Nutzer-Modus zurück
     var m = hunt_spot;
     if (m && block_ms) blocked_spots[m] = Date.now() + block_ms;
