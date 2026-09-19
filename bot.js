@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v233";
+var BOT_VERSION = "v234";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -4136,7 +4136,7 @@ function start_main() {
         var rs0 = mon_rects(current_spot, character.map), pt0 = [character.x, character.y, character.x, character.y], dmin0 = Infinity; for (var ri = 0; ri < rs0.length; ri++) dmin0 = Math.min(dmin0, rect_dist(rs0[ri], pt0));
         if (dmin0 < RALLY_DIST) { team_wait_stop = true; stop("smart"); spot_travel = false; busy = false; last_go = Date.now(); set_message("Sammelpunkt"); wait_log("Sammelpunkt " + Math.round(dmin0) + " px vor " + current_spot + " – warte auf Priest/Ranger, dann geschlossen rein"); return; }
     }
-    if (spot_travel && busy && !fleeing) { var fm0 = current_spot; if (spot_needs_team(fm0)) { var beh = escort_behind(); if (beh) { team_wait_stop = true; stop("smart"); spot_travel = false; busy = false; last_go = Date.now(); set_message(wait_txt()); wait_log(wait_txt() + " – halte an (" + fm0 + ")"); return; } } }
+    if (spot_travel && busy && !fleeing) { var fm0 = current_spot; if (wait_team_on && !SOLO && !event_mode && escorts().length) { var beh = escort_behind(); if (beh) { /* unterwegs immer auf Priest/Ranger warten (jeder Spot); allein kämpfen ist separat geregelt */ team_wait_stop = true; stop("smart"); spot_travel = false; busy = false; last_go = Date.now(); set_message(wait_txt()); wait_log(wait_txt() + " – halte an (" + fm0 + ")"); return; } } }
     if (busy || is_moving(character)) return;
 
     var farm = pick_farm_monster();
