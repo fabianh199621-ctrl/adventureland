@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v259";
+var BOT_VERSION = "v260";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -2816,6 +2816,8 @@ async function tidy_now() {
     try { await tidy_inventory(); } finally { tidy_force = false; }
     if (!paused) { try { await sort_inventory(); } catch (e) {} }
     game_log("Aufräumen fertig – frei: " + character.esize + " (behalten: Tränke, Scrolls, Event, getragene Reserve, 3er-Sets Schmuck, Ziel-Items)");
+    ["priest", "ranger"].forEach(function (k) { if (team_on[k] && team_running(TEAM[k])) team_send(TEAM[k], { t: "tidy" }); });
+    if ((team_on.priest && team_running(TEAM.priest)) || (team_on.ranger && team_running(TEAM.ranger))) game_log("Aufräumen: Priest/Ranger verkaufen Schrott und legen den Rest in die Bank (Tränke, Tokens bleiben)");
     after_action("Aufräumen");
 }
 
