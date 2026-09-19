@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v235";
+var BOT_VERSION = "v236";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -146,6 +146,16 @@ function escort_near() { var ok = true; escorts().forEach(function (e) { var p =
 function spot_needs_team(mon) { if (!wait_team_on || SOLO || event_mode || !mon || !escorts().length) return false; var d = G.monsters[mon]; return !!d && (strict_mon(mon) || mon_danger(d) > wait_team_danger); }
 function wait_txt() { var b = escort_behind(); if (!b) return ""; return "warte auf " + TEAM_LABEL[b.k] + (b.rip ? " (tot)" : isFinite(b.d) ? " (" + Math.round(b.d) + " px)" : b.other_map ? " (andere Karte)" : " (außer Sicht)"); }
 function wait_log(why) { if (Date.now() - wait_logged > 60000) { wait_logged = Date.now(); game_log("Auf Team warten: " + why); } }
+var wait_since = 0, wait_who = "";
+function meet_escort() { // Begleiter hängt auf derselben Karte länger fest (kein Weg zu mir?): ich gehe ihm entgegen
+    var b = escort_behind(); if (!b || !isFinite(b.d) || b.rip) { wait_since = 0; return; }
+    if (wait_who != b.nm) { wait_who = b.nm; wait_since = Date.now(); return; }
+    if (Date.now() - wait_since < 45000 || busy) return;
+    var p = null; try { p = get_player(b.nm); } catch (e) {}
+    if (!p || p.map != character.map) return;
+    wait_since = Date.now(); busy = true; game_log("Auf Team warten: " + TEAM_LABEL[b.k] + " kommt seit 45 s nicht näher (" + Math.round(b.d) + " px) – gehe ihm entgegen");
+    smart_move({ x: p.x + 40, y: p.y }).catch(function () {}).then(function () { busy = false; });
+}
 function hunter_only_mon() { var hh = hunter_only ? hunter_hunt() : null; return hh ? hh.id : null; }
 var pause_after = false; try { pause_after = localStorage.getItem("lp_pause_after") == "1"; } catch (e) {} // nach manueller Aktion (Button/Taste) pausieren statt weiterfarmen
 function after_action(what) {
@@ -4155,7 +4165,7 @@ function start_main() {
     if (!target) { var tt = team_threat(); if (tt) target = tt; }
     if (!target && hold) { // Team hängt zurück: nur Angreifer auf mich abwehren, sonst stehen bleiben
         for (var hid in parent.entities) { var he = parent.entities[hid]; if (is_valid_target(he) && he.target == character.name) { target = he; break; } }
-        if (!target) { set_message(wait_txt()); wait_log(wait_txt() + " – kämpfe nicht allein bei " + farm); return; }
+        if (!target) { set_message(wait_txt()); wait_log(wait_txt() + " – kämpfe nicht allein bei " + farm); meet_escort(); return; }
         if (character.hp < character.max_hp * 0.6 || strict_mon(farm)) { game_log("Ohne Team von " + target.mtype + " angegriffen (HP " + Math.round(character.hp / character.max_hp * 100) + " %" + (strict_mon(farm) ? ", Team-Pflicht" : "") + ") – Rückzug in die Stadt statt allein zu kämpfen"); fleeing = true; busy = true; (async function () { try { stop("smart"); change_target(null); await travel_place("town"); while (character.hp < character.max_hp * 0.9 && !character.rip) await sleep(1000); } catch (e) {} fleeing = false; busy = false; })(); return; }
         wait_log("verteidige mich gegen " + target.mtype + " (Team fehlt noch)"); change_target(target);
     }
