@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v266";
+var BOT_VERSION = "v267";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -1447,6 +1447,7 @@ function init_panel() {
         else if (act == "mkttoggle") toggle_market_panel();
         else if (act == "donate") { if (!team_on.merch || !team_running(TEAM.merch)) game_log("Spenden: Händler läuft nicht"); else { last_donate = Date.now(); team_send(TEAM.merch, { t: "donate", gold: donate_amt, target: 200 }); game_log("Spenden: Händler bringt " + fmt(donate_amt) + " Gold zu Ron"); } }
         else if (act == "donateauto") { donate_auto = !donate_auto; try { localStorage.setItem("lp_donate_auto", donate_auto ? "1" : "0"); } catch (x) {} game_log("Spenden-Automatik " + (donate_auto ? "an – Händler spendet alles über der Nachfüllgrenze bis Lv " + DONATE_LVL : "aus")); last_panel = 0; }
+        else if (act == "bankstatus") { try { bank_status_log(); } catch (e) { game_log("Bank-Status: " + err_txt(e)); } }
         else if (act == "mbcancel") { if (merch_buy && merch_buy.stage == "away") game_log("Einkauf: Reise läuft, Abbruch erst nach Rückkehr"); else mb_fail("manuell abgebrochen"); }
         else if (act == "geartoggle") { div.__gear = !div.__gear; try { localStorage.setItem("lp_panel_gear", div.__gear ? "1" : "0"); } catch (x) {} }
         else if (act == "clearlog") { log_buf = []; try { localStorage.setItem("lp_log", "[]"); } catch (x) {} _game_log("Log-Puffer geleert"); }
@@ -1851,7 +1852,7 @@ function update_panel() {
         "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Zielbau " + wish_text() + (AUTO_GEAR ? " · automatisch, Reserve " + fmt(WISH_RESERVE) : "") + "</span><button data-act='wishist' data-slot='*' title='alle Slots auf das setzen, was du gerade trägst – Preislimits bleiben erhalten'>Ist</button><button data-act='wishreset' title='alle Ziele auf das Getragene setzen und alle Limits löschen'>Zielbau = aktuelle Ausrüstung</button><button data-act='wishtoggle'>" + (panel.__wish ? "▾" : "▸") + " Liste</button></div>" + (panel.__wish ? wish_ui_html() : "") + team_wish_html(panel));
     // Wartung (eingeklappt)
     h += lp_sec("wartung", "Wartung", "Inv sortieren · Compound · Aufräumen · Bank",
-        "<div class='lp_row'><button data-act='sortinv' title='Inventar sortieren'>Inv ⇅</button><button data-act='compound' title='Schmuck compounden (getragen + ungetragen)'>Compound</button><button data-act='tidy' title='Schrott verkaufen, Rest in die Bank'>Aufräumen</button><button data-act='bank' title='Schrott aus der Bank holen und verkaufen'>Bank aufräumen</button><button data-act='banksort' title='Bank nach Gruppen sortieren, Reiter lückenlos füllen'>Bank ⇅</button><button data-act='reset' title='alle Messwerte verwerfen und neu messen'>Neu messen</button><button data-act='clearlog' title='Log-Puffer leeren'>Log leeren</button></div>");
+        "<div class='lp_row'><button data-act='sortinv' title='Inventar sortieren'>Inv ⇅</button><button data-act='compound' title='Schmuck compounden (getragen + ungetragen)'>Compound</button><button data-act='tidy' title='Schrott verkaufen, Rest in die Bank'>Aufräumen</button><button data-act='bank' title='Schrott aus der Bank holen und verkaufen'>Bank aufräumen</button><button data-act='banksort' title='Bank nach Gruppen sortieren, Reiter lückenlos füllen'>Bank ⇅</button><button data-act='bankstatus' title='Alle Bankfächer ins Log: Belegung, gesperrt/frei, Preis'>Bank-Status</button><button data-act='reset' title='alle Messwerte verwerfen und neu messen'>Neu messen</button><button data-act='clearlog' title='Log-Puffer leeren'>Log leeren</button></div>");
     // Monsterliste
     var hr = "";
     if (!panel.__collapsed) {
@@ -2158,6 +2159,7 @@ async function tidy_inventory() {
                 order.sort(function (a, b) { return a.r - b.r; });
                 for (var o = 0; o < order.length && character.esize < target_free; o++) { bank_store(order[o].i); extra++; await sleep(300); }
             }
+            try { bank_status_log(); } catch (e) {}
             game_log("Inventar: " + (n + extra) + " Items in die Bank gelegt" + (extra ? " (davon " + extra + " Schmuck/Reserven)" : "") + " – frei: " + character.esize + (bank_free_slots() < BANK_MIN_FREE ? ", Bank fast voll (" + bank_free_slots() + ")" : ""));
             if (bank_free_slots() < BANK_MIN_FREE) await bank_cleanup();
         }
@@ -2250,6 +2252,16 @@ async function bank_compound_jewelry() { // muss in der Bank stehen
     }
 }
 // ---------- Bank sortieren ----------
+function bank_status_log() { // alle Bankfächer: Karte, Belegung, freigeschaltet oder Preis
+    var bp = null; try { bp = parent.G && parent.G.bank_packs; } catch (e) {} var bk = character.bank || {}, lines = [], total = 0, free = 0;
+    var keys = bp ? Object.keys(bp) : Object.keys(bk).filter(function (k) { return k.indexOf("items") == 0; });
+    keys.sort(function (a, b) { return parseInt(a.replace("items", "")) - parseInt(b.replace("items", "")); }).forEach(function (k) {
+        var meta = bp && bp[k], arr = bk[k];
+        if (Array.isArray(arr)) { var used = arr.filter(function (x) { return !!x; }).length; total += arr.length; free += arr.length - used; lines.push(k + " (" + (meta ? meta[0] : "?") + "): " + used + "/" + arr.length); }
+        else lines.push(k + " (" + (meta ? meta[0] : "?") + "): gesperrt" + (meta ? ", " + fmt(meta[1]) + " Gold" : ""));
+    });
+    game_log("Bank: " + (character.bank ? "" : "(letzter Stand, nicht in der Bank) ") + free + " von " + total + " Plätzen frei · " + lines.join(" · "));
+}
 function bank_packs() { var b = character.bank || {}; return Object.keys(b).filter(function (k) { return k.indexOf("items") == 0 && Array.isArray(b[k]); }).sort(); }
 function bank_item_key(it) { return [inv_rank(it), it.name, -(it.level || 0)]; }
 function bank_cmp(a, b) { var ka = bank_item_key(a), kb = bank_item_key(b); for (var i = 0; i < 3; i++) { if (ka[i] < kb[i]) return -1; if (ka[i] > kb[i]) return 1; } return 0; }
