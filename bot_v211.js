@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v209";
+var BOT_VERSION = "v211";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -652,7 +652,7 @@ function hunts_html() { // Rundlauf: Jagden aller Kämpfer mit Status
         if (!id || !(c > 0)) return "keine";
         var d = G.monsters[id], dg = d ? Math.round(mon_danger(d) * 100) : 0, ok = mine ? hunt_target_ok(id) : (th && th.id == id);
         var run = current_spot == id && !paused;
-        return esc(id) + " " + c + (ok ? (run ? " <span style='color:#4caf50'>läuft</span>" : " <span style='color:#8ab4f8'>machbar" + (mine ? "" : ", als Nächstes") + "</span>") : " <span style='color:#ffb74d'>zu schwer " + dg + " %, läuft aus " + fmt_time(ms || 0) + "</span>");
+        return esc(id) + " " + c + (ok ? (run ? " <span style='color:#4caf50'>läuft</span>" : " <span style='color:#8ab4f8'>machbar" + (mine ? "" : ", als Nächstes") + "</span>") : " <span style='color:#ffb74d'>" + (hidden_mons[id] ? "ausgeblendet" : mon_ttk(d) > hunt_max_ttk ? "zu schwer (" + (isFinite(mon_ttk(d)) ? Math.round(mon_ttk(d)) : "∞") + " s/Kill)" : "zu gefährlich (" + dg + " %)") + ", läuft aus " + fmt_time(ms || 0) + "</span>");
     }
     items.push("Mage " + st_txt(q && q.id, q && q.c, q && q.ms, true));
     ["priest", "ranger", "hunter"].forEach(function (k) { if (!team_on[k]) return; var st = team_state[TEAM[k]]; if (!st || Date.now() - st.t > 120000) { items.push(TEAM_LABEL[k] + " ?"); return; } var h = st.hunt; items.push(TEAM_LABEL[k] + " " + st_txt(h && h.id, h && h.c, h && h.ms, false)); });
@@ -1338,6 +1338,7 @@ function init_panel() {
         if (t.getAttribute("data-fixprice")) { var fpn = t.getAttribute("data-fixprice"), fpv = parse_mio(t.value); var fo = stand_orders[fpn] || (stand_orders[fpn] = { since: Date.now() }); if (fpv > 0) { fo.fixed = fpv; fo.price = fpv; } else { delete fo.fixed; } fo.t = Date.now(); save_stand_orders(); game_log("Stand-Auftrag " + fpn + ": " + (fpv > 0 ? "fester Preis " + fmt(fpv) : "automatische Preisleiter") + " – Händler passt den Stand an, sobald er den Slot sieht"); try { t.blur(); } catch (x) {} last_panel = 0; return; }
         if (t.getAttribute("data-arbmin")) { var am = parse_mio(t.value); if (am > 0) { ARB_TRIP_MIN = am; try { localStorage.setItem("lp_arb_min", String(am)); } catch (x) {} game_log("Handelsreise ab " + fmt(am) + " Gewinn"); } try { t.blur(); } catch (x) {} last_panel = 0; return; }
         if (t.getAttribute("data-give")) { give_sel = t.value === "" ? -1 : parseInt(t.value); try { t.blur(); } catch (x) {} return; }
+        if (t.getAttribute("data-huntttk")) { var tv = parseFloat(String(t.value).replace(",", ".")); if (isFinite(tv) && tv > 0) { hunt_max_ttk = tv; try { localStorage.setItem("lp_hunt_max_ttk", String(tv)); } catch (x) {} game_log("Jagd-Grenze: max. " + tv + " s pro Kill"); } return; }
         if (t.getAttribute("data-huntmax")) { var hv = parseFloat(String(t.value).replace(",", ".")); if (isFinite(hv) && hv > 0 && hv <= 100) { hunt_max_danger = hv / 100; try { localStorage.setItem("lp_hunt_max_danger", String(hunt_max_danger)); } catch (x) {} game_log("Jagd-Gefahrgrenze: " + Math.round(hv) + " %"); hunt_skipped = null; last_hunt_check = 0; } try { t.blur(); } catch (x) {} last_panel = 0; return; }
         if (wm) { var mv = parse_mio(t.value), cm = wish_cfg[wm] || { item: wish_item(wm) || "", level: wish_level(wm) }; if (mv > 0) cm.max = mv; else delete cm.max; wish_cfg[wm] = cm; save_wish_cfg(); game_log("Zielbau " + wm + ": Preislimit " + (mv > 0 ? fmt(mv) : "automatisch")); try { t.blur(); } catch (x) {} return; }
         if (ws) { var v = t.value, oldmax = wish_cfg[ws] && wish_cfg[ws].max; if (!v) wish_cfg[ws] = { item: "" }; else wish_cfg[ws] = { item: v, level: default_target_level(G.items[v]) }; if (oldmax) wish_cfg[ws].max = oldmax; save_wish_cfg(); game_log("Zielbau " + ws + ": " + (v ? v + " +" + wish_cfg[ws].level : "kein Ziel")); }
@@ -1345,7 +1346,7 @@ function init_panel() {
     };
     win.addEventListener("change", onChange, true);
     var onInput = function (e) { var t = e.target; if (t && t.id == "lp_wiki_q") { wiki.q = t.value; wiki.page = null; render_wiki(); } };
-    var onKeyCap = function (e) { var t = e.target; if (t && (t.id == "lp_wiki_q" || (t.tagName == "INPUT" && inside(e)))) { e.stopPropagation(); if (e.key == "Escape") t.blur(); if (e.key == "Enter" && (t.getAttribute("data-wmax") || t.getAttribute("data-huntmax") || t.getAttribute("data-arbmin") || t.getAttribute("data-twmax") || t.getAttribute("data-fixprice")) && e.type == "keydown") { try { t.dispatchEvent(new Event("change", { bubbles: true })); } catch (x) {} } } }; // Tasten im Suchfeld nicht ans Spiel/Bot weitergeben
+    var onKeyCap = function (e) { var t = e.target; if (t && (t.id == "lp_wiki_q" || (t.tagName == "INPUT" && inside(e)))) { e.stopPropagation(); if (e.key == "Escape") t.blur(); if (e.key == "Enter" && (t.getAttribute("data-wmax") || t.getAttribute("data-huntmax") || t.getAttribute("data-huntttk") || t.getAttribute("data-arbmin") || t.getAttribute("data-twmax") || t.getAttribute("data-fixprice")) && e.type == "keydown") { try { t.dispatchEvent(new Event("change", { bubbles: true })); } catch (x) {} } } }; // Tasten im Suchfeld nicht ans Spiel/Bot weitergeben
     win.addEventListener("input", onInput, true);
     ["keydown", "keyup", "keypress"].forEach(function (t) { win.addEventListener(t, onKeyCap, true); });
     parent.__lp_panel_h = { down: onDown, move: onMove, up: onUp, click: onClick, change: onChange, input: onInput, key: onKeyCap };
@@ -1566,7 +1567,7 @@ function update_panel() {
     h += "<div class='lp_row'><span class='lp_mode'>Modus: " + (manual_spot ? "fest (" + esc(manual_spot) + ")" : "automatisch") + "</span><button data-act='auto'" + (manual_spot ? "" : " class='on'") + ">Auto</button><button data-act='reset'>Neu messen</button><button data-act='worth'" + (only_worth ? " class='on'" : "") + " title='nur die 5 besten nach geschätzten XP/h'>Top 5</button><button data-act='bycatch'" + (bycatch ? " class='on'" : "") + " title='andere sichere Monster in der Nähe mit angreifen'>Beifang</button><button data-act='focus'" + (focus_mode ? " class='on'" : "") + " title='nur farmen/hunten: kein Kuss, Ponty, Markt, Kuchen, keine Ausrüstungsautomatik; Inventar erst unter 3 freien Plätzen bis 20 frei aufräumen (mit Tränken)'>Fokus</button><button data-act='sortinv' title='Inventar sortieren'>Inv ⇅</button></div>"
       + "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Aktionen</span><button data-act='compound' title='Schmuck compounden (getragen + ungetragen)'>Compound</button><button data-act='tidy' title='Schrott verkaufen, Rest in die Bank'>Aufräumen</button><button data-act='bank' title='Schrott aus der Bank holen und verkaufen'>Bank aufräumen</button><button data-act='banksort' title='Bank nach Gruppen sortieren, Reiter lückenlos füllen'>Bank ⇅</button><button data-act='copylog' title='Bot-Log in die Zwischenablage'>Log kopieren</button><button data-act='pauseafter'" + (pause_after ? " class='on'" : "") + " title='Nach Buttons/Tasten pausieren statt weiterfarmen'>Danach: " + (pause_after ? "Pause" : "Farmen") + "</button><button data-act='clearlog' title='Log-Puffer leeren' style='padding:1px 5px'>✕</button></div>";
     h += event_html();
-    h += "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Hunt: <span style='color:#e6e6e6'>" + esc(mh_txt()) + "</span> · " + tokens() + " Tokens</span><button data-act='hunt'" + (hunt_on ? " class='on'" : "") + " title='Monster Hunt automatisch'>Hunt</button>" + "<button data-act='waitteam'" + (wait_team_on ? " class='on'" : "") + " title='Bei Spots über " + Math.round(wait_team_danger * 100) + " % Gefahr nicht vorlaufen und nicht allein kämpfen, bis Priest/Ranger da sind'>Team-Warten</button>" + (team_on.hunter || hunter_only ? "<button data-act='hunteronly'" + (hunter_only ? " class='on'" : "") + " title='Nur die Jagd des Jäger-Chars farmen (ohne Gefahrgrenze), keine eigene Jagd'>Nur Jäger</button>" : "") + "<input data-huntmax='1' value='" + Math.round(hunt_max_danger * 100) + "' title='Jagden nur bis zu dieser Gefahr in % (HP-Anteil je Kill); darüber wird die Jagd übersprungen' style='width:34px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555;text-align:right'><span class='lp_k' style='font-size:11px'>%</span>" + (mh_quest() ? "<button data-act='huntabandon'>Abbrechen</button>" : "") + "</div>";
+    h += "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Hunt: <span style='color:#e6e6e6'>" + esc(mh_txt()) + "</span> · " + tokens() + " Tokens</span><button data-act='hunt'" + (hunt_on ? " class='on'" : "") + " title='Monster Hunt automatisch'>Hunt</button>" + "<button data-act='waitteam'" + (wait_team_on ? " class='on'" : "") + " title='Bei Spots über " + Math.round(wait_team_danger * 100) + " % Gefahr nicht vorlaufen und nicht allein kämpfen, bis Priest/Ranger da sind'>Team-Warten</button>" + (team_on.hunter || hunter_only ? "<button data-act='hunteronly'" + (hunter_only ? " class='on'" : "") + " title='Nur die Jagd des Jäger-Chars farmen (ohne Gefahrgrenze), keine eigene Jagd'>Nur Jäger</button>" : "") + "<input data-huntmax='1' value='" + Math.round(hunt_max_danger * 100) + "' title='Jagden nur bis zu dieser Gefahr in % (HP-Anteil je Kill); darüber wird die Jagd übersprungen' style='width:34px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555;text-align:right'><span class='lp_k' style='font-size:11px'>%</span><input data-huntttk='1' value='" + hunt_max_ttk + "' title='Jagden nur, wenn ein Kill mit Team höchstens so viele Sekunden dauert; darüber gilt die Jagd als zu schwer' style='width:34px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555;text-align:right;margin-left:4px'><span class='lp_k' style='font-size:11px'>s/Kill</span>" + (mh_quest() ? "<button data-act='huntabandon'>Abbrechen</button>" : "") + "</div>";
     h += "<div class='lp_row' style='flex-wrap:wrap;line-height:1.6'><span class='lp_k'>Serverwechsel:</span> <span style='font-size:11px'>" + server_tip_html() + "</span></div>";
     h += arb_html(panel) + arb_trip_html() + watch_html();
     h += team_html();
@@ -2250,9 +2251,10 @@ function mh_txt() { var q = mh_quest(); if (!q) return "keine Jagd"; return q.id
 function tokens() { return quantity("monstertoken"); }
 async function daisy() { var pos = find_npc("monsterhunter"); if (!pos) throw "Daisy nicht gefunden"; await travel({ map: pos.map, x: pos.x, y: pos.y }); }
 var hunt_max_danger = 0.50; try { var hmd = parseFloat(localStorage.getItem("lp_hunt_max_danger")); if (isFinite(hmd) && hmd > 0) hunt_max_danger = hmd; if (localStorage.getItem("lp_hunt_max_v209") != "1") { localStorage.setItem("lp_hunt_max_v209", "1"); if (hunt_max_danger < 0.5) { hunt_max_danger = 0.5; localStorage.setItem("lp_hunt_max_danger", "0.5"); } } } catch (e) {} // Jagden nur bis zu dieser Gefahr (Anteil HP je Kill)
-function hunt_danger_ok(id) { var d = G.monsters[id]; return !!d && mon_danger(d) <= hunt_max_danger; }
+var hunt_max_ttk = 30; try { var hmt = parseFloat(localStorage.getItem("lp_hunt_max_ttk")); if (isFinite(hmt) && hmt > 0) hunt_max_ttk = hmt; } catch (e) {} // Jagd gilt als zu schwer, wenn ein Kill (mit Team) länger dauert
+function hunt_danger_ok(id) { var d = G.monsters[id]; return !!d && mon_danger(d) <= hunt_max_danger && mon_ttk(d) <= hunt_max_ttk; }
 function hunt_target_ok(id) { return id && G.monsters[id] && is_safe_monster(id) && hunt_danger_ok(id) && !hidden_mons[id] && !EXCLUDE[id] && !spot_blocked(id) && team_safe(id); }
-function hunt_skip_reason(id) { var d = G.monsters[id]; if (!d) return "unbekannt"; if (!hunt_danger_ok(id)) return Math.round(mon_danger(d) * 100) + " % > " + Math.round(hunt_max_danger * 100) + " %" + team_bonus_txt(); if (!is_safe_monster(id)) return "nicht sicher"; if (spot_blocked(id)) return "gesperrt"; if (!team_safe(id)) return "zu stark für den Priester"; return "ausgeblendet"; }
+function hunt_skip_reason(id) { var d = G.monsters[id]; if (!d) return "unbekannt"; if (mon_ttk(d) > hunt_max_ttk) return "zu schwer: " + (isFinite(mon_ttk(d)) ? Math.round(mon_ttk(d)) : "∞") + " s/Kill > " + hunt_max_ttk + " s"; if (!hunt_danger_ok(id)) return Math.round(mon_danger(d) * 100) + " % > " + Math.round(hunt_max_danger * 100) + " %" + team_bonus_txt(); if (!is_safe_monster(id)) return "nicht sicher"; if (spot_blocked(id)) return "gesperrt"; if (!team_safe(id)) return "zu stark für den Priester"; return "ausgeblendet"; }
 async function spend_tokens() { // Set-Teile kaufen, günstigstes fehlendes zuerst
     if (SOLO) { await spend_tokens_for_main(); return; }
     var want = MH_SET.filter(function (n) { var def = G.items[n]; var sl = slot_for_item(def); var worn = character.slots[sl]; return !(worn && worn.name == n) && locate_item(n) < 0; })
@@ -4063,7 +4065,8 @@ function start_main() {
 
     var farm = pick_farm_monster();
     var target = get_targeted_monster();
-    var hold = spot_needs_team(farm) && !!escort_behind(); // Team hängt zurück: kein neues Ziel, nur Verteidigung
+    var beh = (wait_team_on && !SOLO && !event_mode && escorts().length) ? escort_behind() : null;
+    var hold = spot_needs_team(farm) && !!beh; // Team hängt zurück: kein neues Ziel, nur Verteidigung
 
     if (target && !is_valid_target(target)) {
         log_ignored(target, "zu stark");
@@ -4080,15 +4083,17 @@ function start_main() {
     if (!target) {
         var aggro = attackers_on_me();
         // Farm-Monster: nächstes freies Exemplar, aber nur wenn es (auch gelevelt) noch sicher ist
-        var best_d = 1e9, seen_farm = false;
+        var best_d = 1e9, seen_farm = false, strong_wait = false;
         for (var mid in parent.entities) {
             var m = parent.entities[mid];
             if (!m || m.type != "monster" || m.dead || m.mtype != farm) continue;
             if (m.target && m.target != character.name) continue;
             if (aggro >= MAX_AGGRO && m.target != character.name) continue;
             if (too_strong(m)) { seen_farm = true; if (distance(character, m) < 300) log_ignored(m, "gelevelt/zu stark"); continue; }
+            if (beh && !m.target && ((m.level || 1) > 1 || mon_danger(G.monsters[m.mtype] || {}) > wait_team_danger)) { strong_wait = true; continue; } // starkes/gelevelte Exemplar: erst ziehen, wenn Priest/Ranger da sind
             var d = distance(character, m); if (d < best_d) { best_d = d; target = m; }
         }
+        if (!target && strong_wait) { set_message(wait_txt()); wait_log(wait_txt() + " – starke/gelevelte " + farm + " erst mit Team"); for (var sid3 in parent.entities) { var se3 = parent.entities[sid3]; if (is_valid_target(se3) && se3.target == character.name) { target = se3; break; } } if (!target) return; }
         all_leveled_check(farm, seen_farm, !!target); // nur gelevelte in Sicht -> nach 45 s ausweichen
         if (!target && bycatch && aggro < MAX_AGGRO) { // Beifang: nächstes sicheres Monster in der Nähe
             var bd = BYCATCH_RANGE;
@@ -4101,7 +4106,7 @@ function start_main() {
         if (target) change_target(target); else { go_to_farm_spot(); return; }
     }
 
-    last_target_id = target.id;
+    if (last_target_id != target.id) { last_target_id = target.id; if (Date.now() - last_team_cast > 1500) { last_team_cast = 0; team_broadcast(); } } // neues Ziel sofort ans Team (Fokus)
     if (!is_in_range(target)) move(character.x + (target.x - character.x) / 2, character.y + (target.y - character.y) / 2);
     else if (can_attack(target)) {
         if (!try_cburst()) { status_message(); attack(target); }
