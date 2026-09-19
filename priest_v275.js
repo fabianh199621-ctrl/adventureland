@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Priester (F4llenPriest) – Stufe 1 =====
 // Folgt dem Magier, heilt ihn und sich, nimmt die Party-Einladung an, greift erst ab PRIEST_ATTACK_LEVEL mit an.
 // Meldungen gehen per Charakter-Nachricht an den Magier ("[Priest] …").
-var PRIEST_VERSION = "v274";
+var PRIEST_VERSION = "v275";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -81,7 +81,8 @@ async function enter_bank() { // sicher in die Bank: smart_move, sonst zur Tür 
     for (var w3 = 0; w3 < 25 && !character.bank; w3++) await sleep(200);
     return !!character.bank;
 }
-var give_req = 0;
+var give_req = 0, cav_next = 0; try { cav_next = parseInt(localStorage.getItem("lp_cav_next_" + character.name) || "0") || 0; } catch (e) {}
+try { if (parent.__lp_cav_fn_sub) parent.socket.off("game_response", parent.__lp_cav_fn_sub); parent.__lp_cav_fn_sub = function (d) { try { if (!d || d.interaction != "cavalry") return; if (d.next_call > Date.now()) cav_next = d.next_call; else if (d.cooldown_ms > 1000) cav_next = Date.now() + d.cooldown_ms; if (d.failed) cav_next = Math.max(cav_next, Date.now() + 60000); try { localStorage.setItem("lp_cav_next_" + character.name, String(cav_next)); } catch (e) {} send_cm(MAGE, { t: "cavres", ok: !d.failed, assigned: d.assigned, reason: d.reason, next: cav_next }); } catch (e) {} }; parent.socket.on("game_response", parent.__lp_cav_fn_sub); } catch (e) {}
 async function go_give_mage() { // alles außer Tränken/Tokens/Tracker zum Magier bringen und übergeben
     give_req = 0; shopping = true; var n = 0, left = 0;
     try {
@@ -160,7 +161,7 @@ function say_once(key, msg, every) { if (last_log[key] && Date.now() - last_log[
 function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 var last_state = null;
 function worn_summary() { var o = {}; for (var sl in character.slots) { var it = character.slots[sl]; if (it && sl.indexOf("trade") != 0) o[sl] = { name: it.name, level: it.level || 0 }; } return o; }
-function status(state) { if (state == last_state && Date.now() - last_status < 30000) return; last_state = state; last_status = Date.now(); try { send_cm(MAGE, { t: "st", hpots: pot_count("hpot"), mpots: pot_count("mpot"), level: character.level, state: character.rip ? "tot" : state, hp: character.hp, max_hp: character.max_hp, mp_pct: character.mp / character.max_mp, map: character.map, free: character.esize, attack: character.attack, frequency: character.frequency, tokens: pot_count("monstertoken"), hunt: (mh_q() ? { id: mh_q().id, c: mh_q().c || 0, ms: mh_q().ms || 0 } : null), slots: worn_summary() }); } catch (e) {} }
+function status(state) { if (state == last_state && Date.now() - last_status < 30000) return; last_state = state; last_status = Date.now(); try { send_cm(MAGE, { t: "st", hpots: pot_count("hpot"), mpots: pot_count("mpot"), cav: { has: have_item("tracker") >= 0, next: cav_next }, level: character.level, state: character.rip ? "tot" : state, hp: character.hp, max_hp: character.max_hp, mp_pct: character.mp / character.max_mp, map: character.map, free: character.esize, attack: character.attack, frequency: character.frequency, tokens: pot_count("monstertoken"), hunt: (mh_q() ? { id: mh_q().id, c: mh_q().c || 0, ms: mh_q().ms || 0 } : null), slots: worn_summary() }); } catch (e) {} }
 var gear_incoming = [];
 async function equip_incoming() { // vom Magier erhaltene Teile anlegen, ersetzte Teile beim nächsten Einkauf verkaufen
     while (gear_incoming.length) {
@@ -240,6 +241,7 @@ function on_cm(name, data) {
     else if (data.t == "state") p_paused = !!data.paused;
     else if (data.t == "join") { try { var jr = join(data.event); if (jr && typeof jr.then == "function") jr.then(function () { say("Event " + data.event + ": angekommen"); }, function (e) { say("Event-Sprung fehlgeschlagen: " + (e && e.reason || JSON.stringify(e).slice(0, 80))); }); } catch (e) { say("Event-Sprung: " + (e && e.message || e)); } }
     else if (data.t == "tidy") { tidy_req = Date.now(); say("Aufräumen angefordert"); }
+    else if (data.t == "cavalry") { if (have_item("tracker") < 0) { try { send_cm(MAGE, { t: "cavres", ok: false, reason: "kein Tracktrix" }); } catch (e) {} } else { cav_next = Date.now() + 3600000; try { localStorage.setItem("lp_cav_next_" + character.name, String(cav_next)); } catch (e) {} try { parent.socket.emit("interaction", { type: "cavalry" }); say("Cavalry gerufen (" + (data.why || "Magier") + ")"); } catch (e) {} } }
     else if (data.t == "givemage") { give_req = Date.now(); say("Übergabe an den Magier angefordert"); }
     else if (data.t == "kiss") { kiss_req = data; say("Kuss-Runde " + data.round + ": " + data.name + " (" + data.map + ")"); }
     else if (data.t == "help") { help_until = Date.now() + 20000; try { stop("smart"); } catch (e) {} moving = false; }
