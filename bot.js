@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v232";
+var BOT_VERSION = "v233";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -123,7 +123,7 @@ function hunter_hunt() { // laufende Jagd des Jäger-Chars (aus seinem Status), 
     return st.hunt;
 }
 var wait_team_on = true, wait_team_danger = 0.10; try { wait_team_on = localStorage.getItem("lp_wait_team") != "0"; var wtd = parseFloat(localStorage.getItem("lp_wait_danger")); if (isFinite(wtd) && wtd >= 0) wait_team_danger = wtd; } catch (e) {} // Auf Team warten: bei Spots über dieser Gefahr nicht vorlaufen/allein kämpfen
-var WAIT_BEHIND = 500, WAIT_NEAR = 250, spot_travel = false, team_wait_stop = false, wait_logged = 0;
+var WAIT_BEHIND = 500, WAIT_NEAR = 250, RALLY_DIST = 350, spot_travel = false, team_wait_stop = false, wait_logged = 0;
 var strict_set = {}; try { strict_set = JSON.parse(localStorage.getItem("lp_strict") || "{}"); } catch (e) {} // Häkchen "Team" je Monster: kein Angriff, bevor Priest und Ranger < WAIT_NEAR stehen; Priest/Ranger ziehen nie selbst
 function strict_mon(mon) { return !!strict_set[mon]; }
 function set_strict(mon, on) { strict_set[mon] = !!on; try { localStorage.setItem("lp_strict", JSON.stringify(strict_set)); } catch (e) {} game_log("Team-Pflicht bei " + mon + (on ? " an" : " aus")); }
@@ -4131,6 +4131,10 @@ function start_main() {
         } else {
             auto_gear_tick(); best_equip_tick(); scan_all_merchants(); run_pending_buy(); run_goal(); check_weapon(); check_gear_slots(); check_elixir(); kiss_routine(); tidy_inventory(); check_potions(); check_stuck(); cavalry_tick(); check_ponty(false); check_market(false); check_seashells(); check_monsterhunt(); check_cake();
         }
+    }
+    if (spot_travel && busy && !fleeing && strict_mon(current_spot) && !escort_near()) { // Team-Spot: kurz vor dem Spawnfeld sammeln, erst geschlossen rein
+        var rs0 = mon_rects(current_spot, character.map), pt0 = [character.x, character.y, character.x, character.y], dmin0 = Infinity; for (var ri = 0; ri < rs0.length; ri++) dmin0 = Math.min(dmin0, rect_dist(rs0[ri], pt0));
+        if (dmin0 < RALLY_DIST) { team_wait_stop = true; stop("smart"); spot_travel = false; busy = false; last_go = Date.now(); set_message("Sammelpunkt"); wait_log("Sammelpunkt " + Math.round(dmin0) + " px vor " + current_spot + " – warte auf Priest/Ranger, dann geschlossen rein"); return; }
     }
     if (spot_travel && busy && !fleeing) { var fm0 = current_spot; if (spot_needs_team(fm0)) { var beh = escort_behind(); if (beh) { team_wait_stop = true; stop("smart"); spot_travel = false; busy = false; last_go = Date.now(); set_message(wait_txt()); wait_log(wait_txt() + " – halte an (" + fm0 + ")"); return; } } }
     if (busy || is_moving(character)) return;
