@@ -2,7 +2,7 @@
 // Zweit-Magier, der nur Monsterjagden hält: folgt dem Magier in sicherem Abstand, greift nie an, flieht vor allem,
 // holt bei Daisy die Jagd, das Team killt (Party-Kills zählen), er gibt ab und holt die nächste.
 // Tokens setzt er in Set-Teile um, die dem Magier fehlen, und legt sie in die Bank.
-var HUNTER_VERSION = "v210";
+var HUNTER_VERSION = "v212";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // globale Namen werden beim Neu-Einspielen überschrieben, daher Generation lokal (g) festhalten
