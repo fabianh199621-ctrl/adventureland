@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v209";
+var BOT_VERSION = "v210";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -4063,7 +4063,8 @@ function start_main() {
 
     var farm = pick_farm_monster();
     var target = get_targeted_monster();
-    var hold = spot_needs_team(farm) && !!escort_behind(); // Team hängt zurück: kein neues Ziel, nur Verteidigung
+    var beh = (wait_team_on && !SOLO && !event_mode && escorts().length) ? escort_behind() : null;
+    var hold = spot_needs_team(farm) && !!beh; // Team hängt zurück: kein neues Ziel, nur Verteidigung
 
     if (target && !is_valid_target(target)) {
         log_ignored(target, "zu stark");
@@ -4080,15 +4081,17 @@ function start_main() {
     if (!target) {
         var aggro = attackers_on_me();
         // Farm-Monster: nächstes freies Exemplar, aber nur wenn es (auch gelevelt) noch sicher ist
-        var best_d = 1e9, seen_farm = false;
+        var best_d = 1e9, seen_farm = false, strong_wait = false;
         for (var mid in parent.entities) {
             var m = parent.entities[mid];
             if (!m || m.type != "monster" || m.dead || m.mtype != farm) continue;
             if (m.target && m.target != character.name) continue;
             if (aggro >= MAX_AGGRO && m.target != character.name) continue;
             if (too_strong(m)) { seen_farm = true; if (distance(character, m) < 300) log_ignored(m, "gelevelt/zu stark"); continue; }
+            if (beh && !m.target && ((m.level || 1) > 1 || mon_danger(G.monsters[m.mtype] || {}) > wait_team_danger)) { strong_wait = true; continue; } // starkes/gelevelte Exemplar: erst ziehen, wenn Priest/Ranger da sind
             var d = distance(character, m); if (d < best_d) { best_d = d; target = m; }
         }
+        if (!target && strong_wait) { set_message(wait_txt()); wait_log(wait_txt() + " – starke/gelevelte " + farm + " erst mit Team"); for (var sid3 in parent.entities) { var se3 = parent.entities[sid3]; if (is_valid_target(se3) && se3.target == character.name) { target = se3; break; } } if (!target) return; }
         all_leveled_check(farm, seen_farm, !!target); // nur gelevelte in Sicht -> nach 45 s ausweichen
         if (!target && bycatch && aggro < MAX_AGGRO) { // Beifang: nächstes sicheres Monster in der Nähe
             var bd = BYCATCH_RANGE;
@@ -4101,7 +4104,7 @@ function start_main() {
         if (target) change_target(target); else { go_to_farm_spot(); return; }
     }
 
-    last_target_id = target.id;
+    if (last_target_id != target.id) { last_target_id = target.id; if (Date.now() - last_team_cast > 1500) { last_team_cast = 0; team_broadcast(); } } // neues Ziel sofort ans Team (Fokus)
     if (!is_in_range(target)) move(character.x + (target.x - character.x) / 2, character.y + (target.y - character.y) / 2);
     else if (can_attack(target)) {
         if (!try_cburst()) { status_message(); attack(target); }

@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Priester (F4llenPriest) – Stufe 1 =====
 // Folgt dem Magier, heilt ihn und sich, nimmt die Party-Einladung an, greift erst ab PRIEST_ATTACK_LEVEL mit an.
 // Meldungen gehen per Charakter-Nachricht an den Magier ("[Priest] …").
-var PRIEST_VERSION = "v209";
+var PRIEST_VERSION = "v210";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -134,7 +134,7 @@ async function hunt_town_step() { // in der Stadt: Jagd abgeben/holen, Tokens in
 }
 function hunt_target_near() { // Jagdmonster in der Nähe, das noch niemand fremdes angreift
     var q = mh_q(); if (!q || !(q.c > 0)) return null; if (mage && mage.spot && mage.spot != q.id) return null; var best = null, bd = 260; // eigene Jagd nur anpulen, wenn das Team gerade dort farmt
-    for (var id in parent.entities) { var m = parent.entities[id]; if (!m || m.type != "monster" || m.dead || m.mtype != q.id) continue; if (m.target && m.target != character.name && m.target != MAGE) continue; var base = G.monsters[m.mtype] || {}; if (!m.target && ((m.level || 1) > 3 || (base.hp && m.max_hp > base.hp * 1.6))) continue; var d = Math.hypot(character.x - m.x, character.y - m.y); if (d < bd) { bd = d; best = m; } } // gelevelte Exemplare (Lv >3 / >1,6x HP) nicht selbst anpulen – der Magier lässt sie auch aus
+    for (var id in parent.entities) { var m = parent.entities[id]; if (!m || m.type != "monster" || m.dead || m.mtype != q.id) continue; if (m.target && m.target != character.name && m.target != MAGE) continue; var base = G.monsters[m.mtype] || {}; if (!m.target && ((m.level || 1) > 1 || (base.hp && m.max_hp > base.hp * 1.3) || (base.attack || 0) * 8 > character.max_hp)) continue; /* gelevelte/starke Exemplare zieht der Magier zuerst (Aggro), wir folgen seinem Ziel */ var d = Math.hypot(character.x - m.x, character.y - m.y); if (d < bd) { bd = d; best = m; } } // gelevelte Exemplare (Lv >3 / >1,6x HP) nicht selbst anpulen – der Magier lässt sie auch aus
     return best;
 }
 function on_cm(name, data) {
@@ -190,7 +190,7 @@ async function tick() {
     if (t && hpr < 0.7 && t.hp / t.max_hp < 0.7 && can_use("partyheal") && character.mp > 400) { try { use_skill("partyheal"); } catch (e) {} }
     // Mitkämpfen ab bestimmtem Level: das Ziel des Magiers oder meinen Angreifer
     if (character.level >= PRIEST_ATTACK_LEVEL || att) {
-        var tgt = att; if (!tgt) tgt = hunt_target_near(); if (!tgt && mage && mage.tgt && parent.entities[mage.tgt] && !parent.entities[mage.tgt].dead) tgt = parent.entities[mage.tgt];
+        var mtg = mage && mage.tgt ? parent.entities[mage.tgt] : null; var tgt = (mtg && !mtg.dead) ? mtg : null; if (!tgt) tgt = att; if (!tgt) tgt = hunt_target_near(); // Fokus: Ziel des Magiers zuerst, dann eigener Angreifer, dann eigene Jagd (nur schwache, noch freie Exemplare)
         if (tgt && is_in_range(tgt) && can_attack(tgt)) { try { attack(tgt); } catch (e) {} status("kämpft"); return; }
     }
     status(t ? "bei dir" : "sucht dich");
