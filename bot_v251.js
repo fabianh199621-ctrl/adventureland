@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v249";
+var BOT_VERSION = "v251";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -140,7 +140,7 @@ function escort_behind(limit) { // am weitesten zurückhängender Begleiter (Abs
 }
 function escort_near() { var ok = true; escorts().forEach(function (e) { var p = null; try { p = get_player(e.nm); } catch (x) {} if (!(p && !p.rip && p.map == character.map && distance(character, p) <= WAIT_NEAR)) ok = false; }); return ok; }
 function spot_needs_team(mon) { if (!wait_team_on || SOLO || event_mode || !mon || !escorts().length) return false; var d = G.monsters[mon]; return !!d && (strict_mon(mon) || mon_danger(d) > wait_team_danger); }
-function wait_txt() { var b = escort_behind(); if (!b) return ""; return "warte auf " + TEAM_LABEL[b.k] + (b.rip ? " (tot)" : isFinite(b.d) ? " (" + Math.round(b.d) + " px)" : b.other_map ? " (andere Karte)" : " (außer Sicht)"); }
+function wait_txt() { var b = escort_behind() || (strict_mon(current_spot) ? escort_behind(WAIT_NEAR) : null); if (!b) return ""; return "warte auf " + TEAM_LABEL[b.k] + (b.rip ? " (tot)" : isFinite(b.d) ? " (" + Math.round(b.d) + " px)" : b.other_map ? " (andere Karte)" : " (außer Sicht)"); }
 function wait_log(why) { if (Date.now() - wait_logged > 60000) { wait_logged = Date.now(); game_log("Auf Team warten: " + why); } }
 var wait_since = 0, wait_who = "", rally_logged = 0;
 function rally_back(farm) { // Team-Spot und ich stehe schon im/zu nah am Spawnfeld ohne Team: raus zum Kartenanfang und dort warten
@@ -3834,7 +3834,7 @@ function mkt_gkey(o) { var d = G.items[o.name] || {}; return d.s ? o.name : o.na
 function mkt_groups() { // Kompakt: je Item günstigstes Angebot + bestes Kaufgesuch
     var q = (mkt.q || "").toLowerCase(), rows = mkt_filtered(), g = {};
     rows.forEach(function (o) { if (o.b) return; var k = mkt_gkey(o); var gr = g[k] || (g[k] = { key: k, name: o.name, level: o.level, stat_type: o.stat_type, sells: [], bids: [], tags: {} }); gr.sells.push(o); for (var t in o._tags) gr.tags[t] = true; });
-    market_all.forEach(function (o) { if (!o.b || !mkt_basic_ok(o, q)) return; var k = mkt_gkey(o), mn0 = mkt_min[o.name + "+" + o.level], isarb = !!(mn0 && o.price >= mn0.price); var gr = g[k]; if (!gr) { if (!(mkt.f.buy || mkt.f.all || (mkt.f.arb && isarb))) return; gr = g[k] = { key: k, name: o.name, level: o.level, stat_type: o.stat_type, sells: [], bids: [], tags: { buy: true } }; } o._tags = o._tags || mkt_tags(o); if (isarb) gr.tags.arb = true; gr.bids.push(o); });
+    market_all.forEach(function (o) { if (!o.b || !mkt_basic_ok(o, q)) return; var k = mkt_gkey(o), mn0 = mkt_min[o.name + "+" + o.level], isarb = !!(mn0 && o.price >= mn0.price); var gr = g[k]; if (!gr) { if (!(mkt.f.buy || (mkt.f.arb && isarb))) return; /* reine Kaufgesuche nur mit Chip Kaufgesuche oder Arbitrage-Chip */ gr = g[k] = { key: k, name: o.name, level: o.level, stat_type: o.stat_type, sells: [], bids: [], tags: { buy: true } }; } o._tags = o._tags || mkt_tags(o); if (isarb) gr.tags.arb = true; gr.bids.push(o); });
     var out = Object.keys(g).map(function (k) { var gr = g[k]; gr.sells.sort(function (a, b) { return a.price - b.price; }); gr.bids.sort(function (a, b) { return b.price - a.price; }); gr.ask = gr.sells[0] || null; gr.bid = gr.bids[0] || null; gr.span = gr.ask && gr.bid ? (gr.bid.price - gr.ask.price) / gr.ask.price : null; return gr; });
     var k2 = mkt.csort, d = mkt.cdir;
     out.sort(function (a, b) {
