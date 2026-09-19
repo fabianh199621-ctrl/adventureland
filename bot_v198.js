@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v196";
+var BOT_VERSION = "v198";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -296,7 +296,7 @@ function is_valid_target(m) {
 // ---------- Team: Händler und Priester (laufen unsichtbar im selben Fenster, gestartet vom Magier) ----------
 var TEAM = { merch: "F4llenMerch", priest: "F4llenPriest", ranger: "F4llenRanger", hunter: "F4llenHunt" };
 var TEAM_NAMES = [TEAM.merch, TEAM.priest, TEAM.ranger, TEAM.hunter];
-var TEAM_LABEL = { merch: "Merch", priest: "Priest", ranger: "Ranger", hunter: "Jäger" }, TEAM_ROLE = { merch: "merchant", priest: "priest", ranger: "ranger", hunter: "bot" }, TEAM_CTYPE = { merch: "merchant", priest: "priest", ranger: "ranger", hunter: "mage" };
+var TEAM_LABEL = { merch: "Merch", priest: "Priest", ranger: "Ranger", hunter: "Jäger" }, TEAM_ROLE = { merch: "merchant", priest: "priest", ranger: "ranger", hunter: "hunter" }, TEAM_CTYPE = { merch: "merchant", priest: "priest", ranger: "ranger", hunter: "mage" };
 var team_on = { merch: true, priest: true, ranger: true, hunter: false }; try { var to = JSON.parse(localStorage.getItem("lp_team") || "null"); if (to) { for (var tk0 in to) team_on[tk0] = to[tk0]; } } catch (e) {}
 if (SOLO) { team_on = { merch: false, priest: false, ranger: false, hunter: false }; }
 function save_team() { try { localStorage.setItem("lp_team", JSON.stringify(team_on)); } catch (e) {} }
@@ -318,7 +318,7 @@ function team_tick() { // fehlende Teammitglieder starten, abgeschaltete stoppen
         else if (!on && running) { try { stop_character(nm); game_log("Team: " + nm + " gestoppt"); } catch (e) {} }
     }
     // Party: Priester einladen, wenn er läuft und nicht dabei ist
-    if (Date.now() - last_party_try > 60000) { var need = []; if (team_on.priest && act[TEAM.priest]) need.push(TEAM.priest); if (team_on.ranger && act[TEAM.ranger]) need.push(TEAM.ranger); var ms = team_state[TEAM.merch]; if (team_on.merch && act[TEAM.merch] && ms && /levelt|folgt/.test(ms.state || "")) need.push(TEAM.merch); var missing = need.filter(function (nm) { return !(character.party && parent.party && parent.party[nm]); }); if (missing.length) { last_party_try = Date.now(); missing.forEach(function (nm) { try { send_party_invite(nm); } catch (e) {} }); } }
+    if (Date.now() - last_party_try > 60000) { var need = []; if (team_on.priest && act[TEAM.priest]) need.push(TEAM.priest); if (team_on.ranger && act[TEAM.ranger]) need.push(TEAM.ranger); if (team_on.hunter && act[TEAM.hunter]) need.push(TEAM.hunter); var ms = team_state[TEAM.merch]; if (team_on.merch && act[TEAM.merch] && ms && /levelt|folgt/.test(ms.state || "")) need.push(TEAM.merch); var missing = need.filter(function (nm) { return !(character.party && parent.party && parent.party[nm]); }); if (missing.length) { last_party_try = Date.now(); missing.forEach(function (nm) { try { send_party_invite(nm); } catch (e) {} }); } }
 }
 var team_inject_t = {};
 function team_windows() { // Fenster der mitgestarteten Charaktere finden (gleiche Herkunft, daher zugreifbar)
@@ -333,7 +333,7 @@ function team_inject() { // läuft im Fenster des Teammitglieds nicht unser Skri
         var nm = TEAM[k], w = wins[nm]; if (!w || !team_on[k]) continue;
         if (Date.now() - (team_inject_t[nm] || 0) < 45000) continue;
         var cw = w.code, have = null;
-        try { have = cw && (cw.MERCH_VERSION || cw.PRIEST_VERSION || cw.RANGER_VERSION || cw.BOT_VERSION); } catch (e) {}
+        try { have = cw && (cw.MERCH_VERSION || cw.PRIEST_VERSION || cw.RANGER_VERSION || cw.HUNTER_VERSION); } catch (e) {}
         if (have == BOT_VERSION) continue;
         team_inject_t[nm] = Date.now();
         if (!cw) { // das Spiel hat für den Charakter noch keinen Code-Frame angelegt: Code-Start anstoßen (läuft dessen eigenen, meist leeren Slot), danach spielen wir unser Skript ein
@@ -622,6 +622,7 @@ function team_html() {
     if (team_on.merch) { var mst = team_state[TEAM.merch]; parts.push("<button data-act='goldback' title='Händler bringt sein Gold (bis auf 150k) zum Magier'>Gold holen" + (mst && mst.gold ? " (" + fmt(mst.gold) + ")" : "") + "</button>"); }
     parts.push("<button data-act='teamlogs' title='gespeicherte Logs von Merch/Priest/Ranger (letzte 40 Zeilen je Char) ins Log holen'>Team-Logs</button>");
     if (team_on.merch) parts.push("<button data-act='merchtest' title='Testet, ob der Händler auf einen anderen Server gestartet werden kann (Grundlage für Handel im Hintergrund); dauert ca. 1 min, Händler kommt danach zurück'" + (merch_test ? " class='on'" : "") + " style='padding:0 5px'>" + (merch_test ? "Servertest läuft (" + merch_test.stage + ")" : "Merch-Servertest") + "</button>");
+    if (team_on.hunter) { var hst = team_state[TEAM.hunter]; if (hst && hst.hunt && hst.hunt.c > 0) { var hid = hst.hunt.id, ok = G.monsters[hid] && is_safe_monster(hid) && hunt_danger_ok(hid); parts.push("<span style='color:" + (ok ? "#8ab4f8" : "#ffb74d") + "'>Jäger-Jagd: " + esc(hid) + " " + hst.hunt.c + " übrig" + (ok ? (current_spot == hid ? " – Team farmt dort" : "") : " – zu gefährlich (" + Math.round(mon_danger(G.monsters[hid]) * 100) + " %), läuft aus") + "</span>"); } }
     var give = "";
     if (team_on.priest || team_on.ranger) { // manuelle Übergabe: Inventarteil auswählen, an Priest/Ranger geben (der legt es an, wenn es besser ist)
         var opts = "", any = false;
@@ -872,7 +873,7 @@ function candidate_list() {
 }
 function team_hunt_pick() { // Jagdmonster von Priest/Ranger, das für uns sicher ist (nur wenn keine eigene Jagd läuft)
     if (SOLO || hunt_spot) return null;
-    var out = null; ["priest", "ranger"].forEach(function (k) { if (out || !team_on[k]) return; var st = team_state[TEAM[k]]; if (!st || Date.now() - st.t > 90000 || !st.hunt || !(st.hunt.c > 0)) return; var id = st.hunt.id; if (G.monsters[id] && is_safe_monster(id) && hunt_danger_ok(id) && !hidden_mons[id] && !spot_blocked(id) && spawn_count(id) > 0) out = { id: id, who: TEAM_LABEL[k] }; });
+    var out = null; ["hunter", "priest", "ranger"].forEach(function (k) { if (out || !team_on[k]) return; var st = team_state[TEAM[k]]; if (!st || Date.now() - st.t > 90000 || !st.hunt || !(st.hunt.c > 0)) return; var id = st.hunt.id; if (G.monsters[id] && is_safe_monster(id) && hunt_danger_ok(id) && !hidden_mons[id] && !spot_blocked(id) && spawn_count(id) > 0) out = { id: id, who: TEAM_LABEL[k] }; });
     return out;
 }
 var team_hunt_logged = "";
