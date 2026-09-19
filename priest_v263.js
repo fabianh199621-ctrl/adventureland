@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Priester (F4llenPriest) – Stufe 1 =====
 // Folgt dem Magier, heilt ihn und sich, nimmt die Party-Einladung an, greift erst ab PRIEST_ATTACK_LEVEL mit an.
 // Meldungen gehen per Charakter-Nachricht an den Magier ("[Priest] …").
-var PRIEST_VERSION = "v262";
+var PRIEST_VERSION = "v263";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -39,7 +39,14 @@ function junk_items() { // Ausrüstung, die die Automatik nie anlegen würde: ni
 function cheap_junk() { return junk_items().filter(function (i) { var it = character.items[i], d = G.items[it.name] || {}; return (d.g || 0) < 10000 && (it.level || 0) <= 2; }); } // nur Billiges verkaufen – Seltenes/Hochgestuftes bleibt (Bank)
 var ALL_SLOTS_TYPES = { helmet: 1, chest: 1, pants: 1, shoes: 1, gloves: 1, cape: 1, weapon: 1, ring: 1, earring: 1, amulet: 1, belt: 1, orb: 1, quiver: 1, shield: 1, source: 1, misc_offhand: 1 };
 function shop_needed() { return pot_count("hpot") < POT_MIN || pot_count("mpot") < POT_MIN || missing_gear().length > 0 || (character.esize < 3 && junk_items().length > 0); }
-var tidy_req = 0;
+var tidy_req = 0, goldback_req = 0, last_goldback = 0, GOLD_MAX = 100000;
+function gold_handback() { // alles über GOLD_MAX an den Magier, wenn er in Reichweite steht (auf Befehl sofort, sonst alle 5 min prüfen)
+    var over = character.gold - GOLD_MAX; if (over < (goldback_req ? 1000 : 50000)) { if (goldback_req) { goldback_req = 0; say("Gold: nichts über " + GOLD_MAX + " (habe " + character.gold + ")"); } return; }
+    if (!goldback_req && Date.now() - last_goldback < 5 * 60000) return;
+    var m = mage_entity(); if (!m || m.map != character.map || dist(character, m) > 350) return;
+    last_goldback = Date.now(); goldback_req = 0; var g0 = character.gold; try { send_gold(MAGE, over); } catch (e) { say("Gold übergeben fehlgeschlagen: " + (e && e.reason || e)); return; }
+    say("Gold übergeben: " + over + " an " + MAGE + " (behalte " + GOLD_MAX + ")");
+}
 async function go_tidy() { // Aufräumen auf Befehl des Magiers: Schrott verkaufen, Rest in die Bank, Tränke und Tokens behalten
     shopping = true; tidy_req = 0;
     try {
@@ -164,7 +171,8 @@ function hunt_target_near() { // Jagdmonster in der Nähe, das noch niemand frem
 }
 function on_cm(name, data) {
     if (name != MAGE || !data) return;
-    if (data.t == "me") { mage = data; mage.t = Date.now(); if (typeof data.paused == "boolean") p_paused = data.paused; }
+    if (data.t == "me") { mage = data; mage.t = Date.now(); if (typeof data.paused == "boolean") p_paused = data.paused; if (data.mg && data.mg.esc_max > 0) GOLD_MAX = data.mg.esc_max; }
+    else if (data.t == "goldback") { goldback_req = Date.now(); }
     else if (data.t == "state") p_paused = !!data.paused;
     else if (data.t == "join") { try { var jr = join(data.event); if (jr && typeof jr.then == "function") jr.then(function () { say("Event " + data.event + ": angekommen"); }, function (e) { say("Event-Sprung fehlgeschlagen: " + (e && e.reason || JSON.stringify(e).slice(0, 80))); }); } catch (e) { say("Event-Sprung: " + (e && e.message || e)); } }
     else if (data.t == "tidy") { tidy_req = Date.now(); say("Aufräumen angefordert"); }
@@ -207,8 +215,9 @@ async function tick() {
     if (mpr < 0.3) { if (!use_pot("mpot")) { try { use_skill("regen_mp"); } catch (e) {} } }
     if (shopping) return;
     if (tidy_req && !my_attacker() && !moving) { go_tidy(); return; }
+    try { gold_handback(); } catch (e) {}
     if (!my_attacker() && Date.now() - last_autoequip > 30000) { await auto_equip(); }
-    if (character.gold < GOLD_MIN + 2 * POT_BUY * 100 && mage && Date.now() - last_gold_ask > 3 * 60000) { var mg = mage_entity(); if (mg && character.map == mg.map && dist(character, mg) < 350) { last_gold_ask = Date.now(); try { send_cm(MAGE, { t: "gold?", amount: GOLD_WANT }); } catch (e) {} } }
+    if (character.gold < 40000 && mage && Date.now() - last_gold_ask > 3 * 60000) { var mg = mage_entity(); if (mg && character.map == mg.map && dist(character, mg) < 350) { last_gold_ask = Date.now(); try { send_cm(MAGE, { t: "gold?", amount: Math.max(20000, GOLD_MAX - character.gold) }); } catch (e) {} } }
     var mage_fighting = mage && mage.tgt && Date.now() - mage.t < 15000 && !mage.paused;
     if (((shop_needed() && Date.now() - last_shop > 5 * 60000 && (!mage_fighting || pot_count("hpot") == 0)) || hunt_town_needed()) && character.gold >= GOLD_MIN && !my_attacker() && !moving) { go_shopping(); return; } // Einkauf nicht mitten im Kampf des Magiers (außer ohne Tränke); fertige Jagd wird sofort abgegeben
     if (has_pot("hpot") < 0 && character.gold < GOLD_MIN && mage && Date.now() - last_pots_ask > 5 * 60000) { var me = mage_entity(); if (me && character.map == me.map && dist(character, me) < 350) { last_pots_ask = Date.now(); try { send_cm(MAGE, { t: "pots?" }); } catch (e) {} } }

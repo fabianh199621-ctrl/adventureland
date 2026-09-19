@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Händler (F4llenMerch) – Stufe 1 =====
 // Läuft unsichtbar neben dem Magier. Aufgaben: Stand kaufen und öffnen, Loot abholen/verkaufen/einlagern,
 // Startgold vom Magier holen. mluck ist abgeschaltet (braucht Lv 40, Händler levelt praktisch nicht) – USE_MLUCK/LEVEL_MODE. Meldungen gehen per Charakter-Nachricht an den Magier und erscheinen dort als "[Merch] …".
-var MERCH_VERSION = "v262";
+var MERCH_VERSION = "v263";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -28,7 +28,7 @@ var listed = {}; try { listed = JSON.parse(localStorage.getItem("lp_listed_" + c
 function save_listed() { try { localStorage.setItem("lp_listed_" + character.name, JSON.stringify(listed)); } catch (e) {} }
 function item_key(name, level) { return name + "+" + (level || 0); }
 function npc_val(name, level) { try { if (typeof parent.calculate_item_value == "function") { var v = parent.calculate_item_value({ name: name, level: level || 0 }); if (isFinite(v) && v > 0) return v; } } catch (e) {} var d = G.items[name]; return d && d.g ? d.g : 0; }
-var tidy_req = 0;
+var tidy_req = 0, direct_buy = null;
 var GEAR_TYPES = { helmet: 1, chest: 1, pants: 1, shoes: 1, gloves: 1, cape: 1, weapon: 1, ring: 1, earring: 1, amulet: 1, belt: 1, orb: 1, quiver: 1, shield: 1, source: 1, misc_offhand: 1 };
 async function do_tidy() { // auf Befehl des Magiers: billige Ausrüstung verkaufen, alles andere in die Bank (Stand-Item, Werkzeug, Tränke, Auftrags- und Einkaufsitems bleiben)
     tidy_req = 0; stand_off(); status("räumt auf");
@@ -50,9 +50,10 @@ function on_cm(name, data) {
     else if (data.t == "tidy") { tidy_req = Date.now(); say("Aufräumen angefordert"); }
     else if (data.t == "item") { manifest[item_key(data.name, data.level)] = data.action || "bank"; }
     else if (data.t == "done") { pickup_done = true; }
-    else if (data.t == "me") { mage = data; mage.t = Date.now(); if (typeof data.paused == "boolean") m_paused = data.paused; }
+    else if (data.t == "me") { mage = data; mage.t = Date.now(); if (typeof data.paused == "boolean") m_paused = data.paused; if (data.mg && data.mg.target > 0) { GOLD_KEEP = data.mg.target; GOLD_HANDBACK = data.mg.target + 200000; GOLD_AUTO_BACK = data.mg.target + 500000; GOLD_MIN = data.mg.min || GOLD_MIN; } }
+    else if (data.t == "buy" && data.buy) { direct_buy = data.buy; say("Einkauf aus eigener Kasse: " + data.buy.name + (data.buy.level ? "+" + data.buy.level : "") + " bei " + data.buy.seller); }
     else if (data.t == "state") { m_paused = !!data.paused; }
-    else if (data.t == "nogold") { if (!data.near) say_once("nogold", "Gold: Magier nicht in Reichweite"); }
+    else if (data.t == "nogold") { if (!data.near) say_once("nogold", "Gold: Magier nicht in Reichweite"); else { last_gold_ask = Date.now() + 20 * 60000; say_once("nogold2", "Kasse: Magier hat nicht genug – nächster Versuch in 30 min", 600000); } }
 }
 function on_party_invite(name) { if (name == MAGE) { try { accept_party_invite(name); say_once("party", "Party mit " + MAGE + " angenommen", 3600000); } catch (e) {} } }
 function on_party_request(name) { if (name == MAGE) { try { accept_party_request(name); } catch (e) {} } }
@@ -123,7 +124,7 @@ async function do_mluck() {
     }
     if (!ok && can_mluck) { var sk = G.skills.mluck || {}; say_once("mluckfail", "mluck nicht gelungen: " + (why || "unbekannt") + " (Abstand " + Math.round(character.map == t.map ? Math.hypot(character.x - t.x, character.y - t.y) : -1) + ", Skill ab Lv " + (sk.level || "?") + ", Reichweite " + (sk.range || "?") + ", Magier-mluck von " + (mage && mage.mluck ? mage.mluck.f + (mage.mluck.strong ? " (stark)" : "") : "-") + ")", 120000); }
     // Gold holen, wenn wir schon hier sind
-    if (character.gold < GOLD_MIN && Date.now() - last_gold_ask > 120000) { last_gold_ask = Date.now(); try { send_cm(MAGE, { t: "gold?", amount: GOLD_WANT }); } catch (e) {} await sleep(1500); }
+    if (character.gold < GOLD_MIN && Date.now() - last_gold_ask > 120000) { last_gold_ask = Date.now(); var g1 = character.gold; try { send_cm(MAGE, { t: "gold?", amount: Math.max(0, GOLD_KEEP - character.gold), kind: "refill" }); } catch (e) {} await sleep(1500); say(character.gold > g1 ? "Kasse aufgefüllt: +" + (character.gold - g1) + " → " + character.gold : "Kasse: Magier konnte nicht auffüllen (habe " + character.gold + ", Ziel " + GOLD_KEEP + ")"); }
 }
 function pot_stock(n) { var q = 0; for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && it.name == n) q += it.q || 1; } return q; }
 async function do_pickup() { // zum Magier, Items entgegennehmen, Tränke/Gold übergeben, dann in der Stadt verarbeiten
@@ -237,7 +238,7 @@ async function ensure_tool(tool) { // Werkzeug vorhanden? sonst Zutaten kaufen/a
     if (Date.now() - last_tool_try < 5 * 60000) return false; last_tool_try = Date.now();
     var need = TOOL_RECIPES[tool], missing = need.filter(function (n) { return have_item(n) == -1; });
     // kaufbare Zutaten (Stab, Klinge) beim NPC holen
-    for (var i = 0; i < missing.length; i++) { var n = missing[i]; var npc = npc_selling(n); if (!npc) continue; var pr = (G.items[n] || {}).g || 0; if (character.gold < pr + GOLD_KEEP) { say_once("toolgold", "Werkzeug " + tool + ": zu wenig Gold für " + n, 1800000); return false; } var pos = npc_pos(npc); if (!pos) continue; await go({ map: pos.map, x: pos.x, y: pos.y + 20 }, 60); try { buy(n, 1); await sleep(600); } catch (e) {} }
+    for (var i = 0; i < missing.length; i++) { var n = missing[i]; var npc = npc_selling(n); if (!npc) continue; var pr = (G.items[n] || {}).g || 0; if (character.gold < pr + 20000) { say_once("toolgold", "Werkzeug " + tool + ": zu wenig Gold für " + n, 1800000); return false; } var pos = npc_pos(npc); if (!pos) continue; await go({ map: pos.map, x: pos.x, y: pos.y + 20 }, 60); try { buy(n, 1); await sleep(600); } catch (e) {} }
     missing = need.filter(function (n) { return have_item(n) == -1; });
     if (missing.length) { if (missing.indexOf("spidersilk") >= 0 && Date.now() - last_silk_ask > 10 * 60000) { last_silk_ask = Date.now(); try { send_cm(MAGE, { t: "need", item: "spidersilk", q: 2 }); } catch (e) {} say_once("silk", "Für " + tool + " fehlt Spinnenseide – beim Magier angefragt", 1800000); } else say_once("toolmiss", "Werkzeug " + tool + ": fehlt " + missing.join(", "), 1800000); return false; }
     var cp = npc_pos("craftsman"); if (!cp) return false;
@@ -399,6 +400,7 @@ async function loop() {
             if (locate_item(STAND_ITEM) < 0) { status("kein Stand"); await do_buy_stand(); if (locate_item(STAND_ITEM) < 0 && mage && character.gold < (G.items[STAND_ITEM].g || 0) && Date.now() - last_gold_ask > 120000) { await do_mluck(); } await sleep(5000); continue; }
             if (pickup) { await do_pickup(); continue; }
             if (tidy_req) { await do_tidy(); continue; }
+            if (direct_buy) { var db = direct_buy; direct_buy = null; stand_off(); await do_market_buy(db); continue; }
             if (LEVEL_MODE && character.level < MLUCK_LEVEL) { // Level-Phase: Stand zu, beim Magier mitlaufen (Party-XP), bei Angriff zum Magier flüchten
                 if (stand_open()) stand_off();
                 say_once("levelmode", "Lv " + character.level + " – mluck erst ab Lv " + MLUCK_LEVEL + ", levle in der Party beim Magier mit", 1800000);
@@ -408,7 +410,7 @@ async function loop() {
                 status("levelt"); await follow_mage(); await sleep(1000); continue;
             }
             if (USE_MLUCK && character.level >= MLUCK_LEVEL && mluck_needed() && Date.now() - last_mluck_try > 5 * 60000 && !mage.paused) { status("mluck"); await do_mluck(); continue; }
-            if (character.gold < GOLD_MIN && Date.now() - last_gold_ask > 30 * 60000) { status("Gold holen"); await do_mluck(); continue; }
+            if (character.gold < GOLD_MIN && Date.now() - last_gold_ask > 10 * 60000 && mage && Date.now() - mage.t < 30000) { status("Gold holen"); await do_mluck(); continue; }
             if (goldback_req || (character.gold > GOLD_AUTO_BACK && Date.now() - last_goldback > 10 * 60000 && mage && Date.now() - mage.t < 30000)) { await do_goldback(); continue; }
             if (await orders_tick()) continue;
             if (await gather_tick()) continue;
