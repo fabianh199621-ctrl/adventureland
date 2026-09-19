@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Priester (F4llenPriest) – Stufe 1 =====
 // Folgt dem Magier, heilt ihn und sich, nimmt die Party-Einladung an, greift erst ab PRIEST_ATTACK_LEVEL mit an.
 // Meldungen gehen per Charakter-Nachricht an den Magier ("[Priest] …").
-var PRIEST_VERSION = "v217";
+var PRIEST_VERSION = "v218";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -191,7 +191,7 @@ async function tick() {
     if (t && hpr < 0.7 && t.hp / t.max_hp < 0.7 && can_use("partyheal") && character.mp > 400) { try { use_skill("partyheal"); } catch (e) {} }
     // Mitkämpfen ab bestimmtem Level: das Ziel des Magiers oder meinen Angreifer
     if (character.level >= PRIEST_ATTACK_LEVEL || att) {
-        var mtg = mage && mage.tgt ? parent.entities[mage.tgt] : null; var tgt = (mtg && !mtg.dead) ? mtg : null; if (!tgt) tgt = att; if (!tgt) tgt = hunt_target_near(); // Fokus: Ziel des Magiers zuerst, dann eigener Angreifer, dann eigene Jagd (nur schwache, noch freie Exemplare)
+        var mtg = mage && mage.tgt ? parent.entities[mage.tgt] : null; var tgt = (mtg && !mtg.dead) ? mtg : null; if (!tgt) tgt = att; // Fokus: nur das Ziel des Magiers oder der eigene Angreifer – nie selbst ein Ziel ziehen (eigene Jagd erledigt der Magier mit)
         if (tgt && is_in_range(tgt) && can_attack(tgt)) { try { attack(tgt); } catch (e) {} status("kämpft"); return; }
     }
     status(t ? "bei dir" : "sucht dich");

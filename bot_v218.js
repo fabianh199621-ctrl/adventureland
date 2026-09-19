@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v216";
+var BOT_VERSION = "v218";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -123,8 +123,10 @@ function hunter_hunt() { // laufende Jagd des Jäger-Chars (aus seinem Status), 
     return st.hunt;
 }
 var wait_team_on = true, wait_team_danger = 0.10; try { wait_team_on = localStorage.getItem("lp_wait_team") != "0"; var wtd = parseFloat(localStorage.getItem("lp_wait_danger")); if (isFinite(wtd) && wtd >= 0) wait_team_danger = wtd; } catch (e) {} // Auf Team warten: bei Spots über dieser Gefahr nicht vorlaufen/allein kämpfen
-var WAIT_BEHIND = 500, WAIT_NEAR = 250, STRICT_XP = 2000, spot_travel = false, team_wait_stop = false, wait_logged = 0; // ab STRICT_XP XP/Kill: streng – kein Angriff, bevor Priest und Ranger < WAIT_NEAR stehen
-function strict_mon(mon) { var d = G.monsters[mon]; return !!d && (d.xp || 0) > STRICT_XP; }
+var WAIT_BEHIND = 500, WAIT_NEAR = 250, spot_travel = false, team_wait_stop = false, wait_logged = 0;
+var strict_set = {}; try { strict_set = JSON.parse(localStorage.getItem("lp_strict") || "{}"); } catch (e) {} // Häkchen "Team" je Monster: kein Angriff, bevor Priest und Ranger < WAIT_NEAR stehen; Priest/Ranger ziehen nie selbst
+function strict_mon(mon) { return !!strict_set[mon]; }
+function set_strict(mon, on) { strict_set[mon] = !!on; try { localStorage.setItem("lp_strict", JSON.stringify(strict_set)); } catch (e) {} game_log("Team-Pflicht bei " + mon + (on ? " an" : " aus")); }
 function escorts() { // mitlaufende Kämpfer (Priest/Ranger), die an sind und sich zuletzt gemeldet haben
     var out = []; if (SOLO) return out;
     ["priest", "ranger"].forEach(function (k) { if (!team_on[k]) return; var st = team_state[TEAM[k]]; if (!st || Date.now() - st.t > 90000) return; out.push({ k: k, nm: TEAM[k], st: st }); });
@@ -392,7 +394,7 @@ function team_broadcast() { // alle 5 s: wo bin ich, was mache ich (für Händle
     if (SOLO) { if (Date.now() - solo_last_st > 30000) { solo_last_st = Date.now(); try { var hq0 = mh_quest(); send_cm(MAIN_NAME, { t: "st", level: character.level, state: character.rip ? "tot" : paused ? "Pause" : (hq0 && hq0.c > 0 ? "jagt " + hq0.id + " (" + hq0.c + ")" : "farmt " + (current_spot || "?")), gold: character.gold, tokens: tokens(), hp: character.hp, max_hp: character.max_hp, map: character.map, free: character.esize }); } catch (e) {} } return; }
     try { window.localStorage.setItem("lp_mh_missing", JSON.stringify(mh_missing_for_me())); } catch (e) {} // für Jäger/Priest/Ranger: welche Set-Teile mir fehlen
     var act = active_chars(), ml = character.s && character.s.mluck;
-    var msg = { t: "me", map: character.map, x: Math.round(character.x), y: Math.round(character.y), level: character.level, hp: character.hp, max_hp: character.max_hp, paused: paused || !bot_running, spot: current_spot, event: event_mode, tgt: (function () { if (!paused) return last_target_id; try { var mt = get_target(); return mt && mt.type == "monster" && !mt.dead ? mt.id : null; } catch (e) { return null; } })(), mluck: ml ? { f: ml.f, ms: ml.ms, strong: !!ml.strong } : null, in: character.in };
+    var msg = { t: "me", map: character.map, x: Math.round(character.x), y: Math.round(character.y), level: character.level, hp: character.hp, max_hp: character.max_hp, paused: paused || !bot_running, spot: current_spot, strict: strict_mon(current_spot), event: event_mode, tgt: (function () { if (!paused) return last_target_id; try { var mt = get_target(); return mt && mt.type == "monster" && !mt.dead ? mt.id : null; } catch (e) { return null; } })(), mluck: ml ? { f: ml.f, ms: ml.ms, strong: !!ml.strong } : null, in: character.in };
     for (var k in TEAM) { var nm = TEAM[k]; if (team_on[k] && act[nm]) { try { send_cm(nm, msg); } catch (e) {} } }
 }
 function team_send(name, data) { try { send_cm(name, data); } catch (e) {} }
@@ -1341,6 +1343,7 @@ function init_panel() {
         if (t.getAttribute("data-fixprice")) { var fpn = t.getAttribute("data-fixprice"), fpv = parse_mio(t.value); var fo = stand_orders[fpn] || (stand_orders[fpn] = { since: Date.now() }); if (fpv > 0) { fo.fixed = fpv; fo.price = fpv; } else { delete fo.fixed; } fo.t = Date.now(); save_stand_orders(); game_log("Stand-Auftrag " + fpn + ": " + (fpv > 0 ? "fester Preis " + fmt(fpv) : "automatische Preisleiter") + " – Händler passt den Stand an, sobald er den Slot sieht"); try { t.blur(); } catch (x) {} last_panel = 0; return; }
         if (t.getAttribute("data-arbmin")) { var am = parse_mio(t.value); if (am > 0) { ARB_TRIP_MIN = am; try { localStorage.setItem("lp_arb_min", String(am)); } catch (x) {} game_log("Handelsreise ab " + fmt(am) + " Gewinn"); } try { t.blur(); } catch (x) {} last_panel = 0; return; }
         if (t.getAttribute("data-give")) { give_sel = t.value === "" ? -1 : parseInt(t.value); try { t.blur(); } catch (x) {} return; }
+        if (t.getAttribute("data-strict")) { set_strict(t.getAttribute("data-strict"), t.checked); last_panel = 0; return; }
         if (t.getAttribute("data-huntok")) { set_hunt_allow(t.getAttribute("data-huntok"), t.checked); last_hunt_check = 0; last_panel = 0; return; }
         if (t.getAttribute("data-huntttk")) { var tv = parseFloat(String(t.value).replace(",", ".")); if (isFinite(tv) && tv > 0) { hunt_max_ttk = tv; try { localStorage.setItem("lp_hunt_max_ttk", String(tv)); } catch (x) {} game_log("Jagd-Grenze: max. " + tv + " s pro Kill"); } return; }
         if (t.getAttribute("data-huntmax")) { var hv = parseFloat(String(t.value).replace(",", ".")); if (isFinite(hv) && hv > 0 && hv <= 100) { hunt_max_danger = hv / 100; try { localStorage.setItem("lp_hunt_max_danger", String(hunt_max_danger)); } catch (x) {} game_log("Jagd-Gefahrgrenze: " + Math.round(hv) + " %"); hunt_skipped = null; last_hunt_check = 0; } try { t.blur(); } catch (x) {} last_panel = 0; return; }
@@ -1511,6 +1514,7 @@ try { var sv = JSON.parse(localStorage.getItem("lp_sort") || "null"); if (sv) { 
 function set_sort(k) { if (sort_key == k) sort_dir = -sort_dir; else { sort_key = k; sort_dir = (k == "name" ? 1 : -1); } try { localStorage.setItem("lp_sort", JSON.stringify({ k: sort_key, d: sort_dir })); } catch (e) {} last_panel = 0; }
 function sort_value(m, k) {
     if (k == "hunt") return hunt_allowed(m) ? 1 : 0;
+    if (k == "strict") return strict_mon(m) ? 1 : 0;
     var d = G.monsters[m], st = farm_stats[m];
     switch (k) {
         case "name": return m;
@@ -1580,7 +1584,7 @@ function update_panel() {
     if (panel.__wish) h += wish_ui_html();
     h += team_wish_html(panel);
     if (!panel.__collapsed) {
-        var cols = [["name", "Monster"], ["hunt", "Jagd"], ["danger", "Gefahr"], ["ttk", "s/Kill"], ["xpk", "XP/Kill"], ["xpest", "XP/h*"], ["xph", "XP/h"], ["gph", "G/h"], ["ang", "ANG"]];
+        var cols = [["name", "Monster"], ["hunt", "Jagd"], ["strict", "Team"], ["danger", "Gefahr"], ["ttk", "s/Kill"], ["xpk", "XP/Kill"], ["xpest", "XP/h*"], ["xph", "XP/h"], ["gph", "G/h"], ["ang", "ANG"]];
         h += "<div class='lp_k' style='font-size:11px;margin-top:4px'>Schätzung kalibriert ×" + xp_calibration().toFixed(1) + " (aus " + Object.keys(farm_stats).length + " gemessenen Spots)" + (team_bonus_txt() ? " · Gefahr" + team_bonus_txt() : "") + "</div>";
         h += "<table class='lp_t'><tr>" + cols.map(function (c) { return "<th data-sort='" + c[0] + "'" + (sort_key == c[0] ? " class='sorted'" : "") + ">" + c[1] + (sort_key == c[0] ? (sort_dir < 0 ? " ▾" : " ▴") : "") + "</th>"; }).join("") + "<th></th></tr>";
         var mons = visible_mons();
@@ -1589,7 +1593,8 @@ function update_panel() {
             var st = farm_stats[m], d = G.monsters[m], oldc = st && !stats_valid(st) ? " class='old'" : "";
             var dg = mon_danger(d), ttk = mon_ttk(d);
             h += "<tr" + (m == current_spot ? " class='cur'" : "") + "><td title='" + esc(mon_tooltip(m)) + "'>" + esc(m) + (st && st.deaths ? " <span style='color:#ef5350'>†" + st.deaths + "</span>" : "") + "</td>"
-               + "<td><input type='checkbox' data-huntok='" + m + "'" + (hunt_allowed(m) ? " checked" : "") + " title='Jagd auf " + esc(m) + " erlauben'" + "" + "></td>"
+               + "<td><input type='checkbox' data-huntok='" + m + "'" + (hunt_allowed(m) ? " checked" : "") + " title='Jagd auf " + esc(m) + " erlauben'></td>"
+               + "<td><input type='checkbox' data-strict='" + m + "'" + (strict_mon(m) ? " checked" : "") + " title='Team-Pflicht: Magier greift erst an, wenn Priest und Ranger < 250 px stehen; Priest/Ranger ziehen nie selbst'></td>"
                + "<td style='color:" + (dg > 0.35 ? "#ef5350" : dg > 0.15 ? "#ffb74d" : "#81c784") + "'>" + (isFinite(dg) ? Math.round(dg * 100) + "%" : "∞") + "</td><td>" + (isFinite(ttk) ? ttk.toFixed(1) : "∞") + "</td><td>" + fmt(d.xp) + "</td><td>" + fmt(mon_xph_est(d, m)) + "</td>"
                + "<td" + oldc + ">" + (st ? fmt(st.xp_h) : "-") + "</td><td" + oldc + ">" + (st ? fmt(st.gold_h) : "-") + "</td><td" + oldc + ">" + (st && st.attack ? st.attack : "-") + "</td>"
                + "<td><button data-act='farm' data-mon='" + m + "'" + (m == manual_spot ? " class='on'" : "") + ">Farmen</button> <button data-act='hide' data-mon='" + m + "' title='ausblenden' style='padding:1px 5px'>✕</button></td></tr>";
@@ -1597,7 +1602,7 @@ function update_panel() {
         var hid = Object.keys(hidden_mons).filter(function (m) { return G.monsters[m]; });
         var auto_hid = only_worth ? CANDIDATES.filter(function (m) { return is_safe_monster(m) && !hidden_mons[m] && !is_worth(m); }) : [];
         if (hid.length || auto_hid.length) {
-            h += "<tr><td colspan='10' style='text-align:left;color:#9aa3b2;white-space:normal'>Ausgeblendet: "
+            h += "<tr><td colspan='11' style='text-align:left;color:#9aa3b2;white-space:normal'>Ausgeblendet: "
                + hid.map(function (m) { return esc(m) + " <button data-act='show' data-mon='" + m + "' style='padding:0 4px'>↩</button>"; }).join(" ")
                + (auto_hid.length ? " <span style='color:#6b7280'>(Filter: " + auto_hid.map(esc).join(", ") + ")</span>" : "") + "</td></tr>";
         }

@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Ranger (F4llenRanger) =====
 // Folgt dem Magier, greift dessen Ziel an (Supershot, Hunter's Mark, 3-/5-Shot), versorgt sich selbst mit NPC-Ausrüstung und Tränken.
 // Meldungen gehen per Charakter-Nachricht an den Magier ("[Ranger] …").
-var RANGER_VERSION = "v216";
+var RANGER_VERSION = "v218";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -133,7 +133,7 @@ async function hunt_town_step() { // in der Stadt: Jagd abgeben/holen, Tokens in
     if (bought.length) { try { await smart_move("bank"); await sleep(800); for (var b = 0; b < bought.length; b++) { var bi = have_item(bought[b]); if (bi >= 0) { bank_store(bi); await sleep(400); } } say("Tokens: " + bought.join(", ") + " in die Bank gelegt"); } catch (e) { say("Bank: " + (e && e.message || e)); } }
 }
 function hunt_target_near() { // Jagdmonster in der Nähe, das noch niemand fremdes angreift
-    var q = mh_q(); if (!q || !(q.c > 0)) return null; if (mage && mage.spot && mage.spot != q.id) return null; if (((G.monsters[q.id] || {}).xp || 0) > 2000) return null; /* ab 2000 XP/Kill zieht nur der Magier */ var best = null, bd = 260; // eigene Jagd nur anpulen, wenn das Team gerade dort farmt
+    var q = mh_q(); if (!q || !(q.c > 0)) return null; if (mage && mage.spot && mage.spot != q.id) return null; if (mage && mage.strict) return null; /* Team-Pflicht (Häkchen beim Magier): nur der Magier zieht */ var best = null, bd = 260; // eigene Jagd nur anpulen, wenn das Team gerade dort farmt
     for (var id in parent.entities) { var m = parent.entities[id]; if (!m || m.type != "monster" || m.dead || m.mtype != q.id) continue; if (m.target && m.target != character.name && m.target != MAGE) continue; var base = G.monsters[m.mtype] || {}; if (!m.target && ((m.level || 1) > 1 || (base.hp && m.max_hp > base.hp * 1.3) || (base.attack || 0) * 8 > character.max_hp)) continue; /* gelevelte/starke Exemplare zieht der Magier zuerst (Aggro), wir folgen seinem Ziel */ var d = Math.hypot(character.x - m.x, character.y - m.y); if (d < bd) { bd = d; best = m; } } // gelevelte Exemplare (Lv >3 / >1,6x HP) nicht selbst anpulen – der Magier lässt sie auch aus
     return best;
 }
@@ -184,7 +184,7 @@ async function tick() {
     if (att && ((att.attack || (G.monsters[att.mtype] || {}).attack || 0) >= character.max_hp * 0.5)) { var dxo = character.x - att.x, dyo = character.y - att.y, lo = Math.hypot(dxo, dyo) || 1; try { move(character.x + dxo / lo * 200, character.y + dyo / lo * 200); } catch (e) {} status("weicht Boss aus"); return; } // Ein-Treffer-Gegner (Giga Crab): sofort weg
     if (att && hpr < FLEE_BELOW) { if (t) { try { move(t.x, t.y); } catch (e) {} } status("flieht"); return; }
     // Kampf: eigener Angreifer zuerst, sonst das Ziel des Magiers
-    var mtg = mage && mage.tgt ? parent.entities[mage.tgt] : null; var tgt = (mtg && !mtg.dead) ? mtg : null; if (!tgt) tgt = att; if (!tgt) tgt = hunt_target_near(); // Fokus: Ziel des Magiers zuerst, dann eigener Angreifer, dann eigene Jagd (nur schwache, noch freie Exemplare)
+    var mtg = mage && mage.tgt ? parent.entities[mage.tgt] : null; var tgt = (mtg && !mtg.dead) ? mtg : null; if (!tgt) tgt = att; // Fokus: nur das Ziel des Magiers oder der eigene Angreifer – nie selbst ein Ziel ziehen (eigene Jagd erledigt der Magier mit)
     if (tgt && !character.slots.mainhand) { status("ohne Bogen"); await follow(); return; }
     if (tgt && is_in_range(tgt)) {
         var multi = targets_near(5);

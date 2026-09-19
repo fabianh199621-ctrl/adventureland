@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Ranger (F4llenRanger) =====
 // Folgt dem Magier, greift dessen Ziel an (Supershot, Hunter's Mark, 3-/5-Shot), versorgt sich selbst mit NPC-Ausrüstung und Tränken.
 // Meldungen gehen per Charakter-Nachricht an den Magier ("[Ranger] …").
-var RANGER_VERSION = "v217";
+var RANGER_VERSION = "v218";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -184,7 +184,7 @@ async function tick() {
     if (att && ((att.attack || (G.monsters[att.mtype] || {}).attack || 0) >= character.max_hp * 0.5)) { var dxo = character.x - att.x, dyo = character.y - att.y, lo = Math.hypot(dxo, dyo) || 1; try { move(character.x + dxo / lo * 200, character.y + dyo / lo * 200); } catch (e) {} status("weicht Boss aus"); return; } // Ein-Treffer-Gegner (Giga Crab): sofort weg
     if (att && hpr < FLEE_BELOW) { if (t) { try { move(t.x, t.y); } catch (e) {} } status("flieht"); return; }
     // Kampf: eigener Angreifer zuerst, sonst das Ziel des Magiers
-    var mtg = mage && mage.tgt ? parent.entities[mage.tgt] : null; var tgt = (mtg && !mtg.dead) ? mtg : null; if (!tgt) tgt = att; if (!tgt) tgt = hunt_target_near(); // Fokus: Ziel des Magiers zuerst, dann eigener Angreifer, dann eigene Jagd (nur schwache, noch freie Exemplare)
+    var mtg = mage && mage.tgt ? parent.entities[mage.tgt] : null; var tgt = (mtg && !mtg.dead) ? mtg : null; if (!tgt) tgt = att; // Fokus: nur das Ziel des Magiers oder der eigene Angreifer – nie selbst ein Ziel ziehen (eigene Jagd erledigt der Magier mit)
     if (tgt && !character.slots.mainhand) { status("ohne Bogen"); await follow(); return; }
     if (tgt && is_in_range(tgt)) {
         var multi = targets_near(5);
