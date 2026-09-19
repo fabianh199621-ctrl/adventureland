@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Priester (F4llenPriest) – Stufe 1 =====
 // Folgt dem Magier, heilt ihn und sich, nimmt die Party-Einladung an, greift erst ab PRIEST_ATTACK_LEVEL mit an.
 // Meldungen gehen per Charakter-Nachricht an den Magier ("[Priest] …").
-var PRIEST_VERSION = "v256";
+var PRIEST_VERSION = "v258";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -175,6 +175,10 @@ async function follow() { // hinter dem Magier bleiben, Karte wechseln, wenn nö
         moving = false;
     }
 }
+function party_mates() { // andere Party-Mitglieder (außer Magier) in Sicht
+    var out = []; try { var pl = parent.party_list || []; for (var i = 0; i < pl.length; i++) { var nm = pl[i]; if (nm == character.name || nm == MAGE) continue; var p = get_player(nm); if (p && p.map == character.map) out.push(p); } } catch (e) {}
+    return out;
+}
 function heal_target(t) { try { if (typeof heal == "function") heal(t); else use_skill("heal", t); return true; } catch (e) { return false; } }
 async function tick() {
     if (character.rip) { status("tot"); await sleep(15000); try { respawn(); } catch (e) {} await sleep(5000); return; }
@@ -195,9 +199,13 @@ async function tick() {
     // Magier heilen (bei Hilferuf: hinlaufen und Dauerheilung, Angriff hat Pause)
     var t = mage_entity();
     if (Date.now() < help_until && t && !t.rip) { var dh = dist(character, t), hr = (G.skills.heal && G.skills.heal.range) || 200; if (dh > hr - 20 && !is_moving(character)) { try { move(t.x + (character.x - t.x) * 0.5, t.y + (character.y - t.y) * 0.5); } catch (e) {} } if (dh <= hr && can_use("heal") && character.mp > 30) heal_target(t); status("hilft"); return; }
-    if (t && !t.rip && t.hp / t.max_hp < HEAL_MAGE_BELOW && dist(character, t) <= (G.skills.heal && G.skills.heal.range || 200) && can_use("heal") && character.mp > 30) { heal_target(t); status("heilt"); return; }
-    // Party-Heilung, wenn beide angeschlagen
-    if (t && hpr < 0.7 && t.hp / t.max_hp < 0.7 && can_use("partyheal") && character.mp > 400) { try { use_skill("partyheal"); } catch (e) {} }
+    // Heilen: wer aus der Party (Magier, Ranger, Händler) am schwächsten ist und in Reichweite steht
+    var hr2 = (G.skills.heal && G.skills.heal.range) || 200, worst = null, worst_r = HEAL_MAGE_BELOW;
+    [t].concat(party_mates()).forEach(function (pm) { if (!pm || pm.rip || !pm.max_hp) return; var r = pm.hp / pm.max_hp; if (r < worst_r && dist(character, pm) <= hr2) { worst_r = r; worst = pm; } });
+    if (worst && can_use("heal") && character.mp > 30) { heal_target(worst); status("heilt " + (worst.name == MAGE ? "Magier" : worst.name)); return; }
+    // Party-Heilung, wenn mehrere angeschlagen
+    var low = [t].concat(party_mates()).filter(function (pm) { return pm && !pm.rip && pm.max_hp && pm.hp / pm.max_hp < 0.7; }).length + (hpr < 0.7 ? 1 : 0);
+    if (low >= 2 && can_use("partyheal") && character.mp > 400) { try { use_skill("partyheal"); } catch (e) {} }
     // Mitkämpfen ab bestimmtem Level: das Ziel des Magiers oder meinen Angreifer
     if (character.level >= PRIEST_ATTACK_LEVEL || att) {
         var mtg = mage && mage.tgt ? parent.entities[mage.tgt] : null; if (mtg && mtg.dead) mtg = null; var tgt = null; if (mage && mage.strict) { tgt = mtg || att; } else { tgt = att || spot_target_near() || mtg; } // Team-Häkchen: nur Ziel des Magiers (Fokus); sonst eigenes freies Exemplar des Spots (schneller bei Massen-Jagden), Ziel des Magiers als Rückfall
