@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Ranger (F4llenRanger) =====
 // Folgt dem Magier, greift dessen Ziel an (Supershot, Hunter's Mark, 3-/5-Shot), versorgt sich selbst mit NPC-Ausrüstung und Tränken.
 // Meldungen gehen per Charakter-Nachricht an den Magier ("[Ranger] …").
-var RANGER_VERSION = "v234";
+var RANGER_VERSION = "v235";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -11,7 +11,7 @@ try { localStorage.setItem("lp_tlog_" + character.name, JSON.stringify([{ t: Dat
 var RANGER_ATTACK_LEVEL = 1; // greift von Anfang an mit an (Fernkampf)
 var FOLLOW_DIST = 120, FOLLOW_MAX = 220;
 var HEAL_SELF_BELOW = 0.6, FLEE_BELOW = 0.35;
-var mage = null, p_paused = false, last_log = {}, last_status = 0, last_move = 0, last_pots_ask = 0, moving = false;
+var path_fail = 0, mage = null, p_paused = false, last_log = {}, last_status = 0, last_move = 0, last_pots_ask = 0, moving = false;
 var GEAR_SLOTS = ["helmet", "chest", "pants", "shoes", "gloves", "mainhand"], POT_MIN = 100, POT_BUY = 800, GOLD_WANT = 250000, GOLD_MIN = 20000;
 var shopping = false, last_shop = 0, last_gold_ask = 0;
 function have_item(n) { for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && it.name == n) return i; } return -1; }
@@ -167,7 +167,8 @@ async function follow() { // hinter dem Magier bleiben, Karte wechseln, wenn nö
     }
     if (mage && Date.now() - mage.t < 30000 && !moving && Date.now() - last_move > 8000) { // Magier nicht in Sicht: zu seiner gemeldeten Position
         last_move = Date.now(); moving = true; status("unterwegs zum Magier");
-        try { await smart_move({ map: mage.map, x: mage.x, y: mage.y }); } catch (e) {}
+        var ok = false; try { await smart_move({ map: mage.map, x: mage.x, y: mage.y }); ok = true; } catch (e) {}
+        if (!ok) { path_fail++; if (path_fail >= 2) { say_once("nopath", "Kein Weg zur Magier-Position (" + mage.map + " " + mage.x + "," + mage.y + ") – gehe zum Kartenanfang und warte", 120000); try { await smart_move(mage.map); } catch (e) {} last_move = Date.now() + 20000; } } else path_fail = 0;
         moving = false;
     }
 }
