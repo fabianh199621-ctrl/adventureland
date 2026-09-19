@@ -1,16 +1,16 @@
-// ===== Adventure Land – LogicPlan Ranger (F4llenRanger) =====
-// Folgt dem Magier, greift dessen Ziel an (Supershot, Hunter's Mark, 3-/5-Shot), versorgt sich selbst mit NPC-Ausrüstung und Tränken.
-// Meldungen gehen per Charakter-Nachricht an den Magier ("[Ranger] …").
-var RANGER_VERSION = "v242";
+// ===== Adventure Land – LogicPlan Priester (F4llenPriest) – Stufe 1 =====
+// Folgt dem Magier, heilt ihn und sich, nimmt die Party-Einladung an, greift erst ab PRIEST_ATTACK_LEVEL mit an.
+// Meldungen gehen per Charakter-Nachricht an den Magier ("[Priest] …").
+var PRIEST_VERSION = "v244";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
 
 var MAGE = "F4llen";
 try { localStorage.setItem("lp_tlog_" + character.name, JSON.stringify([{ t: Date.now(), m: "Skript geladen (" + character.ctype + ", Lv " + character.level + ", Server " + (typeof server != "undefined" && server ? (server.region + " " + server.id) : "?") + ")" }])); } catch (e) {}
-var RANGER_ATTACK_LEVEL = 1; // greift von Anfang an mit an (Fernkampf)
+var PRIEST_ATTACK_LEVEL = 20;      // vorher nur folgen und heilen
 var FOLLOW_DIST = 120, FOLLOW_MAX = 220;
-var HEAL_SELF_BELOW = 0.6, FLEE_BELOW = 0.35;
+var HEAL_MAGE_BELOW = 0.9, HEAL_SELF_BELOW = 0.6, FLEE_BELOW = 0.35, help_until = 0;
 var path_fail = 0, mage = null, p_paused = false, last_log = {}, last_status = 0, last_move = 0, last_pots_ask = 0, moving = false;
 var GEAR_SLOTS = ["helmet", "chest", "pants", "shoes", "gloves", "mainhand"], POT_MIN = 100, POT_BUY = 800, GOLD_WANT = 250000, GOLD_MIN = 20000;
 var shopping = false, last_shop = 0, last_gold_ask = 0;
@@ -18,7 +18,7 @@ function have_item(n) { for (var i = 0; i < character.items.length; i++) { var i
 function pot_count(kind) { var n = 0; for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && it.name.indexOf(kind) == 0) n += it.q || 1; } return n; }
 function npc_pos(id) { for (var map in G.maps) { var md = G.maps[map]; if (!md || !md.npcs) continue; for (var i = 0; i < md.npcs.length; i++) { var n = md.npcs[i]; if (n.id == id && n.position) return { map: map, x: n.position[0], y: n.position[1] }; } } return null; }
 function npc_selling(item) { for (var id in G.npcs) { var n = G.npcs[id]; if (n && n.items && n.items.indexOf(item) >= 0) return id; } return null; }
-function fits(def, slot) { if (!def || def.ignore) return false; if (def.class && def.class.indexOf("ranger") < 0) return false; if (slot == "mainhand") return def.type == "weapon" && (def.wtype == "bow" || def.wtype == "crossbow"); return def.type == slot; }
+function fits(def, slot) { if (!def || def.ignore) return false; if (def.class && def.class.indexOf("priest") < 0) return false; if (slot == "mainhand") return def.type == "weapon" && def.wtype != "bow" && def.wtype != "crossbow"; return def.type == slot; }
 function cheapest_for(slot) { // günstigstes NPC-Teil, das in den Slot passt
     var best = null;
     for (var n in G.items) { var d = G.items[n]; if (!fits(d, slot) || !d.g || d.g > 60000) continue; var npc = npc_selling(n); if (!npc) continue; if (!best || d.g < best.g) best = { name: n, g: d.g, npc: npc }; }
@@ -67,7 +67,7 @@ async function go_shopping() { // in die Stadt: fehlende Ausrüstung und Tränke
     } catch (e) { say("Einkauf-Fehler: " + (e && e.message ? e.message : e)); }
     shopping = false;
 }
-function say(msg) { try { send_cm(MAGE, { t: "log", msg: msg }); } catch (e) {} try { game_log("[Ranger] " + msg); } catch (e) {} try { var k = "lp_tlog_" + character.name, arr = JSON.parse(localStorage.getItem(k) || "[]"); arr.push({ t: Date.now(), m: msg }); if (arr.length > 40) arr = arr.slice(-40); localStorage.setItem(k, JSON.stringify(arr)); } catch (e) {} }
+function say(msg) { try { send_cm(MAGE, { t: "log", msg: msg }); } catch (e) {} try { game_log("[Priest] " + msg); } catch (e) {} try { var k = "lp_tlog_" + character.name, arr = JSON.parse(localStorage.getItem(k) || "[]"); arr.push({ t: Date.now(), m: msg }); if (arr.length > 40) arr = arr.slice(-40); localStorage.setItem(k, JSON.stringify(arr)); } catch (e) {} }
 function say_once(key, msg, every) { if (last_log[key] && Date.now() - last_log[key] < (every || 600000)) return; last_log[key] = Date.now(); say(msg); }
 function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 var last_state = null;
@@ -147,8 +147,9 @@ function on_cm(name, data) {
     if (name != MAGE || !data) return;
     if (data.t == "me") { mage = data; mage.t = Date.now(); if (typeof data.paused == "boolean") p_paused = data.paused; }
     else if (data.t == "state") p_paused = !!data.paused;
-    else if (data.t == "gear") { gear_incoming.push(data); if (gear_incoming.length == 1) setTimeout(equip_incoming, 800); }
     else if (data.t == "join") { try { var jr = join(data.event); if (jr && typeof jr.then == "function") jr.then(function () { say("Event " + data.event + ": angekommen"); }, function (e) { say("Event-Sprung fehlgeschlagen: " + (e && e.reason || JSON.stringify(e).slice(0, 80))); }); } catch (e) { say("Event-Sprung: " + (e && e.message || e)); } }
+    else if (data.t == "help") { help_until = Date.now() + 20000; try { stop("smart"); } catch (e) {} moving = false; }
+    else if (data.t == "gear") { gear_incoming.push(data); if (gear_incoming.length == 1) setTimeout(equip_incoming, 800); }
 }
 function on_party_invite(name) { if (name == MAGE) { try { accept_party_invite(name); say_once("party", "Party mit " + MAGE + " angenommen", 3600000); } catch (e) {} } }
 function on_party_request(name) { if (name == MAGE) { try { accept_party_request(name); } catch (e) {} } }
@@ -172,14 +173,13 @@ async function follow() { // hinter dem Magier bleiben, Karte wechseln, wenn nö
         moving = false;
     }
 }
-var last_mark = 0;
-function skill_ready(name) { var sk = G.skills[name]; if (!sk) return false; if (sk.level && character.level < sk.level) return false; if (sk.mp && character.mp < sk.mp + 50) return false; try { return can_use(name); } catch (e) { return false; } }
-function targets_near(n) { var out = []; for (var id in parent.entities) { var m = parent.entities[id]; if (m && m.type == "monster" && !m.dead && is_in_range(m) && (m.target == character.name || m.target == MAGE || (mage && mage.tgt == m.id))) out.push(m); } return out.slice(0, n); }
+function heal_target(t) { try { if (typeof heal == "function") heal(t); else use_skill("heal", t); return true; } catch (e) { return false; } }
 async function tick() {
     if (character.rip) { status("tot"); await sleep(15000); try { respawn(); } catch (e) {} await sleep(5000); return; }
     // Pause des Magiers: trotzdem folgen, heilen, verteidigen und sein Ziel mitangreifen (volle Unterstützung beim manuellen Spielen)
+    // Selbstschutz
     var hpr = character.hp / character.max_hp, mpr = character.mp / character.max_mp;
-    if (hpr < HEAL_SELF_BELOW) { if (!use_pot("hpot")) { try { use_skill("regen_hp"); } catch (e) {} } }
+    if (hpr < HEAL_SELF_BELOW) { if (can_use("heal") && character.mp > 30) heal_target(character); else if (!use_pot("hpot")) { try { use_skill("regen_hp"); } catch (e) {} } }
     if (mpr < 0.3) { if (!use_pot("mpot")) { try { use_skill("regen_mp"); } catch (e) {} } }
     if (shopping) return;
     if (!my_attacker() && Date.now() - last_autoequip > 30000) { await auto_equip(); }
@@ -187,22 +187,20 @@ async function tick() {
     var mage_fighting = mage && mage.tgt && Date.now() - mage.t < 15000 && !mage.paused;
     if (((shop_needed() && Date.now() - last_shop > 5 * 60000 && (!mage_fighting || pot_count("hpot") == 0)) || hunt_town_needed()) && character.gold >= GOLD_MIN && !my_attacker() && !moving) { go_shopping(); return; } // Einkauf nicht mitten im Kampf des Magiers (außer ohne Tränke); fertige Jagd wird sofort abgegeben
     if (has_pot("hpot") < 0 && character.gold < GOLD_MIN && mage && Date.now() - last_pots_ask > 5 * 60000) { var me = mage_entity(); if (me && character.map == me.map && dist(character, me) < 350) { last_pots_ask = Date.now(); try { send_cm(MAGE, { t: "pots?" }); } catch (e) {} } }
-    var att = my_attacker(), t = mage_entity();
+    var att = my_attacker();
     if (att && ((att.attack || (G.monsters[att.mtype] || {}).attack || 0) >= character.max_hp * 0.5)) { var dxo = character.x - att.x, dyo = character.y - att.y, lo = Math.hypot(dxo, dyo) || 1; try { move(character.x + dxo / lo * 200, character.y + dyo / lo * 200); } catch (e) {} status("weicht Boss aus"); return; } // Ein-Treffer-Gegner (Giga Crab): sofort weg
-    if (att && hpr < FLEE_BELOW) { if (t) { try { move(t.x, t.y); } catch (e) {} } status("flieht"); return; }
-    // Kampf: eigener Angreifer zuerst, sonst das Ziel des Magiers
-    var mtg = mage && mage.tgt ? parent.entities[mage.tgt] : null; if (mtg && mtg.dead) mtg = null; var tgt = null; if (mage && mage.strict) { tgt = mtg || att; } else { tgt = att || spot_target_near() || mtg; } // Team-Häkchen: nur Ziel des Magiers (Fokus); sonst eigenes freies Exemplar des Spots (schneller bei Massen-Jagden), Ziel des Magiers als Rückfall
-    if (tgt && !character.slots.mainhand) { status("ohne Bogen"); await follow(); return; }
-    if (tgt && is_in_range(tgt)) {
-        var multi = targets_near(5);
-        if (multi.length >= 5 && skill_ready("5shot")) { try { use_skill("5shot", multi); } catch (e) {} }
-        else if (multi.length >= 3 && skill_ready("3shot")) { try { use_skill("3shot", multi.slice(0, 3)); } catch (e) {} }
-        else if (skill_ready("supershot")) { try { use_skill("supershot", tgt); } catch (e) {} }
-        if (tgt.hp > character.attack * 8 && Date.now() - last_mark > 8000 && skill_ready("huntersmark")) { last_mark = Date.now(); try { use_skill("huntersmark", tgt); } catch (e) {} }
-        if (can_attack(tgt)) { try { attack(tgt); } catch (e) {} }
-        status("kämpft"); return;
+    if (att && hpr < FLEE_BELOW) { var me2 = mage_entity(); if (me2) { try { move(me2.x, me2.y); } catch (e) {} } status("flieht"); return; }
+    // Magier heilen (bei Hilferuf: hinlaufen und Dauerheilung, Angriff hat Pause)
+    var t = mage_entity();
+    if (Date.now() < help_until && t && !t.rip) { var dh = dist(character, t), hr = (G.skills.heal && G.skills.heal.range) || 200; if (dh > hr - 20 && !is_moving(character)) { try { move(t.x + (character.x - t.x) * 0.5, t.y + (character.y - t.y) * 0.5); } catch (e) {} } if (dh <= hr && can_use("heal") && character.mp > 30) heal_target(t); status("hilft"); return; }
+    if (t && !t.rip && t.hp / t.max_hp < HEAL_MAGE_BELOW && dist(character, t) <= (G.skills.heal && G.skills.heal.range || 200) && can_use("heal") && character.mp > 30) { heal_target(t); status("heilt"); return; }
+    // Party-Heilung, wenn beide angeschlagen
+    if (t && hpr < 0.7 && t.hp / t.max_hp < 0.7 && can_use("partyheal") && character.mp > 400) { try { use_skill("partyheal"); } catch (e) {} }
+    // Mitkämpfen ab bestimmtem Level: das Ziel des Magiers oder meinen Angreifer
+    if (character.level >= PRIEST_ATTACK_LEVEL || att) {
+        var mtg = mage && mage.tgt ? parent.entities[mage.tgt] : null; if (mtg && mtg.dead) mtg = null; var tgt = null; if (mage && mage.strict) { tgt = mtg || att; } else { tgt = att || spot_target_near() || mtg; } // Team-Häkchen: nur Ziel des Magiers (Fokus); sonst eigenes freies Exemplar des Spots (schneller bei Massen-Jagden), Ziel des Magiers als Rückfall
+        if (tgt && is_in_range(tgt) && can_attack(tgt)) { try { attack(tgt); } catch (e) {} status("kämpft"); return; }
     }
-    if (tgt && !is_in_range(tgt) && dist(character, tgt) < 400 && !is_moving(character)) { try { move(character.x + (tgt.x - character.x) * 0.4, character.y + (tgt.y - character.y) * 0.4); } catch (e) {} status("kämpft"); return; }
     status(t ? "bei dir" : "sucht dich");
     await follow();
 }
@@ -220,6 +218,6 @@ var __dead_since = 0, __dead_logged = false;
         } else if (__dead_since) { __dead_since = 0; __dead_logged = false; say("wieder da (Lv " + character.level + ")"); }
     } catch (e) {}
 }, 3000); })(MY_GEN);
-try { send_cm(MAGE, { t: "hello", v: RANGER_VERSION }); } catch (e) {}
-say("Ranger " + RANGER_VERSION + " gestartet (Lv " + character.level + ")");
+try { send_cm(MAGE, { t: "hello", v: PRIEST_VERSION }); } catch (e) {}
+say("Priester " + PRIEST_VERSION + " gestartet (Lv " + character.level + ")");
 (async function () { var g = MY_GEN; if (HAD_OLD) { say("neue Version " + (typeof PRIEST_VERSION != "undefined" ? PRIEST_VERSION : RANGER_VERSION) + " übernommen"); await sleep(1500); } while (window.__lp_gen == g) { try { await tick(); } catch (e) { say_once("err", "Fehler: " + (e && e.message ? e.message : e), 60000); } await sleep(300); } })();
