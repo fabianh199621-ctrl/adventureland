@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v241";
+var BOT_VERSION = "v242";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -715,7 +715,6 @@ function team_html() {
         parts.push("<span style='color:" + col + "' title='" + esc(tip) + "'>" + lab + sym + (fresh ? " Lv " + st.level : "") + (warn ? " <small>" + esc(warn) + "</small>" : "") + "</span> <button data-act='team' data-k='" + k + "'" + (team_on[k] ? " class='on'" : "") + " style='padding:0 5px'>" + (team_on[k] ? "an" : "aus") + "</button>");
     }
     var btns = "";
-    if (team_on.merch) { var mst = team_state[TEAM.merch]; btns += "<button data-act='goldback' title='Händler bringt sein Gold (bis auf 150k) zum Magier'>Gold holen" + (mst && mst.gold ? " (" + fmt(mst.gold) + ")" : "") + "</button> "; }
     btns += "<button data-act='teamlogs' title='gespeicherte Logs von Merch/Priest/Ranger (letzte 40 Zeilen je Char) ins Log holen'>Team-Logs</button>";
     var give = "";
     if (team_on.priest || team_on.ranger) { // manuelle Übergabe: Inventarteil auswählen, an Priest/Ranger geben (der legt es an, wenn es besser ist)
@@ -1370,6 +1369,7 @@ function init_panel() {
         else if (act == "goldback") { team_send(TEAM.merch, { t: "goldback" }); game_log("Händler: Gold anfordern – er kommt zu dir"); }
         else if (act == "eventon") { event_on = !event_on; try { localStorage.setItem("lp_event_on", event_on ? "1" : "0"); } catch (x) {} game_log("Event-Teilnahme: " + (event_on ? "an" : "aus")); last_event_check = 0; }
         else if (act == "arbtrip") start_arb_trip(b.getAttribute("data-sv"));
+        else if (act == "marketscan") market_scan_now();
         else if (act == "arbauto") { arb_auto = !arb_auto; try { localStorage.setItem("lp_arb_auto", arb_auto ? "1" : "0"); } catch (x) {} game_log("Handelsreisen automatisch: " + (arb_auto ? "an (ab " + fmt(ARB_TRIP_MIN) + " Gewinn)" : "aus")); last_panel = 0; }
         else if (act == "team") { var tk = b.getAttribute("data-k"); team_on[tk] = !team_on[tk]; save_team(); last_team_tick = 0; game_log("Team: " + TEAM[tk] + " " + (team_on[tk] ? "an" : "aus")); }
         else if (act == "arbtoggle") { div.__arb = !div.__arb; try { localStorage.setItem("lp_panel_arb", div.__arb ? "1" : "0"); } catch (x) {} }
@@ -1671,11 +1671,12 @@ function hunts_grid_html() { // Jagden als kleine Tabelle: Wer · Monster n · S
     var th = team_hunt_pick(), q = mh_quest(), rows = [];
     function status(id, c, ms, mine) {
         if (!id || !(c > 0)) return "<span class='lp_k'>keine Jagd</span>";
+        var left = ms > 0 ? " <span class='lp_k'>· noch " + fmt_time(ms).replace(/\s.*$/, "") + "</span>" : "";
         var ok = mine ? hunt_target_ok(id) : (th && th.id == id), run = current_spot == id && !paused;
-        if (ok) return run ? "<span style='color:#4caf50'>läuft</span>" : "<span style='color:#8ab4f8'>machbar" + (mine ? "" : " – als Nächstes") + "</span>";
-        if (!mine && hunt_allowed(id) && !spot_blocked(id) && !hunt_bad_for(id)) return "<span style='color:#8ab4f8'>wartet" + (th ? " (nach " + esc(th.who) + ")" : "") + "</span>";
-        var why = hunt_skip_reason(id); if (/nicht erlaubt/.test(why)) why = "kein Häkchen"; else if (/kein Häkchen/.test(why)) why = "kein Häkchen";
-        return "<span style='color:#ffb74d'>" + esc(why) + "</span>" + (ms > 0 ? " <span class='lp_k'>· läuft aus " + fmt_time(ms) + "</span>" : "");
+        if (ok) return (run ? "<span style='color:#4caf50'>läuft</span>" : "<span style='color:#8ab4f8'>machbar" + (mine ? "" : " – als Nächstes") + "</span>") + left;
+        if (!mine && hunt_allowed(id) && !spot_blocked(id) && !hunt_bad_for(id)) return "<span style='color:#8ab4f8'>wartet" + (th ? " (nach " + esc(th.who) + ")" : "") + "</span>" + left;
+        var why = hunt_skip_reason(id); if (/nicht erlaubt|kein Häkchen/.test(why)) why = "Jagd nicht freigegeben";
+        return "<span style='color:#ffb74d'>" + esc(why) + "</span>" + left;
     }
     rows.push(["Mage", q && q.c > 0 ? esc(q.id) + " " + q.c : "–", status(q && q.id, q && q.c, q && q.ms, true)]);
     ["priest", "ranger"].forEach(function (k) { if (!team_on[k]) return; var st = team_state[TEAM[k]]; if (!st || Date.now() - st.t > 120000) { rows.push([TEAM_LABEL[k], "?", "<span class='lp_k'>keine Meldung</span>"]); return; } var h = st.hunt; rows.push([TEAM_LABEL[k], h && h.c > 0 ? esc(h.id) + " " + h.c : "–", status(h && h.id, h && h.c, h && h.ms != null ? Math.max(0, h.ms - (Date.now() - st.t)) : null, false)]); });
@@ -1724,7 +1725,7 @@ function update_panel() {
       + "<div class='lp_k'>Session " + fmt(sess.xp / sh) + " XP/h · " + fmt(sess.gold / sh) + " G/h · nächstes Level in " + (rate > 0 ? fmt_time((G.levels[character.level] - character.xp) / rate * 3600000) : "-") + "</div></div>";
     h += "<div class='lp_row'><span class='lp_mode'>Modus: " + (manual_spot ? "fest (" + esc(manual_spot) + ")" : auto_on ? "automatisch" : "<span style='color:#ffb74d'>nur Jagden" + (current_spot ? "" : " – wartet bei Daisy") + "</span>") + "</span><button data-act='auto'" + (manual_spot || !auto_on ? "" : " class='on'") + " title='an: Automatik wählt den Spot (Lückenfüller) · aus: nur Jagden, sonst warten bei Daisy'>Auto</button><button data-act='bycatch'" + (bycatch ? " class='on'" : "") + " title='andere sichere Monster in der Nähe mit angreifen'>Beifang</button><button data-act='focus'" + (focus_mode ? " class='on'" : "") + " title='nur farmen/hunten: kein Kuss, Ponty, Markt, Kuchen, keine Ausrüstungsautomatik'>Fokus</button></div>";
     var cav_left = Math.max(0, Math.max(cav_next, cav_last + cav_cooldown()) - Date.now());
-    h += "<div class='lp_row'><span class='lp_k'>Aktionen</span><button data-act='copylog' title='Bot-Log in die Zwischenablage'>Log kopieren</button><button data-act='pauseafter'" + (pause_after ? " class='on'" : "") + " title='Nach Buttons/Tasten pausieren statt weiterfarmen'>Danach: " + (pause_after ? "Pause" : "Farmen") + "</button><button data-act='unblock' title='Alle Spot-/Jagd-Sperren (Tod, Rückzüge) aufheben'>Sperren aufheben</button><button data-act='cavalry' title='Tracktrix: Lv-100-Trupp rufen, räumt bis zu 24 Monster im Umkreis (90 s)'" + (cav_ready() ? " style='color:#C6AA62'" : "") + ">Cavalry" + (cav_ready() ? "" : " " + fmt_time(cav_left).replace(/\s.*$/, "")) + "</button><button data-act='cavauto'" + (cav_on ? " class='on'" : "") + " title='Cavalry automatisch rufen, wenn am Spot nur gelevelte Exemplare stehen'>Cav-Auto</button></div>";
+    h += "<div class='lp_row'><span class='lp_k'>Aktionen</span><button data-act='copylog' title='Bot-Log in die Zwischenablage'>Log kopieren</button><button data-act='pauseafter'" + (pause_after ? " class='on'" : "") + " title='Nach Buttons/Tasten pausieren statt weiterfarmen'>Danach: " + (pause_after ? "Pause" : "Farmen") + "</button><button data-act='unblock' title='Alle Spot-/Jagd-Sperren (Tod, Rückzüge) aufheben'>Sperren aufheben</button><button data-act='cavalry' title='Tracktrix: Lv-100-Trupp rufen, räumt bis zu 24 Monster im Umkreis (90 s)'" + (cav_ready() ? " style='color:#C6AA62'" : "") + ">Cavalry" + (cav_ready() ? "" : " (" + Math.ceil(cav_left / 60000) + " min)") + "</button><button data-act='cavauto'" + (cav_on ? " class='on'" : "") + " title='Cavalry automatisch rufen, wenn am Spot nur gelevelte Exemplare stehen'>Cav-Auto</button></div>";
     h += event_html();
     h += "<div class='lp_sec'><div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Hunt: <span style='color:#e6e6e6'>" + esc(mh_txt()) + "</span> · " + tokens() + " Tokens</span><button data-act='hunt'" + (hunt_on ? " class='on'" : "") + " title='Monster Hunt automatisch (Rundlauf Magier → Priest → Ranger)'>Hunt</button>" + (mh_quest() ? "<button data-act='huntabandon'>Abbrechen</button>" : "") + "</div>"
       + hunts_grid_html() + "</div>";
@@ -1733,7 +1734,8 @@ function update_panel() {
     var mst0 = team_state[TEAM.merch], stand_txt = mst0 && Date.now() - mst0.t < 60000 ? esc(mst0.state || "") : "keine Meldung";
     var tips = server_tip(); var sc = market_scroll_summary();
     h += lp_sec("haendler", "Händler", stand_txt + (sc ? " · " + sc : "") + " · " + (tips.length ? tips.length + " Serverfund" + (tips.length > 1 ? "e" : "") : "kein Serverfund") + (arb_auto ? " · Handelsreise Auto" : ""),
-        "<div class='lp_row' style='flex-wrap:wrap;line-height:1.6'><span class='lp_k'>Serverwechsel:</span> <span style='font-size:11px'>" + server_tip_html() + "</span></div>" + arb_html(panel) + arb_trip_html() + watch_html());
+        "<div class='lp_row'><span class='lp_k'>Aktionen</span>" + (team_on.merch ? "<button data-act='goldback' title='Händler bringt sein Gold (bis auf 150k) zum Magier'>Gold holen" + (mst0 && mst0.gold ? " (" + fmt(mst0.gold) + ")" : "") + "</button>" : "") + "<button data-act='marketscan' title='Alle Händlerstände jetzt abfragen: Zielbau-Angebote und Schnäppchen unter NPC-Wert'" + (scanning_now ? " class='on'" : "") + ">" + (scanning_now ? "Scan läuft…" : "Schnäppchen scannen") + "</button></div>"
+        + "<div class='lp_row' style='flex-wrap:wrap;line-height:1.6'><span class='lp_k'>Serverwechsel:</span> <span style='font-size:11px'>" + server_tip_html() + "</span></div>" + arb_html(panel) + arb_trip_html() + watch_html());
     // Zielbau (eingeklappt)
     var tw_sum = ["priest", "ranger"].filter(function (k) { return team_on[k]; }).map(function (k) { var cfgs = team_wish[k] || {}, n = 0, done = 0; TEAM_WISH_SLOTS.forEach(function (sl) { var c = cfgs[sl]; if (c && c.item) { n++; var s2 = tw_status(k, sl); if (s2 && s2.state == "fertig") done++; } }); return TEAM_LABEL[k] + " " + (n ? done + "/" + n : "–"); }).join(" · ");
     h += lp_sec("zielbau", "Zielbau", "Ich " + esc(wish_text()) + (tw_sum ? " · " + tw_sum : "") + (AUTO_GEAR ? " · Reserve " + fmt(WISH_RESERVE) : ""),
@@ -3725,6 +3727,18 @@ function collect_merchants(obj, out, depth) { // Antwortstruktur defensiv durchs
     if (typeof obj != "object") return;
     if (obj.slots && obj.name && typeof obj.slots == "object") { out.push(obj); return; }
     for (var k in obj) collect_merchants(obj[k], out, depth + 1);
+}
+var scanning_now = false;
+async function market_scan_now() { // Knopf im Händler-Bereich: sofortiger Scan, Ergebnis ins Log
+    if (scanning_now) return; scanning_now = true; last_panel = 0; game_log("Schnäppchen-Scan gestartet …");
+    try {
+        await scan_all_merchants(true);
+        var al = arb_list();
+        if (!al.length) game_log("Schnäppchen: nichts unter NPC-Wert gefunden");
+        else game_log("Schnäppchen: " + al.length + " Angebote unter NPC-Wert – " + al.slice(0, 5).map(function (o) { return o.name + (o.level ? "+" + o.level : "") + " " + fmt(o.price) + " → " + fmt(Math.round(npc_sell_price(o.name, o.level))) + " (" + pretty_server(o.server) + ", +" + fmt(o.profit) + ")"; }).join(", "));
+        if (global_finds.length) game_log("Zielbau: " + global_finds.length + " passende Angebote" + (global_finds.filter(function (f) { return f.same; }).length ? ", davon " + global_finds.filter(function (f) { return f.same; }).length + " hier" : ""));
+    } catch (e) { game_log("Schnäppchen-Scan: " + err_txt(e)); }
+    scanning_now = false; last_panel = 0;
 }
 async function scan_all_merchants(force, only_slot) {
     if (!force && Date.now() - last_global_scan < GLOBAL_SCAN_INTERVAL) return null;
