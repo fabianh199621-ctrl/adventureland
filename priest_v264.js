@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Priester (F4llenPriest) – Stufe 1 =====
 // Folgt dem Magier, heilt ihn und sich, nimmt die Party-Einladung an, greift erst ab PRIEST_ATTACK_LEVEL mit an.
 // Meldungen gehen per Charakter-Nachricht an den Magier ("[Priest] …").
-var PRIEST_VERSION = "v263";
+var PRIEST_VERSION = "v264";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -39,7 +39,7 @@ function junk_items() { // Ausrüstung, die die Automatik nie anlegen würde: ni
 function cheap_junk() { return junk_items().filter(function (i) { var it = character.items[i], d = G.items[it.name] || {}; return (d.g || 0) < 10000 && (it.level || 0) <= 2; }); } // nur Billiges verkaufen – Seltenes/Hochgestuftes bleibt (Bank)
 var ALL_SLOTS_TYPES = { helmet: 1, chest: 1, pants: 1, shoes: 1, gloves: 1, cape: 1, weapon: 1, ring: 1, earring: 1, amulet: 1, belt: 1, orb: 1, quiver: 1, shield: 1, source: 1, misc_offhand: 1 };
 function shop_needed() { return pot_count("hpot") < POT_MIN || pot_count("mpot") < POT_MIN || missing_gear().length > 0 || (character.esize < 3 && junk_items().length > 0); }
-var tidy_req = 0, goldback_req = 0, last_goldback = 0, GOLD_MAX = 100000;
+var tidy_req = 0, goldback_req = 0, last_goldback = 0, GOLD_MAX = 2000000;
 function gold_handback() { // alles über GOLD_MAX an den Magier, wenn er in Reichweite steht (auf Befehl sofort, sonst alle 5 min prüfen)
     var over = character.gold - GOLD_MAX; if (over < (goldback_req ? 1000 : 50000)) { if (goldback_req) { goldback_req = 0; say("Gold: nichts über " + GOLD_MAX + " (habe " + character.gold + ")"); } return; }
     if (!goldback_req && Date.now() - last_goldback < 5 * 60000) return;
