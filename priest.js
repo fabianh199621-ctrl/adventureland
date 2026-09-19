@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Priester (F4llenPriest) – Stufe 1 =====
 // Folgt dem Magier, heilt ihn und sich, nimmt die Party-Einladung an, greift erst ab PRIEST_ATTACK_LEVEL mit an.
 // Meldungen gehen per Charakter-Nachricht an den Magier ("[Priest] …").
-var PRIEST_VERSION = "v228";
+var PRIEST_VERSION = "v229";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -184,7 +184,7 @@ async function tick() {
     if (!my_attacker() && Date.now() - last_autoequip > 30000) { await auto_equip(); }
     if (character.gold < GOLD_MIN + 2 * POT_BUY * 100 && mage && Date.now() - last_gold_ask > 3 * 60000) { var mg = mage_entity(); if (mg && character.map == mg.map && dist(character, mg) < 350) { last_gold_ask = Date.now(); try { send_cm(MAGE, { t: "gold?", amount: GOLD_WANT }); } catch (e) {} } }
     var mage_fighting = mage && mage.tgt && Date.now() - mage.t < 15000 && !mage.paused;
-    if (((shop_needed() && Date.now() - last_shop > 5 * 60000) || hunt_town_needed()) && character.gold >= GOLD_MIN && !my_attacker() && !moving && (!mage_fighting || pot_count("hpot") == 0)) { go_shopping(); return; } // nicht mitten im Kampf des Magiers in die Stadt (außer ganz ohne Tränke)
+    if (((shop_needed() && Date.now() - last_shop > 5 * 60000 && (!mage_fighting || pot_count("hpot") == 0)) || hunt_town_needed()) && character.gold >= GOLD_MIN && !my_attacker() && !moving) { go_shopping(); return; } // Einkauf nicht mitten im Kampf des Magiers (außer ohne Tränke); fertige Jagd wird sofort abgegeben
     if (has_pot("hpot") < 0 && character.gold < GOLD_MIN && mage && Date.now() - last_pots_ask > 5 * 60000) { var me = mage_entity(); if (me && character.map == me.map && dist(character, me) < 350) { last_pots_ask = Date.now(); try { send_cm(MAGE, { t: "pots?" }); } catch (e) {} } }
     var att = my_attacker();
     if (att && ((att.attack || (G.monsters[att.mtype] || {}).attack || 0) >= character.max_hp * 0.5)) { var dxo = character.x - att.x, dyo = character.y - att.y, lo = Math.hypot(dxo, dyo) || 1; try { move(character.x + dxo / lo * 200, character.y + dyo / lo * 200); } catch (e) {} status("weicht Boss aus"); return; } // Ein-Treffer-Gegner (Giga Crab): sofort weg

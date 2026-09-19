@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Priester (F4llenPriest) – Stufe 1 =====
 // Folgt dem Magier, heilt ihn und sich, nimmt die Party-Einladung an, greift erst ab PRIEST_ATTACK_LEVEL mit an.
 // Meldungen gehen per Charakter-Nachricht an den Magier ("[Priest] …").
-var PRIEST_VERSION = "v227";
+var PRIEST_VERSION = "v229";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -132,6 +132,12 @@ async function hunt_town_step() { // in der Stadt: Jagd abgeben/holen, Tokens in
     for (var i = 0; i < miss.length; i++) { var m = miss[i]; if (!m.cost || pot_count("monstertoken") < m.cost || character.esize < 2) continue; try { exchange_buy("monstertoken", m.name); await sleep(1500); } catch (e) {} if (have_item(m.name) >= 0) { bought.push(m.name); say("Tokens: " + m.name + " für " + MAGE + " gekauft (" + m.cost + ")"); } }
     if (bought.length) { try { await smart_move("bank"); await sleep(800); for (var b = 0; b < bought.length; b++) { var bi = have_item(bought[b]); if (bi >= 0) { bank_store(bi); await sleep(400); } } say("Tokens: " + bought.join(", ") + " in die Bank gelegt"); } catch (e) { say("Bank: " + (e && e.message || e)); } }
 }
+function spot_target_near() { // freies, ungeleveltes Exemplar des aktuellen Team-Spots in der Nähe (nur ohne Team-Häkchen)
+    if (!mage || !mage.spot || Date.now() - mage.t > 15000 || p_paused) return null; var sp = mage.spot, base = G.monsters[sp] || {}; if ((base.attack || 0) * 8 > character.max_hp) return null;
+    var best = null, bd = 240;
+    for (var id in parent.entities) { var m = parent.entities[id]; if (!m || m.type != "monster" || m.dead || m.mtype != sp) continue; if (m.target && m.target != character.name) continue; if ((m.level || 1) > 1 || (base.hp && m.max_hp > base.hp * 1.3)) continue; var d = Math.hypot(character.x - m.x, character.y - m.y); if (d < bd) { bd = d; best = m; } }
+    return best;
+}
 function hunt_target_near() { // Jagdmonster in der Nähe, das noch niemand fremdes angreift
     var q = mh_q(); if (!q || !(q.c > 0)) return null; if (mage && mage.spot && mage.spot != q.id) return null; if (mage && mage.strict) return null; /* Team-Pflicht (Häkchen beim Magier): nur der Magier zieht */ var best = null, bd = 260; // eigene Jagd nur anpulen, wenn das Team gerade dort farmt
     for (var id in parent.entities) { var m = parent.entities[id]; if (!m || m.type != "monster" || m.dead || m.mtype != q.id) continue; if (m.target && m.target != character.name && m.target != MAGE) continue; var base = G.monsters[m.mtype] || {}; if (!m.target && ((m.level || 1) > 1 || (base.hp && m.max_hp > base.hp * 1.3) || (base.attack || 0) * 8 > character.max_hp)) continue; /* gelevelte/starke Exemplare zieht der Magier zuerst (Aggro), wir folgen seinem Ziel */ var d = Math.hypot(character.x - m.x, character.y - m.y); if (d < bd) { bd = d; best = m; } } // gelevelte Exemplare (Lv >3 / >1,6x HP) nicht selbst anpulen – der Magier lässt sie auch aus
@@ -178,7 +184,7 @@ async function tick() {
     if (!my_attacker() && Date.now() - last_autoequip > 30000) { await auto_equip(); }
     if (character.gold < GOLD_MIN + 2 * POT_BUY * 100 && mage && Date.now() - last_gold_ask > 3 * 60000) { var mg = mage_entity(); if (mg && character.map == mg.map && dist(character, mg) < 350) { last_gold_ask = Date.now(); try { send_cm(MAGE, { t: "gold?", amount: GOLD_WANT }); } catch (e) {} } }
     var mage_fighting = mage && mage.tgt && Date.now() - mage.t < 15000 && !mage.paused;
-    if (((shop_needed() && Date.now() - last_shop > 5 * 60000) || hunt_town_needed()) && character.gold >= GOLD_MIN && !my_attacker() && !moving && (!mage_fighting || pot_count("hpot") == 0)) { go_shopping(); return; } // nicht mitten im Kampf des Magiers in die Stadt (außer ganz ohne Tränke)
+    if (((shop_needed() && Date.now() - last_shop > 5 * 60000 && (!mage_fighting || pot_count("hpot") == 0)) || hunt_town_needed()) && character.gold >= GOLD_MIN && !my_attacker() && !moving) { go_shopping(); return; } // Einkauf nicht mitten im Kampf des Magiers (außer ohne Tränke); fertige Jagd wird sofort abgegeben
     if (has_pot("hpot") < 0 && character.gold < GOLD_MIN && mage && Date.now() - last_pots_ask > 5 * 60000) { var me = mage_entity(); if (me && character.map == me.map && dist(character, me) < 350) { last_pots_ask = Date.now(); try { send_cm(MAGE, { t: "pots?" }); } catch (e) {} } }
     var att = my_attacker();
     if (att && ((att.attack || (G.monsters[att.mtype] || {}).attack || 0) >= character.max_hp * 0.5)) { var dxo = character.x - att.x, dyo = character.y - att.y, lo = Math.hypot(dxo, dyo) || 1; try { move(character.x + dxo / lo * 200, character.y + dyo / lo * 200); } catch (e) {} status("weicht Boss aus"); return; } // Ein-Treffer-Gegner (Giga Crab): sofort weg
@@ -191,7 +197,7 @@ async function tick() {
     if (t && hpr < 0.7 && t.hp / t.max_hp < 0.7 && can_use("partyheal") && character.mp > 400) { try { use_skill("partyheal"); } catch (e) {} }
     // Mitkämpfen ab bestimmtem Level: das Ziel des Magiers oder meinen Angreifer
     if (character.level >= PRIEST_ATTACK_LEVEL || att) {
-        var mtg = mage && mage.tgt ? parent.entities[mage.tgt] : null; var tgt = (mtg && !mtg.dead) ? mtg : null; if (!tgt) tgt = att; // Fokus: nur das Ziel des Magiers oder der eigene Angreifer – nie selbst ein Ziel ziehen (eigene Jagd erledigt der Magier mit)
+        var mtg = mage && mage.tgt ? parent.entities[mage.tgt] : null; if (mtg && mtg.dead) mtg = null; var tgt = null; if (mage && mage.strict) { tgt = mtg || att; } else { tgt = att || spot_target_near() || mtg; } // Team-Häkchen: nur Ziel des Magiers (Fokus); sonst eigenes freies Exemplar des Spots (schneller bei Massen-Jagden), Ziel des Magiers als Rückfall
         if (tgt && is_in_range(tgt) && can_attack(tgt)) { try { attack(tgt); } catch (e) {} status("kämpft"); return; }
     }
     status(t ? "bei dir" : "sucht dich");
