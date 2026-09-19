@@ -9,7 +9,9 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v195";
+var BOT_VERSION = "v196";
+var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
+var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : character.ctype == "ranger" || /ranger/i.test(character.name) ? "ranger" : "priest";
@@ -292,10 +294,11 @@ function is_valid_target(m) {
 
 
 // ---------- Team: Händler und Priester (laufen unsichtbar im selben Fenster, gestartet vom Magier) ----------
-var TEAM = { merch: "F4llenMerch", priest: "F4llenPriest", ranger: "F4llenRanger" };
-var TEAM_NAMES = [TEAM.merch, TEAM.priest, TEAM.ranger];
-var TEAM_LABEL = { merch: "Merch", priest: "Priest", ranger: "Ranger" }, TEAM_ROLE = { merch: "merchant", priest: "priest", ranger: "ranger" }, TEAM_CTYPE = { merch: "merchant", priest: "priest", ranger: "ranger" };
-var team_on = { merch: true, priest: true, ranger: true }; try { var to = JSON.parse(localStorage.getItem("lp_team") || "null"); if (to) { for (var tk0 in to) team_on[tk0] = to[tk0]; } } catch (e) {}
+var TEAM = { merch: "F4llenMerch", priest: "F4llenPriest", ranger: "F4llenRanger", hunter: "F4llenHunt" };
+var TEAM_NAMES = [TEAM.merch, TEAM.priest, TEAM.ranger, TEAM.hunter];
+var TEAM_LABEL = { merch: "Merch", priest: "Priest", ranger: "Ranger", hunter: "Jäger" }, TEAM_ROLE = { merch: "merchant", priest: "priest", ranger: "ranger", hunter: "bot" }, TEAM_CTYPE = { merch: "merchant", priest: "priest", ranger: "ranger", hunter: "mage" };
+var team_on = { merch: true, priest: true, ranger: true, hunter: false }; try { var to = JSON.parse(localStorage.getItem("lp_team") || "null"); if (to) { for (var tk0 in to) team_on[tk0] = to[tk0]; } } catch (e) {}
+if (SOLO) { team_on = { merch: false, priest: false, ranger: false, hunter: false }; }
 function save_team() { try { localStorage.setItem("lp_team", JSON.stringify(team_on)); } catch (e) {} }
 var team_state = {}; // letzte Statusmeldung je Charakter { level, state, t, ... }
 var last_team_tick = 0, last_team_cast = 0, last_party_try = 0, team_start_at = {};
@@ -303,6 +306,7 @@ function team_slot() { try { if (typeof LP_CODE_SLOT != "undefined" && LP_CODE_S
 function active_chars() { try { return (typeof get_active_characters == "function" ? get_active_characters() : parent.get_active_characters()) || {}; } catch (e) { return {}; } }
 function team_running(name) { var a = active_chars(); return !!a[name]; }
 function team_tick() { // fehlende Teammitglieder starten, abgeschaltete stoppen; Party pflegen
+    if (SOLO) return;
     if (Date.now() - last_team_tick < 20000) return; last_team_tick = Date.now();
     try { if (parent.__lp_team_restart_after && Date.now() < parent.__lp_team_restart_after) return; } catch (e) {}
     try { if (server_trip) return; } catch (e) {} // während eines Serverwechsels bleibt das Team zuhause
@@ -323,12 +327,13 @@ function team_windows() { // Fenster der mitgestarteten Charaktere finden (gleic
     return out;
 }
 function team_inject() { // läuft im Fenster des Teammitglieds nicht unser Skript (falscher Code-Slot), spielen wir es direkt ein
+    if (SOLO) return;
     var wins = team_windows();
     for (var k in TEAM) {
         var nm = TEAM[k], w = wins[nm]; if (!w || !team_on[k]) continue;
         if (Date.now() - (team_inject_t[nm] || 0) < 45000) continue;
         var cw = w.code, have = null;
-        try { have = cw && (cw.MERCH_VERSION || cw.PRIEST_VERSION || cw.RANGER_VERSION); } catch (e) {}
+        try { have = cw && (cw.MERCH_VERSION || cw.PRIEST_VERSION || cw.RANGER_VERSION || cw.BOT_VERSION); } catch (e) {}
         if (have == BOT_VERSION) continue;
         team_inject_t[nm] = Date.now();
         if (!cw) { // das Spiel hat für den Charakter noch keinen Code-Frame angelegt: Code-Start anstoßen (läuft dessen eigenen, meist leeren Slot), danach spielen wir unser Skript ein
@@ -342,6 +347,11 @@ function team_inject() { // läuft im Fenster des Teammitglieds nicht unser Skri
         })(nm, cw, role);
     }
 }
+var solo_last_st = 0;
+function mh_missing_for_me() { // Token-Set-Teile, die ich weder trage noch im Inventar/Bank habe – mit Kosten, günstigstes zuerst
+    var bank = character.bank || bank_cache || {}, in_bank = {}; try { for (var pk in bank) if (pk.indexOf("items") == 0 && Array.isArray(bank[pk])) bank[pk].forEach(function (it) { if (it) in_bank[it.name] = true; }); } catch (e) {}
+    return MH_SET.filter(function (n) { var def = G.items[n]; var sl = slot_for_item(def); var worn = character.slots[sl]; return !(worn && worn.name == n) && locate_item(n) < 0 && !in_bank[n]; }).map(function (n) { return { name: n, cost: (G.tokens.monstertoken || {})[n] || 99 }; }).sort(function (a, b) { return a.cost - b.cost; });
+}
 var team_log_seen = {};
 function team_read_logs() { // Händler/Priester schreiben ihr Log in den gemeinsamen Speicher (localStorage), der Magier zeigt es an
     for (var k in TEAM) { var nm = TEAM[k]; try { if (!team_log_seen[nm]) { team_log_seen[nm] = Date.now() - 3000; continue; } var arr = JSON.parse(localStorage.getItem("lp_tlog_" + nm) || "[]"); var seen = team_log_seen[nm]; var lab2 = TEAM_LABEL[k]; for (var i = 0; i < arr.length; i++) { var ln = arr[i]; if (ln.t > seen) { team_log_seen[nm] = ln.t; game_log("[" + lab2 + "] " + ln.m); } } } catch (e) {} }
@@ -349,6 +359,8 @@ function team_read_logs() { // Händler/Priester schreiben ihr Log in den gemein
 var cm_selftest = 0;
 function team_broadcast() { // alle 5 s: wo bin ich, was mache ich (für Händler und Priester)
     if (Date.now() - last_team_cast < 5000) return; last_team_cast = Date.now();
+    if (SOLO) { if (Date.now() - solo_last_st > 30000) { solo_last_st = Date.now(); try { var hq0 = mh_quest(); send_cm(MAIN_NAME, { t: "st", level: character.level, state: character.rip ? "tot" : paused ? "Pause" : (hq0 && hq0.c > 0 ? "jagt " + hq0.id + " (" + hq0.c + ")" : "farmt " + (current_spot || "?")), gold: character.gold, tokens: tokens(), hp: character.hp, max_hp: character.max_hp, map: character.map, free: character.esize }); } catch (e) {} } return; }
+    try { window.localStorage.setItem("lp_mh_missing", JSON.stringify(mh_missing_for_me())); } catch (e) {} // für Jäger/Priest/Ranger: welche Set-Teile mir fehlen
     var act = active_chars(), ml = character.s && character.s.mluck;
     var msg = { t: "me", map: character.map, x: Math.round(character.x), y: Math.round(character.y), level: character.level, hp: character.hp, max_hp: character.max_hp, paused: paused || !bot_running, spot: current_spot, event: event_mode, tgt: (function () { if (!paused) return last_target_id; try { var mt = get_target(); return mt && mt.type == "monster" && !mt.dead ? mt.id : null; } catch (e) { return null; } })(), mluck: ml ? { f: ml.f, ms: ml.ms, strong: !!ml.strong } : null, in: character.in };
     for (var k in TEAM) { var nm = TEAM[k]; if (team_on[k] && act[nm]) { try { send_cm(nm, msg); } catch (e) {} } }
@@ -606,7 +618,7 @@ function event_html() {
 }
 function team_html() {
     var parts = [];
-    for (var k in TEAM) { var nm = TEAM[k], st = team_state[nm], run = team_running(nm), lab = TEAM_LABEL[k]; var raw = active_chars()[nm]; try { var pe = get_player(nm); if (pe && pe.rip && st) st.state = "tot"; } catch (e) {} parts.push("<span style='color:" + (team_on[k] ? (run ? "#4caf50" : "#ffb74d") : "#9aa3b2") + "'>" + lab + (st && Date.now() - st.t < 60000 ? " Lv " + st.level + " · " + esc(st.state || "") : run ? " (" + esc(String(raw)) + ", keine Meldung)" : team_on[k] ? " (aus/offline)" : "") + "</span> <button data-act='team' data-k='" + k + "'" + (team_on[k] ? " class='on'" : "") + " style='padding:0 5px'>" + (team_on[k] ? "an" : "aus") + "</button>"); }
+    for (var k in TEAM) { var nm = TEAM[k], st = team_state[nm], run = team_running(nm), lab = TEAM_LABEL[k]; var raw = active_chars()[nm]; try { var pe = get_player(nm); if (pe && pe.rip && st) st.state = "tot"; } catch (e) {} parts.push("<span style='color:" + (team_on[k] ? (run ? "#4caf50" : "#ffb74d") : "#9aa3b2") + "'>" + lab + (st && Date.now() - st.t < 60000 ? " Lv " + st.level + " · " + esc(st.state || "") + (st.tokens != null ? " · " + st.tokens + " Tok" : "") + (st.hunt && st.hunt.c > 0 ? " · Jagd " + esc(st.hunt.id) + " " + st.hunt.c : "") : run ? " (" + esc(String(raw)) + ", keine Meldung)" : team_on[k] ? " (aus/offline)" : "") + "</span> <button data-act='team' data-k='" + k + "'" + (team_on[k] ? " class='on'" : "") + " style='padding:0 5px'>" + (team_on[k] ? "an" : "aus") + "</button>"); }
     if (team_on.merch) { var mst = team_state[TEAM.merch]; parts.push("<button data-act='goldback' title='Händler bringt sein Gold (bis auf 150k) zum Magier'>Gold holen" + (mst && mst.gold ? " (" + fmt(mst.gold) + ")" : "") + "</button>"); }
     parts.push("<button data-act='teamlogs' title='gespeicherte Logs von Merch/Priest/Ranger (letzte 40 Zeilen je Char) ins Log holen'>Team-Logs</button>");
     if (team_on.merch) parts.push("<button data-act='merchtest' title='Testet, ob der Händler auf einen anderen Server gestartet werden kann (Grundlage für Handel im Hintergrund); dauert ca. 1 min, Händler kommt danach zurück'" + (merch_test ? " class='on'" : "") + " style='padding:0 5px'>" + (merch_test ? "Servertest läuft (" + merch_test.stage + ")" : "Merch-Servertest") + "</button>");
@@ -701,7 +713,7 @@ try { unmap_key("P"); unmap_key("U"); unmap_key("K"); unmap_key("L"); unmap_key(
 // alten Handler (von vorherigem Run) entfernen, dann neu registrieren
 if (parent.__logicplan_keyhandler) parent.document.removeEventListener("keydown", parent.__logicplan_keyhandler);
 parent.__logicplan_keyhandler = on_key;
-parent.document.addEventListener("keydown", on_key);
+if (!SOLO) parent.document.addEventListener("keydown", on_key);
 
 // Diagnose: Event-Daten (Serverstatus, Emotes, Items) als Fenster anzeigen
 function event_debug() {
@@ -858,7 +870,14 @@ function candidate_list() {
     list.sort(function (a, b) { return estimate(b) - estimate(a); });
     return list.slice(0, MEASURE_TOP);
 }
+function team_hunt_pick() { // Jagdmonster von Priest/Ranger, das für uns sicher ist (nur wenn keine eigene Jagd läuft)
+    if (SOLO || hunt_spot) return null;
+    var out = null; ["priest", "ranger"].forEach(function (k) { if (out || !team_on[k]) return; var st = team_state[TEAM[k]]; if (!st || Date.now() - st.t > 90000 || !st.hunt || !(st.hunt.c > 0)) return; var id = st.hunt.id; if (G.monsters[id] && is_safe_monster(id) && hunt_danger_ok(id) && !hidden_mons[id] && !spot_blocked(id) && spawn_count(id) > 0) out = { id: id, who: TEAM_LABEL[k] }; });
+    return out;
+}
+var team_hunt_logged = "";
 function choose_spot() {
+    var th = team_hunt_pick(); if (th) { if (team_hunt_logged != th.id) { team_hunt_logged = th.id; game_log("Team-Jagd: " + th.who + " jagt " + th.id + " – farme dort mit"); } return th.id; }
     var cands = candidate_list();
     if (!cands.length) return team_escort() ? "bee" : "goo";
     // 1. noch nicht (oder veraltet) gemessene Spots zuerst
@@ -880,6 +899,7 @@ function pick_farm_monster() {
     if (!has_weapon()) return NO_WEAPON_MONSTER;
     if (manual_spot && !spot_blocked(manual_spot)) { if (current_spot != manual_spot) { current_spot = manual_spot; need_repick = false; meas = null; save_state(); } if (!team_safe(manual_spot) && Date.now() - team_safe_warned > 600000) { team_safe_warned = Date.now(); game_log("Achtung: Spot " + manual_spot + " ist für " + escort_name() + " zu gefährlich – fester Spot bleibt, aber er wird dort sterben"); } return current_spot; }
     if (current_spot && !team_safe(current_spot)) { if (Date.now() - team_safe_warned > 600000) { team_safe_warned = Date.now(); game_log("Spot " + current_spot + " für " + escort_name() + " zu gefährlich – wähle einen leichteren"); } need_repick = true; }
+    var th2 = team_hunt_pick(); if (th2 && current_spot != th2.id && !manual_spot) need_repick = true; else if (!th2 && team_hunt_logged && current_spot == team_hunt_logged) { team_hunt_logged = ""; need_repick = true; }
     if (!current_spot || need_repick) { current_spot = choose_spot(); need_repick = false; save_state(); }
     return current_spot;
 }
@@ -2030,7 +2050,7 @@ function kiss_round_open() {
     return true;
 }
 async function kiss_routine() {
-    if (kissing || upgrading || fleeing || busy || marketing || server_trip || !kiss_round_open()) return; // nicht während Kauf/Routine/Serverreise
+    if (SOLO || kissing || upgrading || fleeing || busy || marketing || server_trip || !kiss_round_open()) return; // nicht während Kauf/Routine/Serverreise
     var a = anniv(); var round = a.round, name = a.target;
     kissing = true; busy = true;
     game_log("Kuss-Runde " + round + ": laufe zu " + name + " (" + a.map + " " + a.x + "," + a.y + ")");
@@ -2161,6 +2181,7 @@ function hunt_danger_ok(id) { var d = G.monsters[id]; return !!d && mon_danger(d
 function hunt_target_ok(id) { return id && G.monsters[id] && is_safe_monster(id) && hunt_danger_ok(id) && !hidden_mons[id] && !EXCLUDE[id] && !spot_blocked(id) && team_safe(id); }
 function hunt_skip_reason(id) { var d = G.monsters[id]; if (!d) return "unbekannt"; if (!hunt_danger_ok(id)) return Math.round(mon_danger(d) * 100) + " % > " + Math.round(hunt_max_danger * 100) + " %" + team_bonus_txt(); if (!is_safe_monster(id)) return "nicht sicher"; if (spot_blocked(id)) return "gesperrt"; if (!team_safe(id)) return "zu stark für den Priester"; return "ausgeblendet"; }
 async function spend_tokens() { // Set-Teile kaufen, günstigstes fehlendes zuerst
+    if (SOLO) { await spend_tokens_for_main(); return; }
     var want = MH_SET.filter(function (n) { var def = G.items[n]; var sl = slot_for_item(def); var worn = character.slots[sl]; return !(worn && worn.name == n) && locate_item(n) < 0; })
         .sort(function (a, b) { return (G.tokens.monstertoken[a] || 99) - (G.tokens.monstertoken[b] || 99); });
     for (var i = 0; i < want.length; i++) {
@@ -2168,6 +2189,13 @@ async function spend_tokens() { // Set-Teile kaufen, günstigstes fehlendes zuer
         try { exchange_buy("monstertoken", want[i]); await sleep(1500); } catch (e) {}
         if (locate_item(want[i]) >= 0) game_log("Tokens: " + want[i] + " gekauft (" + cost + " Tokens, " + tokens() + " übrig)"); else game_log("Tokens: Kauf von " + want[i] + " nicht bestätigt");
     }
+}
+async function spend_tokens_for_main() { // Zweit-Charakter: Set-Teile, die dem Hauptmagier fehlen, kaufen und in die Bank legen (Bank ist accountweit)
+    var miss = []; try { miss = JSON.parse(window.localStorage.getItem("lp_mh_missing") || "[]"); } catch (e) {}
+    var bought = [];
+    for (var i = 0; i < miss.length; i++) { var m = miss[i]; if (!m.cost || tokens() < m.cost || character.esize < 2 || locate_item(m.name) >= 0) continue; try { exchange_buy("monstertoken", m.name); await sleep(1500); } catch (e) {} if (locate_item(m.name) >= 0) { bought.push(m.name); game_log("Tokens: " + m.name + " für " + MAIN_NAME + " gekauft (" + m.cost + " Tokens, " + tokens() + " übrig)"); } }
+    if (!bought.length) return;
+    try { await travel_place("bank"); await sleep(800); for (var b = 0; b < bought.length; b++) { var bi = locate_item(bought[b]); if (bi >= 0) { bank_store(bi); await sleep(400); } } game_log("Tokens: " + bought.join(", ") + " in die Bank gelegt – " + MAIN_NAME + " holt es beim nächsten Bankgang"); } catch (e) { game_log("Tokens: Bank-Fehler " + err_txt(e)); }
 }
 async function check_monsterhunt() {
     if (event_mode) return; // Event hat Vorrang
@@ -2894,7 +2922,7 @@ function wiki_npc(id) {
 }
 // ---------- Wunschliste: fester Zielbau für den Magier ----------
 // Schaden kommt aus INT und Waffenangriff. Rüstung gibt je Stufe nur +1 INT, deshalb zuerst Waffe, Buch und INT-Schmuck.
-var WISH_RESERVE = 1000000;          // so viel Gold bleibt bei Käufen/Upgrades immer übrig
+var WISH_RESERVE = SOLO ? 30000 : 1000000;          // so viel Gold bleibt bei Käufen/Upgrades immer übrig
 var DEFAULT_WISHLIST = {              // Vorgabe je Slot (beste Wahl zuerst) – per Zielbau-Auswahl im Panel überschreibbar
     mainhand: ["harbringer", "firestaff", "froststaff"],
     offhand:  ["wbook1", "wbook0"],
@@ -3399,6 +3427,7 @@ function switch_server(region, id) { // wie der Klick auf "Wechseln" im Welt-Fen
     try { parent.location.href = "/character/" + encodeURIComponent(character.name) + "/in/" + region + "/" + id + "/"; } catch (e) { game_log("Serverwechsel fehlgeschlagen: " + err_txt(e)); }
 }
 function start_trip(f) { // f: Fund auf anderem Server
+    if (SOLO) return;
     var home = { region: parent.server_region, id: parent.server_identifier }, tgt = split_server(f.server);
     if (!home.region || !tgt) { game_log("Serverwechsel: Server unbekannt"); return; }
     if (arb_job) { game_log("Serverwechsel verschoben: Händler ist gerade auf Handelsreise"); return; }
@@ -3941,7 +3970,7 @@ function start_main() {
     rip_counted = false;
     session_tick();
     if (Date.now() - last_panel > 2000) { last_panel = Date.now(); try { update_panel(); update_char_panel(); } catch (e) {} }
-    try { merch_test_tick(); arb_tick(); event_tick(); team_tick(); team_broadcast(); team_read_logs(); team_inject(); bank_snapshot(); if (!manual_lock && !paused) { priest_gear_tick(); energize_tick(); team_wish_handover_tick(); } } catch (e) {}
+    try { if (!SOLO) { merch_test_tick(); arb_tick(); event_tick(); } team_tick(); team_broadcast(); if (!SOLO) { team_read_logs(); team_inject(); } bank_snapshot(); if (!manual_lock && !paused && !SOLO) { priest_gear_tick(); energize_tick(); team_wish_handover_tick(); } } catch (e) {}
     if (paused) return;
     measure_tick();
 
