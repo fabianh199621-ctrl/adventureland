@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v226";
+var BOT_VERSION = "v227";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -928,7 +928,8 @@ var team_safe_warned = 0;
 function escort_name() { var e = team_escort(); if (!e) return "das Team"; var nm = e.name || ""; for (var k in TEAM) if (team_state[TEAM[k]] === e) nm = (k == "merch" ? "den Händler" : k == "ranger" ? "den Ranger" : "den Priester"); return nm + " (Lv " + e.level + ")"; }
 function candidate_list() {
     var list = visible_mons().filter(function (m) {
-        if (!is_safe_monster(m)) return false; // Automatik nur auf sichere Spots
+        if (!hunt_allowed(m)) return false; // Automatik nur auf Monster mit Jagd-Häkchen (eine Liste für Automatik, Messung und Jagd)
+        if (!is_safe_monster(m)) return false; // ... und nach Basiswerten sicher
         if (spot_blocked(m)) return false;
         if (!team_safe(m)) return false;
         var st = farm_stats[m];
@@ -943,11 +944,11 @@ function team_hunt_pick() { // Jagdmonster von Priest/Ranger, das für uns siche
     var out = null; ["priest", "ranger", "hunter"].forEach(function (k) { if (out || !team_on[k]) return; var st = team_state[TEAM[k]]; if (!st || Date.now() - st.t > 90000 || !st.hunt || !(st.hunt.c > 0)) return; var id = st.hunt.id; if (hunt_target_ok(id) && spawn_count(id) > 0) out = { id: id, who: TEAM_LABEL[k] }; });
     return out;
 }
-var team_hunt_logged = "";
+var team_hunt_logged = "", no_cand_logged = 0;
 function choose_spot() {
     var th = team_hunt_pick(); if (th) { if (team_hunt_logged != th.id) { team_hunt_logged = th.id; game_log("Team-Jagd: " + th.who + " jagt " + th.id + " – farme dort mit"); } return th.id; }
     var cands = candidate_list();
-    if (!cands.length) return team_escort() ? "bee" : "goo";
+    if (!cands.length) { if (Date.now() - no_cand_logged > 300000) { no_cand_logged = Date.now(); game_log("Automatik: kein Monster mit Jagd-Häkchen verfügbar – Häkchen in der Liste setzen; solange goo/bee"); } return team_escort() ? "bee" : "goo"; }
     // 1. noch nicht (oder veraltet) gemessene Spots zuerst
     for (var i = 0; i < cands.length; i++) if (!stats_valid(farm_stats[cands[i]])) { game_log("Messe Spot: " + cands[i]); return cands[i]; }
     // 2. sonst bester Score
