@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v239";
+var BOT_VERSION = "v240";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -116,13 +116,9 @@ var focus_mode = false; try { focus_mode = localStorage.getItem("lp_focus") == "
 var FOCUS_MIN_FREE = 3, FOCUS_TARGET_FREE = 20, FOCUS_POT_MIN = 50;
 var BYCATCH_RANGE = 250;             // Beifang: andere sichere Monster in dieser Entfernung angreifen
 var hunt_on = true; try { hunt_on = localStorage.getItem("lp_hunt") != "0"; } catch (e) {}
-var hunter_only = false; try { hunter_only = localStorage.getItem("lp_hunter_only") == "1"; } catch (e) {} // Nur Jäger-Jagd: ausschließlich das Jagdmonster des Jägers farmen, egal wie gefährlich; keine eigene Jagd
-function hunter_hunt() { // laufende Jagd des Jäger-Chars (aus seinem Status), sonst null
-    if (SOLO || !team_on.hunter) return null;
-    var st = team_state[TEAM.hunter]; if (!st || Date.now() - st.t > 120000 || !st.hunt || !(st.hunt.c > 0) || !G.monsters[st.hunt.id]) return null;
-    return st.hunt;
-}
-var wait_team_on = true, wait_team_danger = 0.10; try { wait_team_on = localStorage.getItem("lp_wait_team") != "0"; var wtd = parseFloat(localStorage.getItem("lp_wait_danger")); if (isFinite(wtd) && wtd >= 0) wait_team_danger = wtd; } catch (e) {} // Auf Team warten: bei Spots über dieser Gefahr nicht vorlaufen/allein kämpfen
+var auto_on = true; try { auto_on = localStorage.getItem("lp_auto_on") != "0"; } catch (e) {} // Auto aus + kein fester Spot = nur Jagden (Team wartet bei Daisy)
+var idle_logged = 0;
+var wait_team_on = true, wait_team_danger = 0.10; try { var wtd = parseFloat(localStorage.getItem("lp_wait_danger")); if (isFinite(wtd) && wtd >= 0) wait_team_danger = wtd; } catch (e) {} // Auf Team warten: bei Spots über dieser Gefahr nicht vorlaufen/allein kämpfen
 var WAIT_BEHIND = 500, WAIT_NEAR = 250, RALLY_DIST = 350, spot_travel = false, team_wait_stop = false, wait_logged = 0;
 var strict_set = {}; try { strict_set = JSON.parse(localStorage.getItem("lp_strict") || "{}"); } catch (e) {} // Häkchen "Team" je Monster: kein Angriff, bevor Priest und Ranger < WAIT_NEAR stehen; Priest/Ranger ziehen nie selbst
 function strict_mon(mon) { return !!strict_set[mon]; }
@@ -166,7 +162,14 @@ function meet_escort() { // Begleiter hängt auf derselben Karte länger fest (k
     wait_since = Date.now(); busy = true; game_log("Auf Team warten: " + TEAM_LABEL[b.k] + " kommt seit 45 s nicht näher (" + Math.round(b.d) + " px) – gehe ihm entgegen");
     smart_move({ x: p.x + 40, y: p.y }).catch(function () {}).then(function () { busy = false; });
 }
-function hunter_only_mon() { var hh = hunter_only ? hunter_hunt() : null; return hh ? hh.id : null; }
+// Einstellungen (⚙): Darstellung + Verhalten, gespeichert unter lp_settings
+var SET = { alpha: 1, font: 12, accent: "green", list_right: true, wait_behind: 500, rally: 350, hold_flee: 60, hp_pot: 40, mp_pot: 50, xp_weight: 50, team_hunt_first: true, hunt_town_only: false, log_pots: true };
+try { var so = JSON.parse(localStorage.getItem("lp_settings") || "null"); if (so) for (var sk in so) if (sk in SET) SET[sk] = so[sk]; } catch (e) {}
+function save_settings() { try { localStorage.setItem("lp_settings", JSON.stringify(SET)); } catch (e) {} apply_settings(); }
+var ACCENTS = { green: ["#2e7d32", "#4caf50"], blue: ["#1e6fb8", "#3d8bdc"], orange: ["#b8641e", "#e08a3c"], purple: ["#7b3fb8", "#9d5fd6"], red: ["#b83f4a", "#d65f6a"] };
+function apply_settings() { try { WAIT_BEHIND = SET.wait_behind; RALLY_DIST = SET.rally; XP_WEIGHT = SET.xp_weight / 50; GOLD_WEIGHT = (100 - SET.xp_weight) / 50; var r = parent.document.documentElement; var ac = ACCENTS[SET.accent] || ACCENTS.green; r.style.setProperty("--lp-alpha", String(SET.alpha)); r.style.setProperty("--lp-fs", SET.font + "px"); r.style.setProperty("--lp-acc", ac[0]); r.style.setProperty("--lp-acc2", ac[1]); } catch (e) {} last_panel = 0; }
+
+
 var pause_after = false; try { pause_after = localStorage.getItem("lp_pause_after") == "1"; } catch (e) {} // nach manueller Aktion (Button/Taste) pausieren statt weiterfarmen
 function after_action(what) {
     if (pause_after) { paused = true; stop("smart"); set_message("PAUSE"); game_log((what || "Aktion") + " fertig – pausiert (Einstellung „Danach: Pause“, P zum Weiterfarmen)"); last_panel = 0; }
@@ -304,7 +307,7 @@ var prio_logged = "";
 function too_strong(m) {
     var base = G.monsters[m.mtype]; if (!base) return true;
     if (priority_mon(m.mtype)) return false;
-    if (hunter_only && m.mtype == hunter_only_mon()) return false; // Nur Jäger-Jagd: das Jagdmonster wird immer angegangen
+
     var d = Object.assign({}, base);
     if (m.max_hp) d.hp = m.max_hp;
     if (m.attack) d.attack = m.attack;
@@ -352,11 +355,11 @@ function is_valid_target(m) {
 
 
 // ---------- Team: Händler und Priester (laufen unsichtbar im selben Fenster, gestartet vom Magier) ----------
-var TEAM = { merch: "F4llenMerch", priest: "F4llenPriest", ranger: "F4llenRanger", hunter: "F4llenHunt" };
-var TEAM_NAMES = [TEAM.merch, TEAM.priest, TEAM.ranger, TEAM.hunter];
-var TEAM_LABEL = { merch: "Merch", priest: "Priest", ranger: "Ranger", hunter: "Jäger" }, TEAM_ROLE = { merch: "merchant", priest: "priest", ranger: "ranger", hunter: "hunter" }, TEAM_CTYPE = { merch: "merchant", priest: "priest", ranger: "ranger", hunter: "mage" };
-var team_on = { merch: true, priest: true, ranger: true, hunter: false }; try { var to = JSON.parse(localStorage.getItem("lp_team") || "null"); if (to) { for (var tk0 in to) team_on[tk0] = to[tk0]; } } catch (e) {}
-if (SOLO) { team_on = { merch: false, priest: false, ranger: false, hunter: false }; }
+var TEAM = { merch: "F4llenMerch", priest: "F4llenPriest", ranger: "F4llenRanger" };
+var TEAM_NAMES = [TEAM.merch, TEAM.priest, TEAM.ranger];
+var TEAM_LABEL = { merch: "Merch", priest: "Priest", ranger: "Ranger" }, TEAM_ROLE = { merch: "merchant", priest: "priest", ranger: "ranger" }, TEAM_CTYPE = { merch: "merchant", priest: "priest", ranger: "ranger" };
+var team_on = { merch: true, priest: true, ranger: true }; try { var to = JSON.parse(localStorage.getItem("lp_team") || "null"); if (to) { for (var tk0 in to) team_on[tk0] = to[tk0]; } } catch (e) {}
+if (SOLO) { team_on = { merch: false, priest: false, ranger: false }; }
 function save_team() { try { localStorage.setItem("lp_team", JSON.stringify(team_on)); } catch (e) {} }
 var team_state = {}; // letzte Statusmeldung je Charakter { level, state, t, ... }
 var last_team_tick = 0, last_team_cast = 0, last_party_try = 0, team_start_at = {};
@@ -391,7 +394,7 @@ function team_inject() { // läuft im Fenster des Teammitglieds nicht unser Skri
         var nm = TEAM[k], w = wins[nm]; if (!w || !team_on[k]) continue;
         if (Date.now() - (team_inject_t[nm] || 0) < 45000) continue;
         var cw = w.code, have = null;
-        try { have = cw && (cw.MERCH_VERSION || cw.PRIEST_VERSION || cw.RANGER_VERSION || cw.HUNTER_VERSION); } catch (e) {}
+        try { have = cw && (cw.MERCH_VERSION || cw.PRIEST_VERSION || cw.RANGER_VERSION); } catch (e) {}
         if (have == BOT_VERSION) continue;
         team_inject_t[nm] = Date.now();
         if (!cw) { // das Spiel hat für den Charakter noch keinen Code-Frame angelegt: Code-Start anstoßen (läuft dessen eigenen, meist leeren Slot), danach spielen wir unser Skript ein
@@ -681,10 +684,11 @@ function hunts_html() { // Rundlauf: Jagden aller Kämpfer mit Status
         if (!id || !(c > 0)) return "keine";
         var d = G.monsters[id], dg = d ? Math.round(mon_danger(d) * 100) : 0, ok = mine ? hunt_target_ok(id) : (th && th.id == id);
         var run = current_spot == id && !paused;
+        if (!ok && !mine && hunt_allowed(id) && !spot_blocked(id) && !hunt_bad_for(id)) return esc(id) + " " + c + " <span style='color:#8ab4f8'>wartet" + (th ? " (nach " + esc(th.who) + ")" : "") + "</span>";
         return esc(id) + " " + c + (ok ? (run ? " <span style='color:#4caf50'>läuft</span>" : " <span style='color:#8ab4f8'>machbar" + (mine ? "" : ", als Nächstes") + "</span>") : " <span style='color:#ffb74d'>" + esc(hunt_skip_reason(id)) + (ms != null ? ", läuft aus " + fmt_time(ms) : "") + "</span>");
     }
     items.push("Mage " + st_txt(q && q.id, q && q.c, q && q.ms, true));
-    ["priest", "ranger", "hunter"].forEach(function (k) { if (!team_on[k]) return; var st = team_state[TEAM[k]]; if (!st || Date.now() - st.t > 120000) { items.push(TEAM_LABEL[k] + " ?"); return; } var h = st.hunt; items.push(TEAM_LABEL[k] + " " + st_txt(h && h.id, h && h.c, h && h.ms != null ? Math.max(0, h.ms - (Date.now() - st.t)) : null, false)); }); // Restzeit ab Meldezeitpunkt weiterzählen
+    ["priest", "ranger"].forEach(function (k) { if (!team_on[k]) return; var st = team_state[TEAM[k]]; if (!st || Date.now() - st.t > 120000) { items.push(TEAM_LABEL[k] + " ?"); return; } var h = st.hunt; items.push(TEAM_LABEL[k] + " " + st_txt(h && h.id, h && h.c, h && h.ms != null ? Math.max(0, h.ms - (Date.now() - st.t)) : null, false)); }); // Restzeit ab Meldezeitpunkt weiterzählen
     var w = wait_txt();
     return "<span style='color:#9aa3b2'>Jagden: </span>" + items.join(" · ") + (w ? " <span style='color:#ffb74d'>· " + esc(w) + "</span>" : "");
 }
@@ -701,19 +705,25 @@ function team_where_txt(nm, st) { // Karte + Entfernung eines Teammitglieds (aus
 }
 function team_html() {
     var parts = [];
-    for (var k in TEAM) { var nm = TEAM[k], st = team_state[nm], run = team_running(nm), lab = TEAM_LABEL[k]; var raw = active_chars()[nm]; try { var pe = get_player(nm); if (pe && pe.rip && st) st.state = "tot"; } catch (e) {} parts.push("<span style='color:" + (team_on[k] ? (run ? "#4caf50" : "#ffb74d") : "#9aa3b2") + "'>" + lab + (st && Date.now() - st.t < 60000 ? " Lv " + st.level + " · " + esc(st.state || "") + (st.tokens != null ? " · " + st.tokens + " Tok" : "") + (st.hunt && st.hunt.c > 0 ? " · Jagd " + esc(st.hunt.id) + " " + st.hunt.c : "") + team_where_txt(nm, st) : run ? " (" + esc(String(raw)) + ", keine Meldung" + (st ? " seit " + fmt_time(Date.now() - st.t) + ", zuletzt " + esc(st.map || "?") : "") + ")" : team_on[k] ? " (aus/offline)" : "") + "</span> <button data-act='team' data-k='" + k + "'" + (team_on[k] ? " class='on'" : "") + " style='padding:0 5px'>" + (team_on[k] ? "an" : "aus") + "</button>"); }
-    if (team_on.merch) { var mst = team_state[TEAM.merch]; parts.push("<button data-act='goldback' title='Händler bringt sein Gold (bis auf 150k) zum Magier'>Gold holen" + (mst && mst.gold ? " (" + fmt(mst.gold) + ")" : "") + "</button>"); }
-    parts.push("<button data-act='teamlogs' title='gespeicherte Logs von Merch/Priest/Ranger (letzte 40 Zeilen je Char) ins Log holen'>Team-Logs</button>");
-    if (team_on.merch) parts.push("<button data-act='merchtest' title='Testet, ob der Händler auf einen anderen Server gestartet werden kann (Grundlage für Handel im Hintergrund); dauert ca. 1 min, Händler kommt danach zurück'" + (merch_test ? " class='on'" : "") + " style='padding:0 5px'>" + (merch_test ? "Servertest läuft (" + merch_test.stage + ")" : "Merch-Servertest") + "</button>");
-    parts.push(hunts_html());
-    if (false) { var hst = team_state[TEAM.hunter]; if (hst && Date.now() - hst.t < 120000 && hst.hunt && hst.hunt.c > 0) { var hid = hst.hunt.id, ok = G.monsters[hid] && is_safe_monster(hid) && hunt_danger_ok(hid), dg = G.monsters[hid] ? Math.round(mon_danger(G.monsters[hid]) * 100) : 0; if (hunter_only) parts.push("<span style='color:#8ab4f8'>Jäger-Jagd: " + esc(hid) + " " + hst.hunt.c + " übrig · " + fmt_time(hst.hunt.ms || 0) + " – wird gefarmt (Gefahr " + dg + " %)</span>"); else parts.push("<span style='color:" + (ok ? "#8ab4f8" : "#ffb74d") + "'>Jäger-Jagd: " + esc(hid) + " " + hst.hunt.c + " übrig" + (ok ? (current_spot == hid ? " – Team farmt dort" : "") : " – zu gefährlich (" + dg + " %), läuft aus") + "</span>"); } else if (hunter_only) parts.push("<span style='color:#9aa3b2'>Jäger-Jagd: keine – warte, bis der Jäger eine neue holt</span>"); }
+    for (var k in TEAM) {
+        var nm = TEAM[k], st = team_state[nm], run = team_running(nm), lab = TEAM_LABEL[k]; var raw = active_chars()[nm];
+        var pe = null; try { pe = get_player(nm); if (pe && pe.rip && st) st.state = "tot"; } catch (e) {}
+        var fresh = st && Date.now() - st.t < 60000, same = pe && pe.map == character.map, dist = same ? Math.round(distance(character, pe)) : null;
+        var warn = !team_on[k] ? "" : !run ? "aus/offline" : !fresh ? "keine Meldung" + (st ? " seit " + fmt_time(Date.now() - st.t) : "") : st.state == "tot" ? "tot" : (k != "merch" && !same) ? "andere Karte (" + (st.map || "?") + ")" : (k != "merch" && dist > WAIT_BEHIND) ? dist + " px zurück" : "";
+        var col = !team_on[k] ? "#9aa3b2" : warn ? "#ffb74d" : "#4caf50", sym = !team_on[k] ? "" : warn ? " ⚠" : " ✓";
+        var tip = lab + (fresh ? " Lv " + st.level + " · " + (st.state || "") + (st.map ? " · " + st.map : "") + (dist != null ? " · " + dist + " px" : "") + (st.hpots != null ? " · Tränke " + st.hpots + "/" + (st.mpots || 0) : "") + (st.tokens != null ? " · " + st.tokens + " Tokens" : "") + (st.gold != null ? " · " + fmt(st.gold) + " Gold" : "") + (st.hunt && st.hunt.c > 0 ? " · Jagd " + st.hunt.id + " " + st.hunt.c : "") : run ? " (" + String(raw) + ", keine Meldung)" : team_on[k] ? " (aus/offline)" : " aus");
+        parts.push("<span style='color:" + col + "' title='" + esc(tip) + "'>" + lab + sym + (fresh ? " Lv " + st.level : "") + (warn ? " <small>" + esc(warn) + "</small>" : "") + "</span> <button data-act='team' data-k='" + k + "'" + (team_on[k] ? " class='on'" : "") + " style='padding:0 5px'>" + (team_on[k] ? "an" : "aus") + "</button>");
+    }
+    var btns = "";
+    if (team_on.merch) { var mst = team_state[TEAM.merch]; btns += "<button data-act='goldback' title='Händler bringt sein Gold (bis auf 150k) zum Magier'>Gold holen" + (mst && mst.gold ? " (" + fmt(mst.gold) + ")" : "") + "</button> "; }
+    btns += "<button data-act='teamlogs' title='gespeicherte Logs von Merch/Priest/Ranger (letzte 40 Zeilen je Char) ins Log holen'>Team-Logs</button>";
     var give = "";
     if (team_on.priest || team_on.ranger) { // manuelle Übergabe: Inventarteil auswählen, an Priest/Ranger geben (der legt es an, wenn es besser ist)
         var opts = "", any = false;
         for (var gi = 0; gi < character.items.length; gi++) { var git = character.items[gi]; if (!git) continue; var gd = G.items[git.name]; if (!gd || KEEP_ITEMS.test(git.name) || EVENT_ITEMS.test(git.name)) continue; var ok = false; for (var gsl in SLOT_TYPES) { if ((team_on.priest && fits_class(gd, "priest", gsl)) || (team_on.ranger && fits_class(gd, "ranger", gsl))) { ok = true; break; } } if (!ok) continue; any = true; opts += "<option value='" + gi + "'" + (give_sel == gi ? " selected" : "") + ">" + esc((gd.name || git.name) + "+" + (git.level || 0) + (git.q > 1 ? " ×" + git.q : "") + " [" + (gi + 1) + "]") + "</option>"; }
         if (any) give = "<div class='lp_row' style='flex-wrap:wrap'><span class='lp_k' title='Teil aus dem Inventar an ein Teammitglied geben – es muss neben dir stehen; angelegt wird es dort, wenn es besser ist'>Geben:</span> <select data-give='1' style='font-size:11px;background:#1c2029;color:#eee;border:1px solid #555;max-width:220px'><option value=''" + (give_sel < 0 ? " selected" : "") + ">– Teil wählen –</option>" + opts + "</select>" + (team_on.priest ? " <button data-act='give' data-k='priest' style='padding:0 6px'>→ Priest</button>" : "") + (team_on.ranger ? " <button data-act='give' data-k='ranger' style='padding:0 6px'>→ Ranger</button>" : "") + "</div>";
     }
-    return "<div class='lp_row' style='flex-wrap:wrap;line-height:1.6'><span class='lp_k'>Team:</span> " + parts.join(" · ") + "</div>" + give;
+    return "<div class='lp_row' style='flex-wrap:wrap;line-height:1.6'><span class='lp_k'>Team:</span> " + parts.join(" · ") + "</div><div class='lp_row' style='flex-wrap:wrap;margin-top:0'>" + btns + " " + (give ? give.replace("<div class='lp_row' style='flex-wrap:wrap'>", "").replace(/<\/div>$/, "") : "") + "</div>";
 }
 // ---------- Test: kann ein Nebencharakter auf einem anderen Server gestartet werden? ----------
 var merch_test = null; // { stage: "stopped"|"started", t, target: {region, id}, sv }
@@ -961,7 +971,7 @@ function candidate_list() {
 }
 function team_hunt_pick() { // Jagdmonster von Priest/Ranger, das für uns sicher ist (nur wenn keine eigene Jagd läuft)
     if (SOLO || hunt_spot) return null;
-    var out = null; ["priest", "ranger", "hunter"].forEach(function (k) { if (out || !team_on[k]) return; var st = team_state[TEAM[k]]; if (!st || Date.now() - st.t > 90000 || !st.hunt || !(st.hunt.c > 0)) return; var id = st.hunt.id; if (hunt_target_ok(id) && spawn_count(id) > 0) out = { id: id, who: TEAM_LABEL[k] }; });
+    var out = null; ["priest", "ranger"].forEach(function (k) { if (out || !team_on[k]) return; var st = team_state[TEAM[k]]; if (!st || Date.now() - st.t > 90000 || !st.hunt || !(st.hunt.c > 0)) return; var id = st.hunt.id; if (hunt_target_ok(id) && spawn_count(id) > 0) out = { id: id, who: TEAM_LABEL[k] }; });
     return out;
 }
 var team_hunt_logged = "", no_cand_logged = 0;
@@ -986,14 +996,9 @@ function choose_spot() {
 }
 function pick_farm_monster() {
     if (!has_weapon()) return NO_WEAPON_MONSTER;
-    if (hunter_only && !team_on.hunter) { hunter_only = false; try { localStorage.setItem("lp_hunter_only", "0"); } catch (e) {} game_log("Nur Jäger-Jagd aus – Jäger ist abgeschaltet"); need_repick = true; }
-    if (hunter_only && !event_mode) { // Nur Jäger-Jagd: Jagdmonster des Jägers ist der einzige Spot, ohne Gefahr-/Sperrprüfung; ohne Jagd wird gewartet
-        var hm = hunter_only_mon();
-        if (hm) { if (current_spot != hm) { current_spot = hm; need_repick = false; meas = null; save_state(); game_log("Nur Jäger-Jagd: farme " + hm + " (" + hunter_hunt().c + " übrig, Gefahr " + Math.round(mon_danger(G.monsters[hm]) * 100) + " %)"); } return hm; }
-        if (current_spot) { current_spot = null; save_state(); }
-        return null;
-    }
+
     if (hunt_on && !hunt_spot) { var thp = team_hunt_pick(); if (thp) { if (current_spot != thp.id) { current_spot = thp.id; need_repick = false; meas = null; save_state(); if (team_hunt_logged != thp.id) { team_hunt_logged = thp.id; game_log("Team-Jagd: " + thp.who + " jagt " + thp.id + " – farme dort mit"); } } return thp.id; } else if (team_hunt_logged && current_spot == team_hunt_logged) { team_hunt_logged = ""; need_repick = true; current_spot = null; } } // Jagden vor festem Spot; fester/automatischer Spot ist der Lückenfüller
+    if (!auto_on && !(manual_spot && !spot_blocked(manual_spot))) { if (current_spot) { current_spot = null; meas = null; save_state(); } return null; } // Auto aus: nur Jagden/fester Spot, sonst warten
     if (manual_spot && !spot_blocked(manual_spot)) { if (current_spot != manual_spot) { current_spot = manual_spot; need_repick = false; meas = null; save_state(); } if (!team_safe(manual_spot) && Date.now() - team_safe_warned > 600000) { team_safe_warned = Date.now(); game_log("Achtung: Spot " + manual_spot + " ist für " + escort_name() + " zu gefährlich – fester Spot bleibt, aber er wird dort sterben"); } return current_spot; }
     if (current_spot && !team_safe(current_spot)) { if (Date.now() - team_safe_warned > 600000) { team_safe_warned = Date.now(); game_log("Spot " + current_spot + " für " + escort_name() + " zu gefährlich – wähle einen leichteren"); } need_repick = true; }
     var th2 = team_hunt_pick(); if (th2 && current_spot != th2.id && !manual_spot) need_repick = true; else if (!th2 && team_hunt_logged && current_spot == team_hunt_logged) { team_hunt_logged = ""; need_repick = true; }
@@ -1107,10 +1112,10 @@ function go_to_farm_spot() {
         return;
     }
     var mon = pick_farm_monster();
-    if (!mon) { // Nur Jäger-Jagd ohne laufende Jagd: beim Jäger bleiben und warten
-        set_message("Warte auf Jäger");
-        var hp = null; try { hp = get_player(TEAM.hunter); } catch (e) {}
-        if (hp && !hp.rip && hp.map == character.map && distance(character, hp) > 250) { busy = true; smart_move({ x: hp.x + 60, y: hp.y }).catch(function () {}).then(function () { busy = false; }); }
+    if (!mon) { // Auto aus, keine Jagd: zu Daisy und dort warten
+        set_message("nur Jagden – wartet");
+        var dp = find_npc("monsterhunter");
+        if (dp && (character.map != dp.map || distance(character, dp) > 150)) { busy = true; if (Date.now() - idle_logged > 300000) { idle_logged = Date.now(); game_log("Auto aus, keine machbare Jagd – warte bei Daisy auf die nächste"); } travel({ map: dp.map, x: dp.x + 40, y: dp.y + 20 }).catch(function () {}).then(function () { busy = false; }); }
         return;
     }
     var areas = spawn_areas(mon);
@@ -1154,10 +1159,10 @@ function heal_logic() {
     var hpot = best_pot(POTS_HP), mpot = best_pot(POTS_MP);
 
     var swarm = attackers_on_me() >= FLEE_ATTACKERS;
-    if (hp < (swarm ? 0.55 : 0.4) && hpot && missing_hp >= hpot.gives * 0.8) {
-        game_log("Heiltrank " + hpot.name + " (HP " + Math.round(hp * 100) + "%)"); equip(hpot.idx); day_count("pots");
-    } else if (mp < 0.5 && mpot && missing_mp >= mpot.gives * 0.8) { // früher nachtrinken, damit MP nicht dauerhaft bei ~30 % hängt
-        game_log("Manatrank " + mpot.name + " (MP " + Math.round(mp * 100) + "%)"); equip(mpot.idx); day_count("pots");
+    if (hp < (swarm ? Math.max(0.55, SET.hp_pot / 100) : SET.hp_pot / 100) && hpot && missing_hp >= hpot.gives * 0.8) {
+        if (SET.log_pots) game_log("Heiltrank " + hpot.name + " (HP " + Math.round(hp * 100) + "%)"); equip(hpot.idx); day_count("pots");
+    } else if (mp < SET.mp_pot / 100 && mpot && missing_mp >= mpot.gives * 0.8) {
+        if (SET.log_pots) game_log("Manatrank " + mpot.name + " (MP " + Math.round(mp * 100) + "%)"); equip(mpot.idx); day_count("pots");
     } else if (character.hp < character.max_hp) use_skill("regen_hp");
     else if (character.mp < character.max_mp) use_skill("regen_mp");
 }
@@ -1273,24 +1278,29 @@ function init_panel() {
     var oc = doc.getElementById("lp_char"); if (oc) oc.remove();
     var st = doc.getElementById("lp_style"); if (st) st.remove();
     st = doc.createElement("style"); st.id = "lp_style";
-    st.textContent = "#lp_panel{position:fixed;left:10px;top:130px;z-index:2147483000;pointer-events:auto;width:470px;background:#14161c;color:#e6e6e6;font:12px/1.4 'Segoe UI',Arial,sans-serif;border:1px solid #3a3f4b;border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.6);user-select:none;overflow:hidden}"
-      + "#lp_head{display:flex;align-items:center;gap:8px;padding:6px 10px;background:linear-gradient(#2b3140,#1e222c);cursor:move;border-bottom:1px solid #3a3f4b;touch-action:none}"
-      + "#lp_head b{flex:1;font-size:13px;letter-spacing:.3px}#lp_head .lp_state{font-size:11px;padding:1px 7px;border-radius:10px;background:#2e7d32}"
+    st.textContent = ":root{--lp-alpha:1;--lp-fs:12px;--lp-acc:#2e7d32;--lp-acc2:#4caf50}"
+      + "#lp_panel{position:fixed;left:10px;top:130px;z-index:2147483000;pointer-events:auto;width:470px;background:rgba(20,22,28,var(--lp-alpha));color:#e6e6e6;font:var(--lp-fs)/1.4 'Segoe UI',Arial,sans-serif;border:1px solid #3a3f4b;border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.6);user-select:none;overflow:hidden}"
+      + "#lp_head{display:flex;align-items:center;gap:8px;padding:6px 10px;background:rgba(36,41,54,var(--lp-alpha));cursor:move;border-bottom:1px solid #3a3f4b;touch-action:none;position:relative}"
+      + "#lp_head b{flex:1;font-size:13px;letter-spacing:.3px}#lp_head .lp_state{font-size:11px;padding:1px 7px;border-radius:10px;background:var(--lp-acc)}"
+      + "#lp_body.lp_two{display:grid;grid-template-columns:1fr 400px;gap:0 12px}#lp_left{min-width:0}#lp_right{border-left:1px solid #2a2f3a;padding-left:10px;min-width:0}"
+      + ".lp_sec{border-top:1px solid #2a2f3a;margin-top:4px;padding-top:2px}.lp_sec .lp_sech{cursor:pointer;color:#9aa3b2}.lp_sec .lp_sech:hover{color:#fff}.lp_sec .lp_sech .lp_secv{color:#c9ced8;margin-left:6px;font-size:11px}"
+      + "#lp_set{display:none;position:absolute;right:6px;top:30px;width:270px;background:#1b202b;border:1px solid #3a4152;border-radius:6px;padding:8px 10px;z-index:6;font-size:11.5px;cursor:default;box-shadow:0 6px 20px rgba(0,0,0,.6);user-select:none}#lp_set.open{display:block}"
+      + "#lp_set label{display:flex;align-items:center;gap:8px;margin:5px 0;color:#9aa3b2;white-space:nowrap}#lp_set input[type=range]{flex:1;min-width:60px}#lp_set input[type=number]{width:52px;background:#1c2029;color:#eee;border:1px solid #555;font-size:11px;text-align:right}#lp_set .lp_sw{width:15px;height:15px;border-radius:3px;border:1px solid #555;cursor:pointer;display:inline-block}#lp_set .lp_sw.sel{outline:2px solid #fff}#lp_set .lp_tab{display:flex;gap:4px;margin-bottom:6px}#lp_set .lp_tab button.on{background:var(--lp-acc)}#lp_set h4{margin:2px 0 4px;color:#e6e6e6;font-size:12px}"
       + "#lp_head .lp_state.pause{background:#c62828}#lp_head .lp_state.busy{background:#ef6c00}"
       + "#lp_head button{font:11px 'Segoe UI',Arial;padding:0 6px;cursor:pointer;background:#3a3f4b;color:#eee;border:1px solid #555;border-radius:3px}"
       + "#lp_body{padding:8px 10px;max-height:calc(100vh - 200px);overflow-y:auto;overscroll-behavior:contain}"
       + ".lp_grid{display:grid;grid-template-columns:1fr 1fr;gap:3px 12px;margin-bottom:6px}.lp_grid div{white-space:nowrap}.lp_k{color:#9aa3b2}"
       + ".lp_bar{display:inline-block;width:80px;height:8px;background:#2a2e38;border-radius:4px;vertical-align:middle;margin-left:6px;overflow:hidden}.lp_bar i{display:block;height:100%}"
-      + ".lp_spot{background:#1c2029;border:1px solid #2f3440;border-radius:4px;padding:6px 8px;margin:4px 0 6px}.lp_spot .lp_big{font-size:15px;font-weight:600}"
-      + ".lp_row{display:flex;gap:6px;align-items:center;margin:4px 0}.lp_row .lp_mode{color:#8ab4f8;flex:1}"
-      + "#lp_body button{font:11px 'Segoe UI',Arial;padding:1px 7px;cursor:pointer;background:#2f3440;color:#eee;border:1px solid #555;border-radius:3px}#lp_body button:hover{background:#3d4453}#lp_body button.on{background:#2e7d32;border-color:#4caf50}"
+      + ".lp_spot{background:rgba(28,32,41,var(--lp-alpha));border:1px solid #2f3440;border-radius:4px;padding:6px 8px;margin:4px 0 6px}.lp_spot .lp_big{font-size:15px;font-weight:600}"
+      + ".lp_row{display:flex;gap:6px;align-items:center;margin:4px 0;flex-wrap:wrap}.lp_row .lp_mode{color:#8ab4f8;flex:1}#lp_body button{white-space:nowrap}"
+      + "#lp_body button{font:11px 'Segoe UI',Arial;padding:1px 7px;cursor:pointer;background:#2f3440;color:#eee;border:1px solid #555;border-radius:3px}#lp_body button:hover{background:#3d4453}#lp_body button.on{background:var(--lp-acc);border-color:var(--lp-acc2)}#lp_body input[type=checkbox]{accent-color:var(--lp-acc2)}"
       + "table.lp_t{width:100%;border-collapse:collapse;font-size:11.5px;margin-top:4px}table.lp_t th{color:#9aa3b2;font-weight:normal;text-align:right;padding:2px 4px;border-bottom:1px solid #3a3f4b;cursor:pointer}table.lp_t th:hover{color:#fff}table.lp_t th.sorted{color:#8ab4f8}table.lp_t th:first-child,table.lp_t td:first-child{text-align:left}"
       + "table.lp_t td{padding:2px 4px;text-align:right;white-space:nowrap}table.lp_t td[title]{cursor:help;text-decoration:underline dotted #666}table.lp_t tr:nth-child(even) td{background:#181b22}table.lp_t tr.cur td{background:#20302a;color:#c8f0d0}table.lp_t td.old{color:#8a8f99}"
       + "table.lp_wish td{white-space:normal;word-break:break-word;overflow-wrap:anywhere;overflow:hidden;vertical-align:top;line-height:1.3}table.lp_wish th{white-space:normal;vertical-align:bottom}table.lp_wish select{max-width:100%;box-sizing:border-box}";
     doc.head.appendChild(st);
 
     var div = doc.createElement("div"); div.id = "lp_panel";
-    div.innerHTML = "<div id='lp_head'><b>LogicPlan " + BOT_VERSION + "</b><span class='lp_state' id='lp_state'>läuft</span><button data-act='chartoggle' title='Charakter & Inventar'>Char</button><button data-act='wikitoggle' title='Items, Monster, NPCs nachschlagen'>Wiki</button><button id='lp_toggle' title='Monster-Tabelle ein-/ausklappen'>▾</button><button id='lp_mini' title='Fenster verkleinern/vergrößern'>▭</button></div><div id='lp_body'></div>";
+    div.innerHTML = "<div id='lp_head'><b>LogicPlan " + BOT_VERSION + "</b><span class='lp_state' id='lp_state'>läuft</span><button data-act='chartoggle' title='Charakter & Inventar'>Char</button><button data-act='wikitoggle' title='Items, Monster, NPCs nachschlagen'>Wiki</button><button id='lp_toggle' title='Monsterliste ein-/ausblenden'>▾</button><button id='lp_mini' title='Fenster verkleinern/vergrößern'>▭</button><button id='lp_gear' title='Einstellungen'>⚙</button><div id='lp_set'></div></div><div id='lp_body'></div>";
     doc.body.appendChild(div);
     try { var p = JSON.parse(localStorage.getItem("lp_panel_pos") || "null"); if (p) clamp_pos(div, p.x, p.y); } catch (e) {}
 
@@ -1302,9 +1312,12 @@ function init_panel() {
     try { div.__wish = localStorage.getItem("lp_panel_wish") != "0"; } catch (e) { div.__wish = true; }
     try { div.__mini = localStorage.getItem("lp_panel_mini") == "1"; } catch (e) { div.__mini = false; }
     try { div.__arb = localStorage.getItem("lp_panel_arb") == "1"; } catch (e) { div.__arb = false; }
+    div.__sec = { haendler: false, zielbau: false, wartung: false }; try { var so2 = JSON.parse(localStorage.getItem("lp_sec") || "null"); if (so2) for (var sk3 in so2) div.__sec[sk3] = !!so2[sk3]; } catch (e) {}
+    try { apply_settings(); } catch (e) {}
     var inside = function (e) { var c = parent.document.getElementById("lp_char"), w = parent.document.getElementById("lp_wiki"); return e.target && (div.contains(e.target) || (c && c.contains(e.target)) || (w && w.contains(e.target))); };
     var onDown = function (e) {
         if (!inside(e)) return;
+        var sp0 = div.querySelector("#lp_set"); if (sp0 && sp0.contains(e.target)) { if (e.target.tagName != "INPUT") e.stopPropagation(); else e.stopPropagation(); return; } // Einstellungen: kein Ziehen
         if (e.target.tagName == "BUTTON") { e.stopPropagation(); return; }
         var c = parent.document.getElementById("lp_char"), ch = c && c.querySelector("#lp_char_head");
         if (head.contains(e.target)) { drag = { el: div, key: "lp_panel_pos", dx: e.clientX - div.offsetLeft, dy: e.clientY - div.offsetTop }; e.preventDefault(); }
@@ -1328,9 +1341,14 @@ function init_panel() {
         if (b.tagName == "TH" && b.getAttribute("data-sort")) { set_sort(b.getAttribute("data-sort")); return; }
         if (b.tagName != "BUTTON") return;
         if (b.id == "lp_toggle") { div.__collapsed = !div.__collapsed; try { localStorage.setItem("lp_panel_collapsed", div.__collapsed ? "1" : "0"); } catch (x) {} last_panel = 0; return; }
+        if (b.id == "lp_gear") { var sp = div.querySelector("#lp_set"); sp.classList.toggle("open"); if (sp.classList.contains("open")) render_settings(sp); return; }
+        if (b.getAttribute("data-set")) { settings_click(b); return; }
+        if (b.getAttribute("data-sec")) { var sk2 = b.getAttribute("data-sec"); div.__sec[sk2] = !div.__sec[sk2]; try { localStorage.setItem("lp_sec", JSON.stringify(div.__sec)); } catch (x) {} last_panel = 0; return; }
         if (b.id == "lp_mini") { div.__mini = !div.__mini; try { localStorage.setItem("lp_panel_mini", div.__mini ? "1" : "0"); } catch (x) {} last_panel = 0; return; }
         var act = b.getAttribute("data-act"), mon = b.getAttribute("data-mon");
-        if (act == "farm") { user_manual = mon; preempt("Farmen " + mon, function () { set_manual_spot(mon); }); } else if (act == "auto") preempt("Automatik", set_auto_spot); else if (act == "reset") reset_measurements();
+        if (act == "farm") { user_manual = mon; preempt("Farmen " + mon, function () { set_manual_spot(mon); }); }
+        else if (act == "auto") { if (manual_spot || !auto_on) { auto_on = true; try { localStorage.setItem("lp_auto_on", "1"); } catch (x) {} preempt("Automatik", set_auto_spot); } else { auto_on = false; try { localStorage.setItem("lp_auto_on", "0"); } catch (x) {} need_repick = true; current_spot = null; stop("smart"); busy = false; change_target(null); game_log("Automatik aus – nur Jagden; ohne machbare Jagd wartet das Team bei Daisy"); } }
+        else if (act == "reset") reset_measurements();
         else if (act == "hide") hide_mon(mon, true); else if (act == "show") hide_mon(mon, false);
         else if (act == "worth") { only_worth = !only_worth; save_hidden(); }
         else if (act == "trip") { var tl = server_tip(), tf = tl[parseInt(b.getAttribute("data-idx"))]; if (tf) preempt("Serverwechsel", function () { start_trip(tf); }); }
@@ -1363,7 +1381,7 @@ function init_panel() {
         else if (act == "cavalry") call_cavalry("manuell");
         else if (act == "cavauto") { cav_on = !cav_on; try { localStorage.setItem("lp_cav_on", cav_on ? "1" : "0"); } catch (x) {} game_log("Cavalry-Automatik " + (cav_on ? "an" : "aus")); }
         else if (act == "waitteam") { wait_team_on = !wait_team_on; try { localStorage.setItem("lp_wait_team", wait_team_on ? "1" : "0"); } catch (x) {} game_log("Auf Team warten " + (wait_team_on ? "an (ab " + Math.round(wait_team_danger * 100) + " % Gefahr)" : "aus")); }
-        else if (act == "hunteronly") { hunter_only = !hunter_only; try { localStorage.setItem("lp_hunter_only", hunter_only ? "1" : "0"); } catch (x) {} game_log("Nur Jäger-Jagd " + (hunter_only ? "an – Team farmt ausschließlich die Jagd von " + TEAM.hunter : "aus")); need_repick = true; meas = null; if (!hunter_only) current_spot = null; stop("smart"); busy = false; change_target(null); save_state(); }
+
         else if (act == "hunt") { hunt_on = !hunt_on; try { localStorage.setItem("lp_hunt", hunt_on ? "1" : "0"); } catch (x) {} game_log("Monster Hunt " + (hunt_on ? "an" : "aus")); }
         else if (act == "huntabandon") preempt("Jagd aufgeben", hunt_abandon);
         else if (act == "focus") { focus_mode = !focus_mode; try { localStorage.setItem("lp_focus", focus_mode ? "1" : "0"); } catch (x) {} tidy_next = 0; if (focus_mode && pending_upgrade == "auto") pending_upgrade = null; game_log("Fokus-Modus " + (focus_mode ? "an – nur farmen/hunten, Nebenroutinen aus" : "aus – alle Routinen wieder aktiv")); }
@@ -1389,9 +1407,11 @@ function init_panel() {
     ["pointermove", "mousemove"].forEach(function (t) { win.addEventListener(t, onMove, true); });
     ["pointerup", "mouseup"].forEach(function (t) { win.addEventListener(t, onUp, true); });
     win.addEventListener("click", onClick, true);
+    win.addEventListener("input", function (e) { try { var t = e.target; if (t && t.getAttribute && t.getAttribute("data-setk") && t.type == "range" && inside(e)) settings_input(t); } catch (x) {} }, true);
     var onChange = function (e) {
         if (!inside(e)) return;
         var t = e.target; if (!t || (t.tagName != "SELECT" && t.tagName != "INPUT")) return;
+        if (t.getAttribute("data-setk")) { settings_input(t); return; }
         var ws = t.getAttribute("data-wslot"), wl = t.getAttribute("data-wlvl"), wm = t.getAttribute("data-wmax");
         var tws = t.getAttribute("data-twslot"), twl = t.getAttribute("data-twlvl"), twm = t.getAttribute("data-twmax");
         if (tws || twl || twm) {
@@ -1593,6 +1613,47 @@ function fmt(n) { n = Math.round(n || 0); return n >= 1000000 ? (n / 1000000).to
 function fmt_time(ms) { if (!isFinite(ms) || ms < 0) return "-"; var m = Math.round(ms / 60000); return m >= 60 ? Math.floor(m / 60) + "h " + (m % 60) + "m" : m + "m"; }
 function esc(t) { return String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;"); }
 function bar(pct, color) { return "<span class='lp_bar'><i style='width:" + Math.max(0, Math.min(100, pct)) + "%;background:" + color + "'></i></span>"; }
+var set_tab = "look";
+function render_settings(sp) {
+    var acc = Object.keys(ACCENTS).map(function (k) { var c = ACCENTS[k]; return "<button class='lp_sw" + (SET.accent == k ? " sel" : "") + "' data-set='accent' data-v='" + k + "' style='background:" + c[0] + "' title='" + k + "'></button>"; }).join(" ");
+    var h = "<div class='lp_tab'><button data-set='tab' data-v='look'" + (set_tab == "look" ? " class='on'" : "") + ">Darstellung</button><button data-set='tab' data-v='fight'" + (set_tab == "fight" ? " class='on'" : "") + ">Kampf &amp; Team</button><button data-set='tab' data-v='hunt'" + (set_tab == "hunt" ? " class='on'" : "") + ">Jagd &amp; Log</button></div>";
+    if (set_tab == "look") h += "<label>Transparenz <input type='range' data-setk='alpha' min='40' max='100' value='" + Math.round(SET.alpha * 100) + "'></label>"
+        + "<label>Schriftgröße <input type='range' data-setk='font' min='10' max='15' step='0.5' value='" + SET.font + "'></label>"
+        + "<label>Akzentfarbe " + acc + "</label>"
+        + "<label><input type='checkbox' data-setk='list_right'" + (SET.list_right ? " checked" : "") + "> Monsterliste rechts (sonst unten)</label>"
+        + "<label><button data-set='resetpos'>Panelposition zurücksetzen</button></label>";
+    else if (set_tab == "fight") h += "<h4>Auf Team warten</h4><label>Anhalten, wenn Priest/Ranger weiter zurück als <input type='number' data-setk='wait_behind' min='200' max='1500' step='50' value='" + SET.wait_behind + "'> px</label>"
+        + "<label>Sammelpunkt vor Team-Spots <input type='number' data-setk='rally' min='150' max='800' step='50' value='" + SET.rally + "'> px</label>"
+        + "<label>Rückzug beim Warten unter <input type='number' data-setk='hold_flee' min='20' max='90' step='5' value='" + SET.hold_flee + "'> % HP</label>"
+        + "<h4>Tränke</h4><label>Heiltrank ab <input type='number' data-setk='hp_pot' min='20' max='80' step='5' value='" + SET.hp_pot + "'> % HP</label>"
+        + "<label>Manatrank ab <input type='number' data-setk='mp_pot' min='20' max='90' step='5' value='" + SET.mp_pot + "'> % MP</label>"
+        + "<h4>Automatik</h4><label>Gold <input type='range' data-setk='xp_weight' min='0' max='100' step='10' value='" + SET.xp_weight + "'> XP <span style='color:#e6e6e6'>" + SET.xp_weight + " % XP</span></label>";
+    else h += "<label><input type='checkbox' data-setk='team_hunt_first'" + (SET.team_hunt_first ? " checked" : "") + "> Laufende Team-Jagd zuerst beenden</label>"
+        + "<label><input type='checkbox' data-setk='hunt_town_only'" + (SET.hunt_town_only ? " checked" : "") + "> Neue Jagd nur holen, wenn ohnehin in der Stadt</label>"
+        + "<label><input type='checkbox' data-setk='log_pots'" + (SET.log_pots ? " checked" : "") + "> Trank-Zeilen im Log anzeigen</label>";
+    h += "<div style='color:#6b7280;margin-top:6px'>Gilt für alle Chars, wird gespeichert.</div>";
+    sp.innerHTML = h;
+}
+function settings_click(b) {
+    var k = b.getAttribute("data-set"), v = b.getAttribute("data-v");
+    if (k == "tab") set_tab = v;
+    else if (k == "accent") { SET.accent = v; save_settings(); }
+    else if (k == "resetpos") { try { localStorage.removeItem("lp_panel_pos"); } catch (e) {} clamp_pos(panel, 10, 130); }
+    var sp = panel.querySelector("#lp_set"); if (sp) render_settings(sp);
+}
+function settings_input(t) {
+    var k = t.getAttribute("data-setk"); if (!(k in SET)) return;
+    if (t.type == "checkbox") SET[k] = !!t.checked;
+    else { var v = parseFloat(String(t.value).replace(",", ".")); if (!isFinite(v)) return; if (k == "alpha") v = v / 100; SET[k] = v; }
+    save_settings();
+    if (k == "xp_weight") { need_repick = true; var sp = panel.querySelector("#lp_set"); if (sp && t.type == "range") { var lab = t.parentNode.querySelector("span"); if (lab) lab.textContent = SET.xp_weight + " % XP"; } }
+    if (k == "list_right") last_panel = 0;
+}
+function market_scroll_summary() { try { var ws = watch_summary("scroll3"); if (!ws) return ""; return "Scroll " + (ws.ask ? "ab " + fmt(ws.ask.price) : "kein Verkäufer") + (ws.bid ? " / Kaufauftrag " + fmt(ws.bid.price) : ""); } catch (e) { return ""; } }
+function lp_sec(key, title, summary, body) { // einklappbarer Abschnitt
+    var open = panel.__sec[key];
+    return "<div class='lp_sec'><div class='lp_row' style='margin:2px 0'><button data-sec='" + key + "' class='lp_sech' style='background:none;border:none;padding:0;text-align:left;flex:1;font-size:inherit'>" + (open ? "▾" : "▸") + " <b style='color:#c9ced8;font-weight:600'>" + title + "</b>" + (open ? "" : "<span class='lp_secv'>" + summary + "</span>") + "</button></div>" + (open ? body : "") + "</div>";
+}
 function update_panel() {
     if (!panel || !panel.parentNode) panel = init_panel();
     var hp = Math.round(character.hp / character.max_hp * 100), mp = Math.round(character.mp / character.max_mp * 100);
@@ -1618,60 +1679,69 @@ function update_panel() {
           + "<div><span class='lp_k'>HP</span> " + hp + "%" + bar(hp, hp < 35 ? "#e53935" : "#43a047") + " <span class='lp_k'>MP</span> " + mp + "%</div>"
           + "<div style='grid-column:1/3'><span class='lp_k'>Spot</span> <b>" + esc(current_spot || "-") + "</b> · " + fmt(cur_xp_h) + " XP/h · " + fmt(cur_gold_h) + " G/h · <span class='lp_k'>Hunt</span> " + esc(mh_txt()) + "</div>"
           + "<div style='grid-column:1/3'><span class='lp_k'>Heute</span> " + esc(day_text(day)) + "</div></div>" + team_html()
-          + "<div class='lp_row'><span class='lp_mode'>" + (manual_spot ? "fest (" + esc(manual_spot) + ")" : "automatisch") + "</span><button data-act='auto'" + (manual_spot ? "" : " class='on'") + ">Auto</button><button data-act='focus'" + (focus_mode ? " class='on'" : "") + ">Fokus</button><button data-act='tidy' title='Schrott verkaufen, Rest in die Bank'>Aufräumen</button><button data-act='pauseafter'" + (pause_after ? " class='on'" : "") + ">Danach: " + (pause_after ? "Pause" : "Farmen") + "</button><button data-act='copylog'>Log</button></div>";
+          + "<div class='lp_row'><span class='lp_mode'>" + (manual_spot ? "fest (" + esc(manual_spot) + ")" : auto_on ? "automatisch" : "nur Jagden") + "</span><button data-act='auto'" + (manual_spot || !auto_on ? "" : " class='on'") + ">Auto</button><button data-act='focus'" + (focus_mode ? " class='on'" : "") + ">Fokus</button><button data-act='hunt'" + (hunt_on ? " class='on'" : "") + ">Hunt</button><button data-act='pauseafter'" + (pause_after ? " class='on'" : "") + ">Danach: " + (pause_after ? "Pause" : "Farmen") + "</button><button data-act='copylog'>Log</button></div>";
         try { var ae0 = parent.document.activeElement; if (ae0 && ae0.tagName == "SELECT" && panel.contains(ae0)) return; } catch (e) {}
         try { if (panel.__w != 470) { panel.__w = 470; panel.style.width = "470px"; clamp_pos(panel, panel.offsetLeft, panel.offsetTop); } } catch (e) {}
-        panel.querySelector("#lp_body").innerHTML = hm; return;
+        panel.querySelector("#lp_body").className = ""; panel.querySelector("#lp_body").innerHTML = hm; return;
     }
+    var a2 = a && a.active;
     var h = "<div class='lp_grid'>"
-      + "<div><span class='lp_k'>Level</span> " + character.level + "</div><div><span class='lp_k'>Gold</span> " + fmt(character.gold) + "</div>"
-      + "<div style='grid-column:1/3'><span class='lp_k'>Heute</span> " + esc(day_text(day)) + "</div>"
-      + (a && a.active ? "<div style='grid-column:1/3'><span class='lp_k'>Kuchen</span> " + (6 - missing_slices().length) + "/6 Stücke" + (missing_slices().length ? " (fehlt: " + esc(missing_slices().map(function (n) { return n.replace("slice_", ""); }).join(", ")) + ")" : quantity("sixcake") ? ", Sixfold Cake ×" + quantity("sixcake") : ", bereit zum Backen") + "</div>" : "")
-      + "<div><span class='lp_k'>HP</span> " + hp + "%" + bar(hp, hp < 35 ? "#e53935" : "#43a047") + "</div><div><span class='lp_k'>MP</span> " + mp + "%" + bar(mp, "#1e88e5") + "</div>"
-      + "<div><span class='lp_k'>Tränke</span> " + pots_total(POTS_HP) + " / " + pots_total(POTS_MP) + "</div><div><span class='lp_k'>Elixier</span> " + (character.slots.elixir ? "an" : "aus") + " · <span class='lp_k'>frei</span> " + character.esize + "</div>"
-      + "<div><span class='lp_k'>Session</span> " + fmt_time(sh * 3600000) + " · <span class='lp_k'>Ref</span> " + fmt(gold_per_hour()) + " G/h</div><div><span class='lp_k'>Kuss</span> " + kiss_txt + "</div>"
+      + "<div><span class='lp_k'>Level</span> " + character.level + " &nbsp; <span class='lp_k'>Gold</span> " + fmt(character.gold) + "</div><div><span class='lp_k'>Session</span> " + fmt_time(sh * 3600000) + " · <span class='lp_k'>frei</span> " + character.esize + "</div>"
+      + "<div style='grid-column:1/3;white-space:normal'><span class='lp_k'>Heute</span> " + esc(day_text(day)) + "</div>"
+      + "<div><span class='lp_k'>HP</span> " + hp + "%" + bar(hp, hp < 35 ? "#e53935" : "#43a047") + " &nbsp;<span class='lp_k'>MP</span> " + mp + "%" + bar(mp, "#1e88e5") + "</div>"
+      + "<div><span class='lp_k'>Tränke</span> " + pots_total(POTS_HP) + " / " + pots_total(POTS_MP) + "</div>"
+      + "<div style='grid-column:1/3;color:#6b7280;font-size:11px'>Elixier " + (character.slots.elixir ? "an" : "aus") + " · Kuss " + kiss_txt + (a2 ? " · Kuchen " + (6 - missing_slices().length) + "/6" + (missing_slices().length ? " (fehlt: " + esc(missing_slices().map(function (n) { return n.replace("slice_", ""); }).join(", ")) + ")" : quantity("sixcake") ? " · Sixfold Cake ×" + quantity("sixcake") : ", bereit zum Backen") : "") + " · Ref " + fmt(gold_per_hour()) + " G/h</div>"
       + "</div>";
-    h += "<div class='lp_spot'><div><span class='lp_k'>Spot</span> <b>" + esc(current_spot || "-") + "</b>" + (meas_txt ? " <span class='lp_k'>(" + meas_txt + ")</span>" : "") + "</div>"
+    h += "<div class='lp_spot'><div><span class='lp_k'>Spot</span> <b>" + esc(current_spot || (auto_on ? "-" : "nur Jagden")) + "</b>" + (meas_txt ? " <span class='lp_k'>(" + meas_txt + ")</span>" : "") + "</div>"
       + "<div class='lp_big'>" + fmt(cur_xp_h) + " XP/h &nbsp;·&nbsp; " + fmt(cur_gold_h) + " G/h</div>"
       + "<div class='lp_k'>Session " + fmt(sess.xp / sh) + " XP/h · " + fmt(sess.gold / sh) + " G/h · nächstes Level in " + (rate > 0 ? fmt_time((G.levels[character.level] - character.xp) / rate * 3600000) : "-") + "</div></div>";
-    h += "<div class='lp_row'><span class='lp_mode'>Modus: " + (manual_spot ? "fest (" + esc(manual_spot) + ")" : "automatisch") + "</span><button data-act='auto'" + (manual_spot ? "" : " class='on'") + ">Auto</button><button data-act='reset'>Neu messen</button><button data-act='worth'" + (only_worth ? " class='on'" : "") + " title='nur die 5 besten nach geschätzten XP/h'>Top 5</button><button data-act='bycatch'" + (bycatch ? " class='on'" : "") + " title='andere sichere Monster in der Nähe mit angreifen'>Beifang</button><button data-act='focus'" + (focus_mode ? " class='on'" : "") + " title='nur farmen/hunten: kein Kuss, Ponty, Markt, Kuchen, keine Ausrüstungsautomatik; Inventar erst unter 3 freien Plätzen bis 20 frei aufräumen (mit Tränken)'>Fokus</button><button data-act='sortinv' title='Inventar sortieren'>Inv ⇅</button></div>"
-      + "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Aktionen</span><button data-act='compound' title='Schmuck compounden (getragen + ungetragen)'>Compound</button><button data-act='unblock' title='Alle Spot-/Jagd-Sperren (Tod, Rückzüge) aufheben'>Sperren aufheben</button><button data-act='cavalry' title='Tracktrix: Lv-100-Trupp rufen, räumt bis zu 24 Monster im Umkreis (90 s); Abklingzeit ca. " + Math.round(cav_cooldown() / 60000) + " min" + (cav_ready() ? "" : ", bereit in " + fmt_time(Math.max(0, Math.max(cav_next, cav_last + cav_cooldown()) - Date.now()))) + "'" + (cav_ready() ? " style='color:#C6AA62'" : "") + ">Cavalry</button><button data-act='cavauto'" + (cav_on ? " class='on'" : "") + " title='Cavalry automatisch rufen, wenn am Spot nur gelevelte Exemplare stehen'>Cav-Auto</button><button data-act='tidy' title='Schrott verkaufen, Rest in die Bank'>Aufräumen</button><button data-act='bank' title='Schrott aus der Bank holen und verkaufen'>Bank aufräumen</button><button data-act='banksort' title='Bank nach Gruppen sortieren, Reiter lückenlos füllen'>Bank ⇅</button><button data-act='copylog' title='Bot-Log in die Zwischenablage'>Log kopieren</button><button data-act='pauseafter'" + (pause_after ? " class='on'" : "") + " title='Nach Buttons/Tasten pausieren statt weiterfarmen'>Danach: " + (pause_after ? "Pause" : "Farmen") + "</button><button data-act='clearlog' title='Log-Puffer leeren' style='padding:1px 5px'>✕</button></div>";
+    h += "<div class='lp_row'><span class='lp_mode'>Modus: " + (manual_spot ? "fest (" + esc(manual_spot) + ")" : auto_on ? "automatisch" : "<span style='color:#ffb74d'>nur Jagden" + (current_spot ? "" : " – wartet bei Daisy") + "</span>") + "</span><button data-act='auto'" + (manual_spot || !auto_on ? "" : " class='on'") + " title='an: Automatik wählt den Spot (Lückenfüller) · aus: nur Jagden, sonst warten bei Daisy'>Auto</button><button data-act='bycatch'" + (bycatch ? " class='on'" : "") + " title='andere sichere Monster in der Nähe mit angreifen'>Beifang</button><button data-act='focus'" + (focus_mode ? " class='on'" : "") + " title='nur farmen/hunten: kein Kuss, Ponty, Markt, Kuchen, keine Ausrüstungsautomatik'>Fokus</button></div>";
+    var cav_left = Math.max(0, Math.max(cav_next, cav_last + cav_cooldown()) - Date.now());
+    h += "<div class='lp_row'><span class='lp_k'>Aktionen</span><button data-act='copylog' title='Bot-Log in die Zwischenablage'>Log kopieren</button><button data-act='pauseafter'" + (pause_after ? " class='on'" : "") + " title='Nach Buttons/Tasten pausieren statt weiterfarmen'>Danach: " + (pause_after ? "Pause" : "Farmen") + "</button><button data-act='unblock' title='Alle Spot-/Jagd-Sperren (Tod, Rückzüge) aufheben'>Sperren aufheben</button><button data-act='cavalry' title='Tracktrix: Lv-100-Trupp rufen, räumt bis zu 24 Monster im Umkreis (90 s)'" + (cav_ready() ? " style='color:#C6AA62'" : "") + ">Cavalry" + (cav_ready() ? "" : " " + fmt_time(cav_left).replace(/\s.*$/, "")) + "</button><button data-act='cavauto'" + (cav_on ? " class='on'" : "") + " title='Cavalry automatisch rufen, wenn am Spot nur gelevelte Exemplare stehen'>Cav-Auto</button></div>";
     h += event_html();
-    h += "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Hunt: <span style='color:#e6e6e6'>" + esc(mh_txt()) + "</span> · " + tokens() + " Tokens</span><button data-act='hunt'" + (hunt_on ? " class='on'" : "") + " title='Monster Hunt automatisch'>Hunt</button>" + "<button data-act='waitteam'" + (wait_team_on ? " class='on'" : "") + " title='Bei Spots über " + Math.round(wait_team_danger * 100) + " % Gefahr nicht vorlaufen und nicht allein kämpfen, bis Priest/Ranger da sind'>Team-Warten</button>" + (team_on.hunter || hunter_only ? "<button data-act='hunteronly'" + (hunter_only ? " class='on'" : "") + " title='Nur die Jagd des Jäger-Chars farmen (ohne Gefahrgrenze), keine eigene Jagd'>Nur Jäger</button>" : "") + "" + (mh_quest() ? "<button data-act='huntabandon'>Abbrechen</button>" : "") + "</div>";
-    h += "<div class='lp_row' style='flex-wrap:wrap;line-height:1.6'><span class='lp_k'>Serverwechsel:</span> <span style='font-size:11px'>" + server_tip_html() + "</span></div>";
-    h += arb_html(panel) + arb_trip_html() + watch_html();
-    h += team_html();
-    h += "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Zielbau " + wish_text() + (AUTO_GEAR ? " · automatisch, Reserve " + fmt(WISH_RESERVE) : "") + "</span><button data-act='wishist' data-slot='*' title='alle Slots auf das setzen, was du gerade trägst – Preislimits bleiben erhalten'>Ist</button><button data-act='wishreset' title='alle Ziele auf das Getragene setzen und alle Limits löschen'>Zielbau = aktuelle Ausrüstung</button><button data-act='wishtoggle'>" + (panel.__wish ? "▾" : "▸") + " Zielbau</button></div>";
-    if (panel.__wish) h += wish_ui_html();
-    h += team_wish_html(panel);
+    h += "<div class='lp_sec'><div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Hunt: <span style='color:#e6e6e6'>" + esc(mh_txt()) + "</span> · " + tokens() + " Tokens</span><button data-act='hunt'" + (hunt_on ? " class='on'" : "") + " title='Monster Hunt automatisch (Rundlauf Magier → Priest → Ranger)'>Hunt</button>" + (mh_quest() ? "<button data-act='huntabandon'>Abbrechen</button>" : "") + "</div>"
+      + "<div class='lp_row' style='flex-wrap:wrap;line-height:1.6;margin-top:0'>" + hunts_html() + "</div></div>";
+    h += "<div class='lp_sec'>" + team_html() + "</div>";
+    // Händler (eingeklappt)
+    var mst0 = team_state[TEAM.merch], stand_txt = mst0 && Date.now() - mst0.t < 60000 ? esc(mst0.state || "") : "keine Meldung";
+    var tips = server_tip(); var sc = market_scroll_summary();
+    h += lp_sec("haendler", "Händler", stand_txt + (sc ? " · " + sc : "") + " · " + (tips.length ? tips.length + " Serverfund" + (tips.length > 1 ? "e" : "") : "kein Serverfund") + (arb_auto ? " · Handelsreise Auto" : ""),
+        "<div class='lp_row' style='flex-wrap:wrap;line-height:1.6'><span class='lp_k'>Serverwechsel:</span> <span style='font-size:11px'>" + server_tip_html() + "</span></div>" + arb_html(panel) + arb_trip_html() + watch_html());
+    // Zielbau (eingeklappt)
+    var tw_sum = ["priest", "ranger"].filter(function (k) { return team_on[k]; }).map(function (k) { var cfgs = team_wish[k] || {}, n = 0, done = 0; TEAM_WISH_SLOTS.forEach(function (sl) { var c = cfgs[sl]; if (c && c.item) { n++; var s2 = tw_status(k, sl); if (s2 && s2.state == "fertig") done++; } }); return TEAM_LABEL[k] + " " + (n ? done + "/" + n : "–"); }).join(" · ");
+    h += lp_sec("zielbau", "Zielbau", "Ich " + esc(wish_text()) + (tw_sum ? " · " + tw_sum : "") + (AUTO_GEAR ? " · Reserve " + fmt(WISH_RESERVE) : ""),
+        "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Zielbau " + wish_text() + (AUTO_GEAR ? " · automatisch, Reserve " + fmt(WISH_RESERVE) : "") + "</span><button data-act='wishist' data-slot='*' title='alle Slots auf das setzen, was du gerade trägst – Preislimits bleiben erhalten'>Ist</button><button data-act='wishreset' title='alle Ziele auf das Getragene setzen und alle Limits löschen'>Zielbau = aktuelle Ausrüstung</button><button data-act='wishtoggle'>" + (panel.__wish ? "▾" : "▸") + " Liste</button></div>" + (panel.__wish ? wish_ui_html() : "") + team_wish_html(panel));
+    // Wartung (eingeklappt)
+    h += lp_sec("wartung", "Wartung", "Inv sortieren · Compound · Aufräumen · Bank",
+        "<div class='lp_row'><button data-act='sortinv' title='Inventar sortieren'>Inv ⇅</button><button data-act='compound' title='Schmuck compounden (getragen + ungetragen)'>Compound</button><button data-act='tidy' title='Schrott verkaufen, Rest in die Bank'>Aufräumen</button><button data-act='bank' title='Schrott aus der Bank holen und verkaufen'>Bank aufräumen</button><button data-act='banksort' title='Bank nach Gruppen sortieren, Reiter lückenlos füllen'>Bank ⇅</button><button data-act='reset' title='alle Messwerte verwerfen und neu messen'>Neu messen</button><button data-act='clearlog' title='Log-Puffer leeren'>Log leeren</button></div>");
+    // Monsterliste
+    var hr = "";
     if (!panel.__collapsed) {
-        var cols = [["name", "Monster"], ["hunt", "Jagd"], ["strict", "Team"], ["danger", "Gefahr"], ["ttk", "s/Kill"], ["xpk", "XP/Kill"], ["xpest", "XP/h*"], ["xph", "XP/h"], ["gph", "G/h"], ["ang", "ANG"]];
-        h += "<div class='lp_k' style='font-size:11px;margin-top:4px'>Schätzung kalibriert ×" + xp_calibration().toFixed(1) + " (aus " + Object.keys(farm_stats).length + " gemessenen Spots)" + (team_bonus_txt() ? " · Gefahr" + team_bonus_txt() : "") + "</div>";
-        h += "<table class='lp_t'><tr>" + cols.map(function (c) { return "<th data-sort='" + c[0] + "'" + (sort_key == c[0] ? " class='sorted'" : "") + ">" + c[1] + (sort_key == c[0] ? (sort_dir < 0 ? " ▾" : " ▴") : "") + "</th>"; }).join("") + "<th></th></tr>";
+        var cols = [["name", "Monster"], ["hunt", "Jagd"], ["strict", "Team"], ["danger", "Gefahr"], ["xph", "XP/h"], ["gph", "G/h"]];
+        hr += "<div class='lp_k' style='font-size:11px;margin-top:4px'>Gefahr mit Team" + (team_bonus_txt() ? team_bonus_txt().replace(/^ mit Team/, "") : "") + " · ×" + xp_calibration().toFixed(1) + " kalibriert (" + Object.keys(farm_stats).length + " Spots)</div>";
+        hr += "<table class='lp_t'><tr>" + cols.map(function (c) { return "<th data-sort='" + c[0] + "'" + (sort_key == c[0] ? " class='sorted'" : "") + ">" + c[1] + (sort_key == c[0] ? (sort_dir < 0 ? " ▾" : " ▴") : "") + "</th>"; }).join("") + "<th></th></tr>";
         var mons = visible_mons();
         mons.sort(function (x, y) { var a1 = sort_value(x, sort_key), b1 = sort_value(y, sort_key); return (a1 < b1 ? -1 : a1 > b1 ? 1 : 0) * sort_dir; });
         mons.forEach(function (m) {
             var st = farm_stats[m], d = G.monsters[m], oldc = st && !stats_valid(st) ? " class='old'" : "";
             var dg = mon_danger(d), ttk = mon_ttk(d);
-            h += "<tr" + (m == current_spot ? " class='cur'" : "") + "><td title='" + esc(mon_tooltip(m)) + "'>" + esc(m) + (st && st.deaths ? " <span style='color:#ef5350'>†" + st.deaths + "</span>" : "") + "</td>"
-               + "<td><input type='checkbox' data-huntok='" + m + "'" + (hunt_allowed(m) ? " checked" : "") + " title='Jagd auf " + esc(m) + " erlauben'></td>"
-               + "<td><input type='checkbox' data-strict='" + m + "'" + (strict_mon(m) ? " checked" : "") + " title='Team-Pflicht: Magier greift erst an, wenn Priest und Ranger < 250 px stehen; Priest/Ranger ziehen nie selbst'></td>"
-               + "<td style='color:" + (dg > 0.35 ? "#ef5350" : dg > 0.15 ? "#ffb74d" : "#81c784") + "'>" + (isFinite(dg) ? Math.round(dg * 100) + "%" : "∞") + "</td><td>" + (isFinite(ttk) ? ttk.toFixed(1) : "∞") + "</td><td>" + fmt(d.xp) + "</td><td>" + fmt(mon_xph_est(d, m)) + "</td>"
-               + "<td" + oldc + ">" + (st ? fmt(st.xp_h) : "-") + "</td><td" + oldc + ">" + (st ? fmt(st.gold_h) : "-") + "</td><td" + oldc + ">" + (st && st.attack ? st.attack : "-") + "</td>"
+            var tip = "s/Kill " + (isFinite(ttk) ? ttk.toFixed(1) : "∞") + " · XP/Kill " + fmt(d.xp) + " · Schätzung " + fmt(mon_xph_est(d, m)) + " XP/h" + (st && st.attack ? " · ANG bei Messung " + st.attack : "") + "\n" + mon_tooltip(m);
+            hr += "<tr" + (m == current_spot ? " class='cur'" : "") + "><td title='" + esc(tip) + "'>" + esc(m) + (st && st.deaths ? " <span style='color:#ef5350'>†" + st.deaths + "</span>" : "") + "</td>"
+               + "<td><input type='checkbox' data-huntok='" + m + "'" + (hunt_allowed(m) ? " checked" : "") + " title='Jagd auf " + esc(m) + " erlauben (auch für die Automatik)'></td>"
+               + "<td><input type='checkbox' data-strict='" + m + "'" + (strict_mon(m) ? " checked" : "") + " title='Team-Pflicht: Sammelpunkt vor dem Spot, Angriff erst mit Priest und Ranger < 250 px; Priest/Ranger ziehen nie selbst'></td>"
+               + "<td style='color:" + (dg > 0.35 ? "#ef5350" : dg > 0.15 ? "#ffb74d" : "#81c784") + "'>" + (isFinite(dg) ? Math.round(dg * 100) + "%" : "∞") + "</td>"
+               + "<td" + oldc + ">" + (st ? fmt(st.xp_h) : "-") + "</td><td" + oldc + ">" + (st ? fmt(st.gold_h) : "-") + "</td>"
                + "<td><button data-act='farm' data-mon='" + m + "'" + (m == manual_spot ? " class='on'" : "") + ">Farmen</button> <button data-act='hide' data-mon='" + m + "' title='ausblenden' style='padding:1px 5px'>✕</button></td></tr>";
         });
         var hid = Object.keys(hidden_mons).filter(function (m) { return G.monsters[m]; });
-        var auto_hid = only_worth ? CANDIDATES.filter(function (m) { return is_safe_monster(m) && !hidden_mons[m] && !is_worth(m); }) : [];
-        if (hid.length || auto_hid.length) {
-            h += "<tr><td colspan='11' style='text-align:left;color:#9aa3b2;white-space:normal'>Ausgeblendet: "
-               + hid.map(function (m) { return esc(m) + " <button data-act='show' data-mon='" + m + "' style='padding:0 4px'>↩</button>"; }).join(" ")
-               + (auto_hid.length ? " <span style='color:#6b7280'>(Filter: " + auto_hid.map(esc).join(", ") + ")</span>" : "") + "</td></tr>";
-        }
-        h += "</table>";
+        if (hid.length) hr += "<tr><td colspan='7' style='text-align:left;color:#9aa3b2;white-space:normal'>Ausgeblendet: " + hid.map(function (m) { return esc(m) + " <button data-act='show' data-mon='" + m + "' style='padding:0 4px'>↩</button>"; }).join(" ") + "</td></tr>";
+        hr += "</table>";
     }
     try { var ae = parent.document.activeElement; if (ae && (ae.tagName == "SELECT" || ae.tagName == "INPUT") && panel.contains(ae)) return; } catch (e) {}
-    try { var wantW = panel.__wish ? 900 : 470; if (panel.__w != wantW) { panel.__w = wantW; panel.style.width = wantW + "px"; clamp_pos(panel, panel.offsetLeft, panel.offsetTop); } } catch (e) {}
-    panel.querySelector("#lp_body").innerHTML = h;
+    var two = SET.list_right && !panel.__collapsed;
+    var body = panel.querySelector("#lp_body"); body.className = two ? "lp_two" : "";
+    try { var wantW = two ? (panel.__wish && panel.__sec.zielbau ? 1300 : 880) : (panel.__wish && panel.__sec.zielbau ? 900 : 470); if (panel.__w != wantW) { panel.__w = wantW; panel.style.width = wantW + "px"; clamp_pos(panel, panel.offsetLeft, panel.offsetTop); } } catch (e) {}
+    body.innerHTML = two ? "<div id='lp_left'>" + h + "</div><div id='lp_right'>" + hr + "</div>" : h + hr;
 }
 var last_panel = 0;
 
@@ -2103,7 +2173,7 @@ var flee_log = {}; // Spot -> Zeitpunkte der Rückzüge (für die Sperre)
 function note_retreat() { // 3 Rückzüge wegen niedriger HP (≤50 %) am selben Spot in 10 min -> Spot 30 min sperren (Jagd: übersprungen)
     if (character.hp > character.max_hp * 0.5) return; // Rückzug mit noch viel HP (Boss in Sicht o. ä.) zählt nicht
     var m = pick_farm_monster(); if (!m) return;
-    if (hunter_only && m == hunter_only_mon()) return; // Nur Jäger-Jagd: Spot wird nie gesperrt
+
     var now = Date.now(), arr = (flee_log[m] || []).filter(function (t) { return now - t < 10 * 60000; }); arr.push(now); flee_log[m] = arr;
     if (arr.length < 3) return;
     flee_log[m] = [];
@@ -2130,7 +2200,7 @@ async function check_flee() {
         } else game_log("Zu starker Angreifer – sofortiger Rückzug (HP " + Math.round(hp * 100) + "%)");
         try { stop("smart"); change_target(null); await travel_place("town"); while (character.hp < character.max_hp * 0.9 && !character.rip) await sleep(1000); } catch (e) {} fleeing = false; busy = false; return;
     }
-    if (hunter_only && n > 0 && hp <= KITE_HP) n = Math.max(n, FLEE_ATTACKERS); // Nur Jäger-Jagd: starkes Monster zählt nicht als "zu stark", darum wenigstens bei wenig HP kurz zurückweichen
+
     if (n < FLEE_ATTACKERS || hp > KITE_HP) return;
     fleeing = true; busy = true; if (!event_mode) note_retreat();
     try {
@@ -2366,7 +2436,7 @@ async function spend_tokens_for_main() { // Zweit-Charakter: Set-Teile, die dem 
 }
 async function check_monsterhunt() {
     if (event_mode) return; // Event hat Vorrang
-    if (hunter_only) { if (hunt_spot) { game_log("Nur Jäger-Jagd: eigene Jagd auf " + hunt_spot + " wird nicht weiterverfolgt"); hunt_reset(0); } return; } // keine eigenen Jagden, kein Daisy-Besuch
+
     if (!hunt_on || hunting || busy || upgrading || kissing || fleeing || exchanging || paused || !has_weapon()) return;
     if (Date.now() - last_hunt_check < 15000) return;
     last_hunt_check = Date.now();
@@ -2375,7 +2445,7 @@ async function check_monsterhunt() {
     if (q && q.c > 0) {
         if (!hunt_target_ok(q.id)) { if (hunt_spot || !hunt_skipped) { hunt_skipped = q.id; game_log("Jagd auf " + q.id + " übersprungen (" + hunt_skip_reason(q.id) + ") – läuft aus, normal farmen"); if (hunt_spot) hunt_reset(0); hunt_cooldown_until = Date.now() + (q.ms || 1800000); } return; } // unsicher -> läuft ab, normal weiterfarmen
         if (q.ms && q.ms < MH_MIN_LEFT_MS && q.c > 3) return; // kaum noch Zeit: nicht mehr wechseln
-        if (hunt_spot != q.id && team_hunt_logged && current_spot == team_hunt_logged && team_hunt_logged != q.id) { // laufende Team-Jagd zuerst zu Ende bringen
+        if (SET.team_hunt_first && hunt_spot != q.id && team_hunt_logged && current_spot == team_hunt_logged && team_hunt_logged != q.id) { // laufende Team-Jagd zuerst zu Ende bringen
             var th0 = team_hunt_pick(); if (th0 && th0.id == team_hunt_logged) { if (Date.now() - own_hunt_wait_logged > 120000) { own_hunt_wait_logged = Date.now(); game_log("Eigene Jagd " + q.c + "x " + q.id + " wartet, bis die Team-Jagd " + team_hunt_logged + " (" + th0.who + ") fertig ist"); } return; }
         }
         if (hunt_spot != q.id) { hunt_spot = q.id; game_log("Monster Hunt: " + q.c + "x " + q.id + " (" + fmt_time(q.ms || 0) + ")"); set_manual_spot(q.id); }
@@ -2383,6 +2453,7 @@ async function check_monsterhunt() {
     }
     // 2. Jagd erledigt -> abgeben; oder keine Jagd -> neue holen
     if (Date.now() < hunt_cooldown_until) return;
+    if (SET.hunt_town_only && !(q && q.c == 0)) { var dpos = find_npc("monsterhunter"); if (!dpos || character.map != dpos.map || distance(character, dpos) > 900) return; } // neue Jagd nur holen, wenn wir ohnehin in der Stadt sind
     hunting = true; busy = true;
     try {
         var before_tok = tokens(), before_gold = character.gold;
@@ -4137,7 +4208,7 @@ function start_main() {
   if (main_timer) clearInterval(main_timer);
   main_timer = parent.__lp_main_timer = setInterval(function () {
     heal_logic(); loot();
-    if (character.rip) { if (!rip_counted) { rip_counted = true; day_count("deaths"); game_log("Gestorben (heute " + day.deaths + "x)"); try { var hq = mh_quest(); if (hq && hq.c > 0 && hunt_spot == hq.id) { game_log("Tod bei der Jagd auf " + hq.id + " – Jagd abgebrochen, Jagd-Häkchen für " + hq.id + " entfernt"); note_hunt_bad(hq.id); set_hunt_allow(hq.id, false); hunt_reset(30 * 60000); hunt_cooldown_until = Date.now() + (hq.ms || 1800000); } else if (current_spot && !event_mode && !(hunter_only && current_spot == hunter_only_mon())) { blocked_spots[current_spot] = Date.now() + LEVELED_BLOCK_MS; note_hunt_bad(current_spot); if (hunt_allow[current_spot]) { set_hunt_allow(current_spot, false); } game_log("Tod bei " + current_spot + " – Jagd-Häkchen entfernt, Spot 30 min " + (manual_spot == current_spot ? "ausgesetzt, solange wählt die Automatik" : "gesperrt")); need_repick = true; meas = null; } } catch (e) {} } if (meas) finish_measure(true); respawn(); busy = false; fleeing = false; kissing = false; return; }
+    if (character.rip) { if (!rip_counted) { rip_counted = true; day_count("deaths"); game_log("Gestorben (heute " + day.deaths + "x)"); try { var hq = mh_quest(); if (hq && hq.c > 0 && hunt_spot == hq.id) { game_log("Tod bei der Jagd auf " + hq.id + " – Jagd abgebrochen, Jagd-Häkchen für " + hq.id + " entfernt"); note_hunt_bad(hq.id); set_hunt_allow(hq.id, false); hunt_reset(30 * 60000); hunt_cooldown_until = Date.now() + (hq.ms || 1800000); } else if (current_spot && !event_mode) { blocked_spots[current_spot] = Date.now() + LEVELED_BLOCK_MS; note_hunt_bad(current_spot); if (hunt_allow[current_spot]) { set_hunt_allow(current_spot, false); } game_log("Tod bei " + current_spot + " – Jagd-Häkchen entfernt, Spot 30 min " + (manual_spot == current_spot ? "ausgesetzt, solange wählt die Automatik" : "gesperrt")); need_repick = true; meas = null; } } catch (e) {} } if (meas) finish_measure(true); respawn(); busy = false; fleeing = false; kissing = false; return; }
     rip_counted = false;
     session_tick();
     if (Date.now() - last_panel > 2000) { last_panel = Date.now(); try { update_panel(); update_char_panel(); } catch (e) {} }
@@ -4179,7 +4250,7 @@ function start_main() {
     if (!target && hold) { // Team hängt zurück: nur Angreifer auf mich abwehren, sonst stehen bleiben
         for (var hid in parent.entities) { var he = parent.entities[hid]; if (is_valid_target(he) && he.target == character.name) { target = he; break; } }
         if (!target) { set_message(wait_txt()); wait_log(wait_txt() + " – kämpfe nicht allein bei " + farm); if (!rally_back(farm)) meet_escort(); return; }
-        if (character.hp < character.max_hp * 0.6 || strict_mon(farm)) { game_log("Ohne Team von " + target.mtype + " angegriffen (HP " + Math.round(character.hp / character.max_hp * 100) + " %" + (strict_mon(farm) ? ", Team-Pflicht" : "") + ") – Rückzug in die Stadt statt allein zu kämpfen"); fleeing = true; busy = true; (async function () { try { stop("smart"); change_target(null); await travel_place("town"); while (character.hp < character.max_hp * 0.9 && !character.rip) await sleep(1000); } catch (e) {} fleeing = false; busy = false; })(); return; }
+        if (character.hp < character.max_hp * SET.hold_flee / 100 || strict_mon(farm)) { game_log("Ohne Team von " + target.mtype + " angegriffen (HP " + Math.round(character.hp / character.max_hp * 100) + " %" + (strict_mon(farm) ? ", Team-Pflicht" : "") + ") – Rückzug in die Stadt statt allein zu kämpfen"); fleeing = true; busy = true; (async function () { try { stop("smart"); change_target(null); await travel_place("town"); while (character.hp < character.max_hp * 0.9 && !character.rip) await sleep(1000); } catch (e) {} fleeing = false; busy = false; })(); return; }
         wait_log("verteidige mich gegen " + target.mtype + " (Team fehlt noch)"); change_target(target);
     }
     if (!target) {
