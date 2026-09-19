@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v258";
+var BOT_VERSION = "v259";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -721,7 +721,7 @@ function team_html() {
         var warn = !team_on[k] ? "" : !run ? "aus/offline" : !fresh ? "keine Meldung" + (st && Date.now() - st.t < 3600000 ? " seit " + fmt_time(Date.now() - st.t) : "") : st.state == "tot" ? "tot" : (k != "merch" && !same) ? "andere Karte (" + (st.map || "?") + ")" : (k != "merch" && dist > WAIT_BEHIND) ? dist + " px zurück" : "";
         var col = !team_on[k] ? "#9aa3b2" : warn ? "#ffb74d" : "#4caf50", sym = !team_on[k] ? "" : warn ? " ⚠" : " ✓";
         var tip = lab + (fresh ? " Lv " + st.level + " · " + (st.state || "") + (st.map ? " · " + st.map : "") + (dist != null ? " · " + dist + " px" : "") + (st.hpots != null ? " · Tränke " + st.hpots + "/" + (st.mpots || 0) : "") + (st.tokens != null ? " · " + st.tokens + " Tokens" : "") + (st.gold != null ? " · " + fmt(st.gold) + " Gold" : "") + (st.hunt && st.hunt.c > 0 ? " · Jagd " + st.hunt.id + " " + st.hunt.c : "") : run ? " (" + String(raw) + ", keine Meldung)" : team_on[k] ? " (aus/offline)" : " aus");
-        parts.push("<span style='color:" + col + "' title='" + esc(tip) + "'>" + lab + sym + (fresh ? " Lv " + st.level : "") + (warn ? " <small>" + esc(warn) + "</small>" : "") + "</span> <button data-act='team' data-k='" + k + "'" + (team_on[k] ? " class='on'" : "") + " style='padding:0 5px'>" + (team_on[k] ? "an" : "aus") + "</button>");
+        parts.push("<span style='color:" + col + "' title='" + esc(tip) + "'>" + lab + sym + (fresh ? " Lv " + st.level : "") + (warn ? " <small>" + esc(warn) + "</small>" : "") + "</span> <button data-act='team' data-k='" + k + "'" + (team_on[k] ? " class='on'" : "") + " style='padding:0 5px'>" + (team_on[k] ? "an" : "aus") + "</button><button data-act='tchar' data-nm='" + TEAM[k] + "' title='Fenster: Charakter & Inventar von " + lab + "'" + (tchar_panels[TEAM[k]] && tchar_panels[TEAM[k]].parentNode ? " class='on'" : "") + " style='padding:0 5px'>▣</button>");
     }
     var btns = "";
     btns += "<button data-act='teamlogs' title='gespeicherte Logs von Merch/Priest/Ranger (letzte 40 Zeilen je Char) ins Log holen'>Team-Logs</button>";
@@ -1350,7 +1350,7 @@ function init_panel() {
     try { div.__arb = localStorage.getItem("lp_panel_arb") == "1"; } catch (e) { div.__arb = false; }
     div.__sec = { haendler: false, zielbau: false, wartung: false }; try { var so2 = JSON.parse(localStorage.getItem("lp_sec") || "null"); if (so2) for (var sk3 in so2) div.__sec[sk3] = !!so2[sk3]; } catch (e) {}
     try { apply_settings(); } catch (e) {}
-    var inside = function (e) { var c = parent.document.getElementById("lp_char"), w = parent.document.getElementById("lp_wiki"), l = parent.document.getElementById("lp_list"), mk = parent.document.getElementById("lp_mkt"); return e.target && (div.contains(e.target) || (c && c.contains(e.target)) || (w && w.contains(e.target)) || (l && l.contains(e.target)) || (mk && mk.contains(e.target))); };
+    var inside = function (e) { var c = parent.document.getElementById("lp_char"), w = parent.document.getElementById("lp_wiki"), l = parent.document.getElementById("lp_list"), mk = parent.document.getElementById("lp_mkt"), tc = e.target && e.target.closest ? e.target.closest(".lp_tchar") : null; return e.target && (div.contains(e.target) || (c && c.contains(e.target)) || (w && w.contains(e.target)) || (l && l.contains(e.target)) || (mk && mk.contains(e.target)) || !!tc); };
     var onDown = function (e) {
         if (!inside(e)) return;
         var sp0 = div.querySelector("#lp_set"); if (sp0 && sp0.contains(e.target)) { if (e.target.tagName != "INPUT") e.stopPropagation(); else e.stopPropagation(); return; } // Einstellungen: kein Ziehen
@@ -1360,7 +1360,8 @@ function init_panel() {
         else if (ch && ch.contains(e.target)) { drag = { el: c, key: "lp_char_pos", dx: e.clientX - c.offsetLeft, dy: e.clientY - c.offsetTop }; e.preventDefault(); }
         else { var w = parent.document.getElementById("lp_wiki"), wh = w && w.querySelector("#lp_wiki_head"); if (wh && wh.contains(e.target)) { drag = { el: w, key: "lp_wiki_pos", dx: e.clientX - w.offsetLeft, dy: e.clientY - w.offsetTop }; e.preventDefault(); }
                else { var l = parent.document.getElementById("lp_list"), lh = l && l.querySelector("#lp_list_head"); if (lh && lh.contains(e.target)) { drag = { el: l, key: "lp_list_pos", dx: e.clientX - l.offsetLeft, dy: e.clientY - l.offsetTop }; e.preventDefault(); }
-                      else { var mk = parent.document.getElementById("lp_mkt"), mkh = mk && mk.querySelector("#lp_mkt_head"); if (mkh && mkh.contains(e.target)) { drag = { el: mk, key: "lp_mkt_pos", dx: e.clientX - mk.offsetLeft, dy: e.clientY - mk.offsetTop }; e.preventDefault(); } } } }
+                      else { var mk = parent.document.getElementById("lp_mkt"), mkh = mk && mk.querySelector("#lp_mkt_head"); if (mkh && mkh.contains(e.target)) { drag = { el: mk, key: "lp_mkt_pos", dx: e.clientX - mk.offsetLeft, dy: e.clientY - mk.offsetTop }; e.preventDefault(); }
+                             else { var tch = e.target.closest ? e.target.closest(".lp_tchar_head") : null, tcw = tch && tch.parentNode; if (tcw) { drag = { el: tcw, key: "lp_tchar_pos_" + tcw.getAttribute("data-tchar"), dx: e.clientX - tcw.offsetLeft, dy: e.clientY - tcw.offsetTop }; e.preventDefault(); } } } } }
         if (e.target.tagName == "INPUT" || e.target.tagName == "SELECT") { e.stopPropagation(); return; }
         e.stopPropagation();
     };
@@ -1439,6 +1440,7 @@ function init_panel() {
         else if (act == "goalstop") stop_goal("manuell");
         else if (act == "goalskip") { goal_skip[b.getAttribute("data-item")] = Date.now(); save_goal_skip(); goal_cache_t = 0; }
         else if (act == "chartoggle") toggle_char_panel();
+        else if (act == "tchar") toggle_tchar_panel(b.getAttribute("data-nm"));
         else if (act == "wikitoggle") toggle_wiki_panel();
         else if (act == "mkttoggle") toggle_market_panel();
         else if (act == "mbcancel") { if (merch_buy && merch_buy.stage == "away") game_log("Einkauf: Reise läuft, Abbruch erst nach Rückkehr"); else mb_fail("manuell abgebrochen"); }
@@ -1516,11 +1518,14 @@ function tile_html(it, attrs) {
     var lv = it.level ? "<span class='lv'>+" + it.level + "</span>" : "", q = it.q > 1 ? "<span class='q'>" + it.q + "</span>" : "";
     return "<div class='lp_tile' style='background:" + tile_color(it) + "' title='" + esc(item_tip(it)) + "' " + attrs + "><span class='nm'>" + esc(short(it.name)) + "</span>" + lv + q + "</div>";
 }
-function init_char_panel() {
-    var doc = parent.document, old = doc.getElementById("lp_char"); if (old) old.remove();
-    var st = doc.getElementById("lp_char_style"); if (st) st.remove();
+function ensure_char_style() {
+    var doc = parent.document, st = doc.getElementById("lp_char_style"); if (st) st.remove();
     st = doc.createElement("style"); st.id = "lp_char_style";
-    st.textContent = "#lp_char{position:fixed;left:500px;top:130px;z-index:2147483000;pointer-events:auto;width:420px;background:#14161c;color:#e6e6e6;font:12px/1.35 'Segoe UI',Arial,sans-serif;border:1px solid #3a3f4b;border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.6);user-select:none;overflow:hidden}"
+    st.textContent = ".lp_tchar{position:fixed;left:520px;top:150px;z-index:2147483000;pointer-events:auto;width:420px;background:#14161c;color:#e6e6e6;font:12px/1.35 'Segoe UI',Arial,sans-serif;border:1px solid #3a3f4b;border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.6);user-select:none;overflow:hidden}"
+      + ".lp_tchar_head{display:flex;align-items:center;gap:8px;padding:6px 10px;background:linear-gradient(#2b3140,#1e222c);cursor:move;border-bottom:1px solid #3a3f4b}.lp_tchar_head b{flex:1;font-size:13px}.lp_tchar_head button{font:11px 'Segoe UI',Arial;padding:0 6px;cursor:pointer;background:#3a3f4b;color:#eee;border:1px solid #555;border-radius:3px}"
+      + ".lp_tchar_body{padding:8px 10px;max-height:calc(100vh - 200px);overflow-y:auto}.lp_tchar .lp_tile{cursor:default}.lp_tchar .lp_tile:hover{border-color:#444a58}"
+      + ".lp_hpbar{height:9px;background:#2a2e38;border-radius:4px;overflow:hidden;margin:2px 0 4px}.lp_hpbar i{display:block;height:100%}"
+      + "#lp_char{position:fixed;left:500px;top:130px;z-index:2147483000;pointer-events:auto;width:420px;background:#14161c;color:#e6e6e6;font:12px/1.35 'Segoe UI',Arial,sans-serif;border:1px solid #3a3f4b;border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.6);user-select:none;overflow:hidden}"
       + "#lp_char_head{display:flex;align-items:center;gap:8px;padding:6px 10px;background:linear-gradient(#2b3140,#1e222c);cursor:move;border-bottom:1px solid #3a3f4b}#lp_char_head b{flex:1;font-size:13px}"
       + "#lp_char_head button{font:11px 'Segoe UI',Arial;padding:0 6px;cursor:pointer;background:#3a3f4b;color:#eee;border:1px solid #555;border-radius:3px}"
       + "#lp_char_body{padding:8px 10px;max-height:calc(100vh - 200px);overflow-y:auto}"
@@ -1530,6 +1535,63 @@ function init_char_panel() {
       + ".lp_tile.empty{background:#1a1d24;border-style:dashed;cursor:default}.lp_tile.eqempty{border-color:#7a3030}.lp_tile .nm{font-size:10.5px;display:block;white-space:nowrap}.lp_tile .lv{position:absolute;right:3px;bottom:2px;font-size:10px;color:#ffd54f}.lp_tile .q{position:absolute;left:4px;bottom:2px;font-size:10px;color:#9aa3b2}.lp_tile .sl{position:absolute;left:4px;bottom:2px;font-size:9px;color:#6b7280}"
       + ".lp_xp{height:8px;background:#2a2e38;border-radius:4px;overflow:hidden;margin:4px 0 6px}.lp_xp i{display:block;height:100%;background:#7e57c2}";
     doc.head.appendChild(st);
+}
+var CHAR_EQ = [["earring1", "Ohr"], ["helmet", "Helm"], ["earring2", "Ohr"], ["amulet", "Amulett"], ["mainhand", "Waffe"], ["chest", "Rüstung"], ["offhand", "Nebenh."], ["cape", "Umhang"], ["ring1", "Ring"], ["pants", "Hose"], ["ring2", "Ring"], ["orb", "Orb"], ["belt", "Gürtel"], ["shoes", "Schuhe"], ["gloves", "Handsch."], ["elixir", "Elixier"]];
+// ---------- Team-Fenster: Charakter & Inventar von Priest/Ranger/Händler (live aus deren Fenster, sonst letzte Meldung) ----------
+var tchar_panels = {}, tchar_open = {}; try { tchar_open = JSON.parse(localStorage.getItem("lp_tchar_open") || "{}"); } catch (e) {}
+function tchar_key(nm) { for (var k in TEAM) if (TEAM[k] == nm) return k; return null; }
+function init_tchar_panel(nm) {
+    var doc = parent.document, id = "lp_tchar_" + nm.toLowerCase(), old = doc.getElementById(id); if (old) old.remove();
+    if (!doc.getElementById("lp_char_style")) ensure_char_style();
+    var div = doc.createElement("div"); div.id = id; div.className = "lp_tchar"; div.setAttribute("data-tchar", nm);
+    div.innerHTML = "<div class='lp_tchar_head'><b>" + esc(TEAM_LABEL[tchar_key(nm)] || nm) + " – " + esc(nm) + "</b><span class='lp_k' data-tchar-state style='font-size:11px'></span><button data-act='tchar' data-nm='" + esc(nm) + "' title='Fenster schließen'>✕</button></div><div class='lp_tchar_body'></div>";
+    doc.body.appendChild(div);
+    try { var p = JSON.parse(localStorage.getItem("lp_tchar_pos_" + nm) || "null"); if (p) clamp_pos(div, p.x, p.y); else { var idx = Object.keys(tchar_panels).length; clamp_pos(div, 520 + idx * 40, 150 + idx * 40); } } catch (e) {}
+    return div;
+}
+function toggle_tchar_panel(nm) {
+    var p = tchar_panels[nm], on = !(p && p.parentNode);
+    if (on) { tchar_panels[nm] = init_tchar_panel(nm); tchar_open[nm] = true; update_tchar_panels(); } else { p.remove(); delete tchar_panels[nm]; delete tchar_open[nm]; }
+    try { localStorage.setItem("lp_tchar_open", JSON.stringify(tchar_open)); } catch (e) {}
+}
+function tchar_live(nm) { try { var w = team_windows()[nm]; var ch = w && w.win && w.win.character; if (ch && ch.name == nm && ch.items) return ch; } catch (e) {} return null; }
+function update_tchar_panels() {
+    for (var nm in tchar_panels) {
+        var div = tchar_panels[nm]; if (!div || !div.parentNode) { delete tchar_panels[nm]; continue; }
+        var ch = tchar_live(nm), st = team_state[nm], k = tchar_key(nm), h = "";
+        var stx = div.querySelector("[data-tchar-state]");
+        if (!ch && !st) { if (stx) stx.textContent = "keine Daten"; div.querySelector(".lp_tchar_body").innerHTML = "<div class='lp_k'>Kein Fenster und keine Statusmeldung von " + esc(nm) + " – ist der Charakter gestartet?</div>"; continue; }
+        var c = ch || {}, lvl = ch ? ch.level : st.level, hp = ch ? ch.hp : st.hp, mhp = ch ? ch.max_hp : st.max_hp, mp = ch ? ch.mp : (st.mp_pct != null && st.max_mp ? Math.round(st.mp_pct * st.max_mp) : null), mmp = ch ? ch.max_mp : st.max_mp, gold = ch ? ch.gold : st.gold;
+        var state_txt = (st && st.state ? st.state : "") + (st && st.hunt && st.hunt.c > 0 ? " · Jagd " + st.hunt.id + " " + st.hunt.c : "") + (ch ? "" : st ? " · Stand vor " + Math.round((Date.now() - st.t) / 1000) + " s (kein Live-Zugriff)" : "");
+        if (stx) stx.textContent = (ch && ch.rip) ? "TOT" : state_txt;
+        var hpp = mhp ? Math.round(hp / mhp * 100) : 0, mpp = mmp && mp != null ? Math.round(mp / mmp * 100) : 0;
+        var xp_pct = ch ? Math.round(ch.xp / (G.levels[ch.level] || 1) * 100) : null;
+        h += "<div><span class='lp_k'>Level</span> <b>" + (lvl != null ? lvl : "?") + "</b>" + (xp_pct != null ? " <span class='lp_k'>(" + xp_pct + "%)</span>" : "") + " &nbsp; <span class='lp_k'>Gold</span> <b>" + (gold != null ? fmt(gold) : "?") + "</b>" + (ch ? " &nbsp; <span class='lp_k'>Karte</span> " + esc(ch.map || "?") + " " + Math.round(ch.x || 0) + "," + Math.round(ch.y || 0) : st && st.map ? " &nbsp; <span class='lp_k'>Karte</span> " + esc(st.map) : "") + "</div>";
+        if (xp_pct != null) h += "<div class='lp_xp'><i style='width:" + xp_pct + "%'></i></div>";
+        h += "<div><span class='lp_k'>HP</span> " + (hp != null ? hp + " / " + mhp + " (" + hpp + "%)" : "?") + "</div><div class='lp_hpbar'><i style='width:" + hpp + "%;background:" + (hpp < 35 ? "#e53935" : "#43a047") + "'></i></div>";
+        h += "<div><span class='lp_k'>MP</span> " + (mp != null ? mp + " / " + mmp + " (" + mpp + "%)" : "?") + "</div><div class='lp_hpbar'><i style='width:" + mpp + "%;background:#1e88e5'></i></div>";
+        if (ch) {
+            var hpots = 0, mpots = 0; ch.items.forEach(function (it) { if (!it) return; if (/^hpot/.test(it.name)) hpots += it.q || 1; else if (/^mpot/.test(it.name)) mpots += it.q || 1; });
+            h += "<div style='margin:4px 0 6px'><span class='lp_k'>Tränke</span> " + hpots + " / " + mpots + " &nbsp; <span class='lp_k'>frei</span> " + ch.esize + " / " + ch.items.length + (ch.s && ch.s.mluck ? " &nbsp; <span class='lp_k'>mluck</span> " + fmt_time(ch.s.mluck.ms) : "") + "</div>";
+            h += "<div class='lp_cols'><div class='lp_eq'>";
+            CHAR_EQ.forEach(function (e) { var it = ch.slots && ch.slots[e[0]]; h += it ? tile_html(it, "").replace("</div>", "<span class='sl'>" + e[1] + "</span></div>") : "<div class='lp_tile empty eqempty' title='" + e[1] + " – leer'><span class='sl'>" + e[1] + "</span></div>"; });
+            h += "</div><div class='lp_stats'>";
+            [["Angriff", Math.round(ch.attack || 0)], ["Tempo", (ch.frequency || 0).toFixed(2) + "/s"], ["Reichweite", ch.range], ["Rüstung", ch.armor], ["Resistenz", ch.resistance], ["Laufen", ch.speed], ["INT", ch.int], ["STR", ch.str], ["DEX", ch.dex], ["VIT", ch.vit], ["XP-Bonus", (ch.xp_bonus || 0) + "%"], ["Gold-Bonus", (ch.gold_bonus || 0) + "%"]].forEach(function (r) { h += "<div><span class='lp_k'>" + r[0] + "</span><span>" + (r[1] != null ? r[1] : "?") + "</span></div>"; });
+            h += "</div></div><div class='lp_inv'>";
+            for (var i = 0; i < ch.items.length; i++) h += tile_html(ch.items[i], "");
+            h += "</div>";
+        } else {
+            h += "<div style='margin:4px 0'><span class='lp_k'>Tränke</span> " + (st.hpots != null ? st.hpots + " / " + (st.mpots || 0) : "?") + (st.free != null ? " &nbsp; <span class='lp_k'>frei</span> " + st.free : "") + (st.tokens != null ? " &nbsp; <span class='lp_k'>Tokens</span> " + st.tokens : "") + "</div>";
+            if (st.slots) { h += "<div class='lp_eq'>"; CHAR_EQ.forEach(function (e) { var it = st.slots[e[0]]; h += it ? tile_html(it, "").replace("</div>", "<span class='sl'>" + e[1] + "</span></div>") : "<div class='lp_tile empty eqempty' title='" + e[1] + " – leer'><span class='sl'>" + e[1] + "</span></div>"; }); h += "</div>"; }
+            h += "<div class='lp_k' style='margin-top:6px'>Inventar nur mit Live-Zugriff sichtbar (Charakter läuft nicht in diesem Browserfenster).</div>";
+        }
+        div.querySelector(".lp_tchar_body").innerHTML = h;
+    }
+}
+try { for (var tnm in tchar_open) if (tchar_open[tnm] && TEAM_NAMES.indexOf(tnm) >= 0) tchar_panels[tnm] = init_tchar_panel(tnm); } catch (e) {}
+function init_char_panel() {
+    var doc = parent.document, old = doc.getElementById("lp_char"); if (old) old.remove();
+    ensure_char_style();
     var div = doc.createElement("div"); div.id = "lp_char";
     div.innerHTML = "<div id='lp_char_head'><b>" + esc(character.name) + " – Charakter & Inventar</b><button data-act='chartoggle'>✕</button></div><div id='lp_char_body'></div>";
     doc.body.appendChild(div);
@@ -4574,7 +4636,7 @@ function start_main() {
     if (character.rip) { if (!rip_counted) { rip_counted = true; day_count("deaths"); game_log("Gestorben (heute " + day.deaths + "x)"); try { var hq = mh_quest(); if (hq && hq.c > 0 && hunt_spot == hq.id) { game_log("Tod bei der Jagd auf " + hq.id + " – Jagd abgebrochen, Jagd-Häkchen für " + hq.id + " entfernt"); note_hunt_bad(hq.id); set_hunt_allow(hq.id, false); hunt_reset(30 * 60000); hunt_cooldown_until = Date.now() + (hq.ms || 1800000); } else if (current_spot && !event_mode) { blocked_spots[current_spot] = Date.now() + LEVELED_BLOCK_MS; note_hunt_bad(current_spot); if (hunt_allow[current_spot]) { set_hunt_allow(current_spot, false); } game_log("Tod bei " + current_spot + " – Jagd-Häkchen entfernt, Spot 30 min " + (manual_spot == current_spot ? "ausgesetzt, solange wählt die Automatik" : "gesperrt")); need_repick = true; meas = null; } } catch (e) {} } if (meas) finish_measure(true); respawn(); busy = false; fleeing = false; kissing = false; return; }
     rip_counted = false;
     session_tick();
-    if (Date.now() - last_panel > 2000) { last_panel = Date.now(); try { update_panel(); update_char_panel(); } catch (e) {} }
+    if (Date.now() - last_panel > 2000) { last_panel = Date.now(); try { update_panel(); update_char_panel(); update_tchar_panels(); } catch (e) {} }
     try { if (!SOLO) { merch_test_tick(); arb_tick(); merch_buy_tick(); event_tick(); } team_tick(); team_broadcast(); if (!SOLO) { team_read_logs(); team_inject(); } bank_snapshot(); if (!manual_lock && !paused && !SOLO) { priest_gear_tick(); energize_tick(); team_wish_handover_tick(); } } catch (e) {}
     if (paused) return;
     measure_tick();
