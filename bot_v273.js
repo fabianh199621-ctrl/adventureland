@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v272";
+var BOT_VERSION = "v273";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -430,7 +430,7 @@ function team_broadcast() { // alle 5 s: wo bin ich, was mache ich (für Händle
     if (SOLO) { if (Date.now() - solo_last_st > 30000) { solo_last_st = Date.now(); try { var hq0 = mh_quest(); send_cm(MAIN_NAME, { t: "st", level: character.level, state: character.rip ? "tot" : paused ? "Pause" : (hq0 && hq0.c > 0 ? "jagt " + hq0.id + " (" + hq0.c + ")" : "farmt " + (current_spot || "?")), gold: character.gold, tokens: tokens(), hp: character.hp, max_hp: character.max_hp, map: character.map, free: character.esize }); } catch (e) {} } return; }
     try { window.localStorage.setItem("lp_mh_missing", JSON.stringify(mh_missing_for_me())); } catch (e) {} // für Jäger/Priest/Ranger: welche Set-Teile mir fehlen
     var act = active_chars(), ml = character.s && character.s.mluck;
-    var msg = { t: "me", map: character.map, x: Math.round(character.x), y: Math.round(character.y), level: character.level, hp: character.hp, max_hp: character.max_hp, paused: paused || !bot_running, spot: current_spot, strict: strict_mon(current_spot), event: event_mode, mg: MG, hunt_go: (function () { try { var hs0 = hunt_slot_state(); return hs0.busy ? null : hs0.fetcher; } catch (e) { return null; } })(), hunt_holder: (function () { try { return hunt_slot_state().holder; } catch (e) { return null; } })(), tgt: (function () { if (!paused) return last_target_id; try { var mt = get_target(); return mt && mt.type == "monster" && !mt.dead ? mt.id : null; } catch (e) { return null; } })(), mluck: ml ? { f: ml.f, ms: ml.ms, strong: !!ml.strong } : null, in: character.in };
+    var msg = { t: "me", free: character.esize, map: character.map, x: Math.round(character.x), y: Math.round(character.y), level: character.level, hp: character.hp, max_hp: character.max_hp, paused: paused || !bot_running, spot: current_spot, strict: strict_mon(current_spot), event: event_mode, mg: MG, hunt_go: (function () { try { var hs0 = hunt_slot_state(); return hs0.busy ? null : hs0.fetcher; } catch (e) { return null; } })(), hunt_holder: (function () { try { return hunt_slot_state().holder; } catch (e) { return null; } })(), tgt: (function () { if (!paused) return last_target_id; try { var mt = get_target(); return mt && mt.type == "monster" && !mt.dead ? mt.id : null; } catch (e) { return null; } })(), mluck: ml ? { f: ml.f, ms: ml.ms, strong: !!ml.strong } : null, in: character.in };
     for (var k in TEAM) { var nm = TEAM[k]; if (team_on[k] && act[nm]) { try { send_cm(nm, msg); } catch (e) {} } }
 }
 function team_send(name, data) { try { send_cm(name, data); } catch (e) {} }
@@ -444,6 +444,7 @@ function on_cm(name, data) { // Nachrichten der eigenen Charaktere
         else if (data.t == "st") { team_state[name] = Object.assign({}, data, { t: Date.now() }); last_panel = 0; }
         else if (data.t == "ready") { if (pickup_state) pickup_state.ready = true; }
         else if (data.t == "sold") { game_log("[" + who + "] VERKAUFT: " + data.name + " für " + fmt(data.price) + " Gold – Gold kommt bei der nächsten Abholung/Übergabe"); if (stand_orders[data.name]) { delete stand_orders[data.name]; save_stand_orders(); } }
+        else if (data.t == "given") { give_done[name] = true; game_log("[" + who + "] Übergabe: " + (data.n || 0) + " Posten" + (data.left ? ", " + data.left + " nicht (mein Inventar voll)" : "")); }
         else if (data.t == "donated") { last_donate = Date.now(); if (data.gold > 0 && data.xp > 0) { donate_rate = data.xp / data.gold; try { localStorage.setItem("lp_donate_rate", String(donate_rate)); } catch (x) {} } game_log("[" + who + "] Spende: " + fmt(data.gold) + " Gold → " + fmt(data.xp) + " XP, jetzt Lv " + data.level); last_panel = 0; }
         else if (data.t == "msold") { if (merch_buy && data.id == merch_buy.id) { if (data.ok) mb_done(data.q + "× " + merch_buy.o.name + " verkauft für " + fmt(data.earned) + " – Erlös in der Händlerkasse"); else mb_fail(data.why || "Verkauf nicht gelungen – Item bleibt beim Händler"); } }
         else if (data.t == "bought") { if (merch_buy && data.id == merch_buy.id) { if (data.ok) { merch_buy.stage = "deliver"; merch_buy.t = Date.now(); mb_save(); } else mb_fail(data.why || "Kauf nicht gelungen"); } }
@@ -2117,7 +2118,7 @@ async function merchant_pickup(reason) { // Händler rufen, Items übergeben, Tr
     handing = false; busy = false; pickup_state = null;
     return ok;
 }
-var tidy_force = false; // Button: kompletter Durchgang unabhängig vom Füllstand
+var tidy_force = false, give_done = {}; // Button: kompletter Durchgang unabhängig vom Füllstand
 async function tidy_inventory() {
     var min_free = focus_mode ? FOCUS_MIN_FREE : INV_MIN_FREE;
     if (busy || upgrading || paused || (!tidy_force && (character.esize >= min_free || Date.now() < tidy_next))) return;
@@ -2833,12 +2834,22 @@ async function compound_only() {
 async function tidy_now() {
     if (busy || upgrading) { game_log("Gerade beschäftigt – gleich nochmal"); return; }
     unpause("Aufräumen");
+    // 1. Priest/Ranger bringen alles außer Tränken/Tokens zum Magier, Händler räumt selbst (Bank)
+    var givers = ["priest", "ranger"].filter(function (k) { return team_on[k] && team_running(TEAM[k]); });
+    if (team_on.merch && team_running(TEAM.merch)) team_send(TEAM.merch, { t: "tidy" });
+    if (givers.length) {
+        busy = true; give_done = {}; givers.forEach(function (k) { team_send(TEAM[k], { t: "givemage" }); });
+        game_log("Aufräumen: " + givers.map(function (k) { return TEAM_LABEL[k]; }).join("/") + " bringen alles außer Tränken/Tokens zu mir – ich warte (frei: " + character.esize + ")");
+        set_message("Team-Übergabe"); var t0 = Date.now();
+        while (Date.now() - t0 < 120000 && givers.some(function (k) { return !give_done[TEAM[k]]; }) && !character.rip) await sleep(500);
+        var late = givers.filter(function (k) { return !give_done[TEAM[k]]; }); if (late.length) game_log("Aufräumen: keine Rückmeldung von " + late.map(function (k) { return TEAM_LABEL[k]; }).join("/") + " – mache weiter");
+        busy = false;
+    }
+    // 2. dann eigenes Inventar
     tidy_force = true; tidy_next = 0;
     try { await tidy_inventory(); } finally { tidy_force = false; }
     if (!paused) { try { await sort_inventory(); } catch (e) {} }
     game_log("Aufräumen fertig – frei: " + character.esize + " (behalten: Tränke, Scrolls, Event, 3er-Sets Schmuck, Ziel-Items – Reserven liegen in der Bank)");
-    ["priest", "ranger", "merch"].forEach(function (k) { if (team_on[k] && team_running(TEAM[k])) team_send(TEAM[k], { t: "tidy" }); });
-    if ((team_on.priest && team_running(TEAM.priest)) || (team_on.ranger && team_running(TEAM.ranger))) game_log("Aufräumen: Priest/Ranger/Händler verkaufen nur Billiges (NPC-Wert < 10k, max. +2) und legen den Rest in die Bank (Tränke, Tokens bleiben)");
     after_action("Aufräumen");
 }
 

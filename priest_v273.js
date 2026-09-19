@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Priester (F4llenPriest) – Stufe 1 =====
 // Folgt dem Magier, heilt ihn und sich, nimmt die Party-Einladung an, greift erst ab PRIEST_ATTACK_LEVEL mit an.
 // Meldungen gehen per Charakter-Nachricht an den Magier ("[Priest] …").
-var PRIEST_VERSION = "v272";
+var PRIEST_VERSION = "v273";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -80,6 +80,25 @@ async function enter_bank() { // sicher in die Bank: smart_move, sonst zur Tür 
     if (character.map != "bank") return false;
     for (var w3 = 0; w3 < 25 && !character.bank; w3++) await sleep(200);
     return !!character.bank;
+}
+var give_req = 0;
+async function go_give_mage() { // alles außer Tränken/Tokens/Tracker zum Magier bringen und übergeben
+    give_req = 0; shopping = true; var n = 0, left = 0;
+    try {
+        for (var w = 0; w < 20 && moving; w++) await sleep(500);
+        try { stop("smart"); stop("move"); } catch (e) {}
+        status("Übergabe");
+        var m = mage_entity(), tgt = m && character.map == m.map ? { map: m.map, x: m.x, y: m.y } : (mage ? { map: mage.map, x: mage.x, y: mage.y } : null);
+        if (!tgt) throw "Magier-Position unbekannt";
+        for (var i = 0; i < 4; i++) { try { await smart_move(tgt); } catch (e) {} m = mage_entity(); if (m && character.map == m.map && dist(character, m) < 200) break; if (mage) tgt = { map: mage.map, x: mage.x, y: mage.y }; }
+        m = mage_entity(); if (!m || character.map != m.map || dist(character, m) > 300) throw "Magier nicht erreicht (" + character.map + ")";
+        for (var j = character.items.length - 1; j >= 0; j--) { var it = character.items[j]; if (!it) continue; if (/^(hpot|mpot)/.test(it.name) || it.name == "monstertoken" || it.name == "tracker" || it.name == "computer") continue;
+            if (mage && mage.free != null && mage.free <= 1) { left++; continue; }
+            try { send_item(MAGE, j, it.q || 1); n++; } catch (e) { left++; } await sleep(350); }
+        say("Übergabe: " + n + " Posten an " + MAGE + (left ? ", " + left + " nicht (Magier voll)" : ""));
+    } catch (e) { say("Übergabe: " + (e && e.message ? e.message : e)); }
+    try { send_cm(MAGE, { t: "given", n: n, left: left }); } catch (e) {}
+    shopping = false;
 }
 var tidy_req = 0, goldback_req = 0, last_goldback = 0, GOLD_MAX = 2000000;
 function gold_handback() { // alles über GOLD_MAX an den Magier, wenn er in Reichweite steht (auf Befehl sofort, sonst alle 5 min prüfen)
@@ -221,6 +240,7 @@ function on_cm(name, data) {
     else if (data.t == "state") p_paused = !!data.paused;
     else if (data.t == "join") { try { var jr = join(data.event); if (jr && typeof jr.then == "function") jr.then(function () { say("Event " + data.event + ": angekommen"); }, function (e) { say("Event-Sprung fehlgeschlagen: " + (e && e.reason || JSON.stringify(e).slice(0, 80))); }); } catch (e) { say("Event-Sprung: " + (e && e.message || e)); } }
     else if (data.t == "tidy") { tidy_req = Date.now(); say("Aufräumen angefordert"); }
+    else if (data.t == "givemage") { give_req = Date.now(); say("Übergabe an den Magier angefordert"); }
     else if (data.t == "kiss") { kiss_req = data; say("Kuss-Runde " + data.round + ": " + data.name + " (" + data.map + ")"); }
     else if (data.t == "help") { help_until = Date.now() + 20000; try { stop("smart"); } catch (e) {} moving = false; }
     else if (data.t == "gear") { gear_incoming.push(data); if (gear_incoming.length == 1) setTimeout(equip_incoming, 800); }
@@ -260,6 +280,7 @@ async function tick() {
     if (hpr < HEAL_SELF_BELOW) { if (can_use("heal") && character.mp > 30) heal_target(character); else if (!use_pot("hpot")) { try { use_skill("regen_hp"); } catch (e) {} } }
     if (mpr < 0.3) { if (!use_pot("mpot")) { try { use_skill("regen_mp"); } catch (e) {} } }
     if (shopping) return;
+    if (give_req && !my_attacker()) { go_give_mage(); return; }
     if (tidy_req && !my_attacker() && !moving) { go_tidy(); return; }
     if (kiss_req && !my_attacker()) { do_kiss(kiss_req); return; }
     try { event_handover(); } catch (e) {}
