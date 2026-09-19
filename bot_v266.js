@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v265";
+var BOT_VERSION = "v266";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -444,7 +444,8 @@ function on_cm(name, data) { // Nachrichten der eigenen Charaktere
         else if (data.t == "st") { team_state[name] = Object.assign({}, data, { t: Date.now() }); last_panel = 0; }
         else if (data.t == "ready") { if (pickup_state) pickup_state.ready = true; }
         else if (data.t == "sold") { game_log("[" + who + "] VERKAUFT: " + data.name + " für " + fmt(data.price) + " Gold – Gold kommt bei der nächsten Abholung/Übergabe"); if (stand_orders[data.name]) { delete stand_orders[data.name]; save_stand_orders(); } }
-        else if (data.t == "sold") { if (merch_buy && data.id == merch_buy.id) { if (data.ok) mb_done(data.q + "× " + merch_buy.o.name + " verkauft für " + fmt(data.earned) + " – Erlös in der Händlerkasse"); else mb_fail(data.why || "Verkauf nicht gelungen – Item bleibt beim Händler"); } }
+        else if (data.t == "donated") { last_donate = Date.now(); game_log("[" + who + "] Spende: " + fmt(data.gold) + " Gold → " + fmt(data.xp) + " XP, jetzt Lv " + data.level); last_panel = 0; }
+        else if (data.t == "msold") { if (merch_buy && data.id == merch_buy.id) { if (data.ok) mb_done(data.q + "× " + merch_buy.o.name + " verkauft für " + fmt(data.earned) + " – Erlös in der Händlerkasse"); else mb_fail(data.why || "Verkauf nicht gelungen – Item bleibt beim Händler"); } }
         else if (data.t == "bought") { if (merch_buy && data.id == merch_buy.id) { if (data.ok) { merch_buy.stage = "deliver"; merch_buy.t = Date.now(); mb_save(); } else mb_fail(data.why || "Kauf nicht gelungen"); } }
         else if (data.t == "delivered_item") { if (merch_buy && data.id == merch_buy.id) { if (data.q > 0) mb_done(data.name + (data.q > 1 ? " ×" + data.q : "") + " erhalten" + (data.gold ? ", " + fmt(data.gold) + " Gold zurück" : "")); else if (data.ok) { merch_buy.stage = "fetch"; merch_buy.t = Date.now(); mb_save(); game_log("Einkauf: Händler hat mich nicht erreicht – rufe ihn zum Abholen"); } } }
         else if (data.t == "delivered") { if (pickup_state) pickup_state.done = true; if (merch_buy && merch_buy.stage == "fetching" && data.items) merch_buy.got = data.items; if (data.pots) game_log("[Merch] Tränke erhalten: " + data.pots); if (data.gold) game_log("[Merch] " + fmt(data.gold) + " Gold Verkaufserlös erhalten"); }
@@ -1444,6 +1445,8 @@ function init_panel() {
         else if (act == "tchar") toggle_tchar_panel(b.getAttribute("data-nm"));
         else if (act == "wikitoggle") toggle_wiki_panel();
         else if (act == "mkttoggle") toggle_market_panel();
+        else if (act == "donate") { if (!team_on.merch || !team_running(TEAM.merch)) game_log("Spenden: Händler läuft nicht"); else { last_donate = Date.now(); team_send(TEAM.merch, { t: "donate", gold: donate_amt, target: 200 }); game_log("Spenden: Händler bringt " + fmt(donate_amt) + " Gold zu Ron"); } }
+        else if (act == "donateauto") { donate_auto = !donate_auto; try { localStorage.setItem("lp_donate_auto", donate_auto ? "1" : "0"); } catch (x) {} game_log("Spenden-Automatik " + (donate_auto ? "an – Händler spendet alles über der Nachfüllgrenze bis Lv " + DONATE_LVL : "aus")); last_panel = 0; }
         else if (act == "mbcancel") { if (merch_buy && merch_buy.stage == "away") game_log("Einkauf: Reise läuft, Abbruch erst nach Rückkehr"); else mb_fail("manuell abgebrochen"); }
         else if (act == "geartoggle") { div.__gear = !div.__gear; try { localStorage.setItem("lp_panel_gear", div.__gear ? "1" : "0"); } catch (x) {} }
         else if (act == "clearlog") { log_buf = []; try { localStorage.setItem("lp_log", "[]"); } catch (x) {} _game_log("Log-Puffer geleert"); }
@@ -1459,6 +1462,7 @@ function init_panel() {
         if (!inside(e)) return;
         var t = e.target; if (!t || (t.tagName != "SELECT" && t.tagName != "INPUT")) return;
         if (t.getAttribute("data-setk")) { settings_input(t); return; }
+        if (t.getAttribute("data-mgk") == "donate") { var dv = parse_mio(t.value); if (dv >= 1000) { donate_amt = dv; try { localStorage.setItem("lp_donate_amt", String(dv)); } catch (x) {} game_log("Spendenbetrag: " + fmt(dv)); } try { t.blur(); } catch (x) {} return; }
         if (t.getAttribute("data-mgk")) { var mgk2 = t.getAttribute("data-mgk"); if (mgk2 == "esc") { var ev = parse_mio(t.value); if (ev >= 10000) MG.esc_max = ev; } else { var mv3 = parse_mio(t.value); if (mv3 > 0) MG[mgk2] = mv3; } if (MG.min > MG.target) MG.min = MG.target; mg_save(); game_log("Händler-Kasse: Ziel " + fmt(MG.target) + ", nachfüllen unter " + fmt(MG.min) + ", Priest/Ranger max. " + fmt(MG.esc_max)); try { t.blur(); } catch (x) {} return; }
         if (t.getAttribute("data-msel")) { mkt[t.getAttribute("data-msel")] = t.value; mkt_show = 0; save_mkt(); try { t.blur(); } catch (x) {} render_market(); return; }
         var ws = t.getAttribute("data-wslot"), wl = t.getAttribute("data-wlvl"), wm = t.getAttribute("data-wmax");
@@ -1839,6 +1843,7 @@ function update_panel() {
     var tips = server_tip(); var sc = market_scroll_summary();
     h += lp_sec("haendler", "Händler", stand_txt + (sc ? " · " + sc : "") + " · " + (tips.length ? tips.length + " Serverfund" + (tips.length > 1 ? "e" : "") : "kein Serverfund") + (arb_auto ? " · Handelsreise Auto" : ""),
         (merch_buy ? "<div class='lp_row'><span class='lp_k'>Einkauf:</span> <span style='color:#8ab4f8'>" + esc(mb_stage_txt()) + "</span><button data-act='mbcancel' title='Einkauf abbrechen (Gold kommt bei der nächsten Abholung zurück)'>Abbrechen</button></div>" : "") + "<div class='lp_row'><span class='lp_k'>Aktionen</span>" + (team_on.merch ? "<button data-act='goldback' title='Händler bringt alles über seinem Zielbestand, Priest/Ranger alles über ihrem Maximum zu dir'>Gold holen" + (mst0 && mst0.gold ? " (" + fmt(mst0.gold) + ")" : "") + "</button>" : "") + "<span class='lp_k' style='margin-left:6px'>Kasse:</span> <input data-mgk='target' value='" + esc(fmt_mio(MG.target)) + "' title='Zielbestand des Händlers in Mio. – er füllt bei dir auf, wenn er unter die Nachfüllgrenze fällt' style='width:44px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'> <span class='lp_k'>Mio · nachfüllen unter</span> <input data-mgk='min' value='" + esc(fmt_mio(MG.min)) + "' title='Nachfüllgrenze des Händlers in Mio.' style='width:44px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'> <span class='lp_k'>Mio · Priest/Ranger max.</span> <input data-mgk='esc' value='" + esc(fmt_mio(MG.esc_max)) + "' title='Priest/Ranger geben alles über diesem Betrag (in Mio.) an dich ab' style='width:44px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'> <span class='lp_k'>Mio</span>" + "<button data-act='mkttoggle' title='Markt-Fenster: alle Angebote aller Server, filterbar'>Markt</button><button data-act='marketscan' title='Alle Händlerstände jetzt abfragen: Zielbau-Angebote und Schnäppchen unter NPC-Wert'" + (scanning_now ? " class='on'" : "") + ">" + (scanning_now ? "Scan läuft…" : "Schnäppchen scannen") + "</button></div>"
+        + (team_on.merch ? "<div class='lp_row'><span class='lp_k'>Spenden (Ron):</span> <input data-mgk='donate' value='" + esc(fmt_mio(donate_amt)) + "' title='Betrag in Mio., den der Händler bei Ron gegen XP spendet (4,8 XP/Gold bei leerer Schatzkammer)' style='width:44px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'> <span class='lp_k'>Mio</span><button data-act='donate' title='Händler läuft zu Ron und spendet den Betrag in 100k-Schritten (Kasse bleibt über der Nachfüllgrenze)'>Spenden</button><button data-act='donateauto'" + (donate_auto ? " class='on'" : "") + " title='Händler spendet automatisch alles über der Nachfüllgrenze, bis er Lv " + DONATE_LVL + " hat (mluck)'>Auto bis Lv " + DONATE_LVL + "</button>" + (mst0 && mst0.level != null ? "<span class='lp_k'>Händler Lv " + mst0.level + (mst0.level >= 40 ? " – mluck aktiv" : ", bis Lv 40 noch ~" + fmt(Math.round(lvl_xp_between(mst0.level, 40) / 4.8)) + " Gold") + "</span>" : "") + "</div>" : "")
         + "<div class='lp_row' style='flex-wrap:wrap;line-height:1.6'><span class='lp_k'>Serverwechsel:</span> <span style='font-size:11px'>" + server_tip_html() + "</span></div>" + arb_html(panel) + arb_trip_html() + watch_html());
     // Zielbau (eingeklappt)
     var tw_sum = ["priest", "ranger"].filter(function (k) { return team_on[k]; }).map(function (k) { var cfgs = team_wish[k] || {}, n = 0, done = 0; TEAM_WISH_SLOTS.forEach(function (sl) { var c = cfgs[sl]; if (c && c.item) { n++; var s2 = tw_status(k, sl); if (s2 && s2.state == "fertig") done++; } }); return TEAM_LABEL[k] + " " + (n ? done + "/" + n : "–"); }).join(" · ");
@@ -2175,7 +2180,7 @@ function bankable_extra(it, idx) {
         var same = find_inv_indices(it.name, it.level || 0);             // Kopien des getragenen Schmucks: 3 je Stufe bleiben (ein Compound-Satz), Rest in die Bank
         return same.indexOf(idx) >= 3;
     }
-    if (eq[it.name] && def.upgrade) return backup_index(it.name) != idx; // Reserven: nur die beste bleibt
+    if (eq[it.name] && def.upgrade) return true; // Reserven des Getragenen: alle in die Bank (werden bei Bedarf geholt)
     return false;
 }
 function extra_rank(it) { var def = G.items[it.name] || {}; return def.compound ? (it.level || 0) : 10 + (it.level || 0); } // niedrige Stufen zuerst weg
@@ -2680,7 +2685,7 @@ function equipped_slots(kind) {
     return list;
 }
 function slots_to_upgrade(manual) {
-    return equipped_slots("upgrade").filter(function (s) { var it = character.slots[s]; return (it.level || 0) < target_level(it.name, manual) || (is_buyable(it.name) && backup_index(it.name) < 0); });
+    return equipped_slots("upgrade").filter(function (s) { var it = character.slots[s]; return (it.level || 0) < target_level(it.name, manual) || (is_buyable(it.name) && !has_backup(it.name)); });
 }
 var stat_impossible_logged = {};
 function slots_without_stat() {
@@ -2818,7 +2823,7 @@ async function tidy_now() {
     tidy_force = true; tidy_next = 0;
     try { await tidy_inventory(); } finally { tidy_force = false; }
     if (!paused) { try { await sort_inventory(); } catch (e) {} }
-    game_log("Aufräumen fertig – frei: " + character.esize + " (behalten: Tränke, Scrolls, Event, getragene Reserve, 3er-Sets Schmuck, Ziel-Items)");
+    game_log("Aufräumen fertig – frei: " + character.esize + " (behalten: Tränke, Scrolls, Event, 3er-Sets Schmuck, Ziel-Items – Reserven liegen in der Bank)");
     ["priest", "ranger", "merch"].forEach(function (k) { if (team_on[k] && team_running(TEAM[k])) team_send(TEAM[k], { t: "tidy" }); });
     if ((team_on.priest && team_running(TEAM.priest)) || (team_on.ranger && team_running(TEAM.ranger))) game_log("Aufräumen: Priest/Ranger/Händler verkaufen nur Billiges (NPC-Wert < 10k, max. +2) und legen den Rest in die Bank (Tränke, Tokens bleiben)");
     after_action("Aufräumen");
@@ -3553,7 +3558,7 @@ async function rebuild_with_stat(slot, tgt) { // neue Kopie mit Attribut (Scroll
         // altes Teil (ohne Attribut, Qualität 1) verkaufen
         var oi = -1; for (var k = 0; k < character.items.length; k++) { var it3 = character.items[k]; if (it3 && it3.name == name && (it3.level || 0) >= tgt && it3.stat_type != STAT_TYPE) { oi = k; break; } }
         if (oi >= 0) { await travel_place("potions"); var g0 = character.gold; await sell_measured(oi, 1); game_log("Altes " + name + "+" + tgt + " verkauft (+" + fmt(character.gold - g0) + ")"); }
-        if (backup_index(name) < 0 && is_buyable(name)) { await travel_place("upgrade"); await ensure_backup(name); }
+        if (!has_backup(name) && is_buyable(name)) { await travel_place("upgrade"); await ensure_backup(name); }
         return;
     }
 }
@@ -4084,6 +4089,16 @@ async function run_market_job() { // Klick im Markt-Fenster: hinlaufen und kaufe
 }
 // ---------- Einkauf über den Händler: Gold holen, kaufen (hier oder per Reise), zum Magier bringen ----------
 var MG = { target: 5000000, min: 1000000, esc_max: 2000000 }; try { var mg0 = JSON.parse(localStorage.getItem("lp_merch_gold") || "null"); if (mg0) for (var mgk in mg0) MG[mgk] = mg0[mgk]; if (MG.esc_max < 2000000 && localStorage.getItem("lp_mg_v264") != "1") { MG.esc_max = 2000000; localStorage.setItem("lp_mg_v264", "1"); localStorage.setItem("lp_merch_gold", JSON.stringify(MG)); } } catch (e) {} // Händler-Kasse: Ziel, Nachfüllgrenze, Obergrenze Priest/Ranger
+var donate_auto = false, DONATE_LVL = 40, donate_amt = 500000, last_donate = 0; try { donate_auto = localStorage.getItem("lp_donate_auto") == "1"; donate_amt = parseInt(localStorage.getItem("lp_donate_amt") || "500000") || 500000; } catch (e) {}
+function lvl_xp_between(a, b) { var s = 0; for (var l = a; l < b; l++) s += G.levels[l] || 0; return s; }
+function donate_tick() { // Auto: Händler spendet bei Ron, solange er unter DONATE_LVL ist und die Kasse über der Nachfüllgrenze liegt
+    if (!donate_auto || SOLO || !team_on.merch || !team_running(TEAM.merch) || Date.now() - last_donate < 90000) return;
+    var st = team_state[TEAM.merch]; if (!st || Date.now() - st.t > 90000 || st.level == null) return;
+    if (st.level >= DONATE_LVL) { donate_auto = false; try { localStorage.setItem("lp_donate_auto", "0"); } catch (e) {} game_log("Spenden-Automatik: Händler hat Lv " + st.level + " erreicht – aus"); last_panel = 0; return; }
+    if (/Abholung|Reise|spendet|Einkauf|Verkauf|Lieferung|räumt/.test(st.state || "") || merch_buy || arb_job) return;
+    var avail = Math.floor(((st.gold || 0) - MG.min) / 100000) * 100000; if (avail < 100000) return;
+    last_donate = Date.now(); team_send(TEAM.merch, { t: "donate", gold: Math.min(avail, 2000000), target: DONATE_LVL }); game_log("Spenden-Automatik: " + fmt(Math.min(avail, 2000000)) + " Gold bei Ron (Händler Lv " + st.level + ")");
+}
 function mg_save() { try { localStorage.setItem("lp_merch_gold", JSON.stringify(MG)); } catch (e) {} last_panel = 0; }
 var merch_buy = null; try { merch_buy = JSON.parse(localStorage.getItem("lp_merch_buy") || "null"); } catch (e) {}
 var MB_SAFE_MAPS = { main: true, bank: true, winterland: true };
@@ -4412,6 +4427,21 @@ async function upgrade_inv(name, level, target, stat_want) { // stat_want: Attri
     }
     return { level: level, destroyed: false };
 }
+function bank_backup(name) { // Reservekopie in der Bank (Snapshot): kaufbar >= BACKUP_LEVEL, sonst jede
+    var min = is_buyable(name) ? BACKUP_LEVEL : 0, bk = (character.bank && typeof character.bank == "object") ? character.bank : bank_cache; if (!bk) return false;
+    for (var pk in bk) if (pk.indexOf("items") == 0 && Array.isArray(bk[pk])) for (var i = 0; i < bk[pk].length; i++) { var it = bk[pk][i]; if (it && it.name == name && (it.level || 0) >= min) return true; }
+    return false;
+}
+async function fetch_backup(name) { // Reservekopie aus der Bank holen (beste Stufe), true wenn danach im Inventar
+    if (backup_index(name) >= 0) return true; if (!bank_backup(name) || character.esize < 1) return false;
+    try { if (character.map != "bank") { set_message("Bank"); await travel_place("bank"); await sleep(800); } } catch (e) { return false; }
+    var bk = character.bank || {}, min = is_buyable(name) ? BACKUP_LEVEL : 0, best = null;
+    for (var pk in bk) if (pk.indexOf("items") == 0 && Array.isArray(bk[pk])) for (var i = 0; i < bk[pk].length; i++) { var it = bk[pk][i]; if (it && it.name == name && (it.level || 0) >= min && (!best || (it.level || 0) > best.lv)) best = { pack: pk, i: i, lv: it.level || 0 }; }
+    if (!best) return false;
+    try { bank_retrieve(best.pack, best.i); await sleep(600); game_log("Reserve aus der Bank geholt: " + name + "+" + best.lv); } catch (e) { return false; }
+    return backup_index(name) >= 0;
+}
+function has_backup(name) { return backup_index(name) >= 0 || bank_backup(name); }
 function backup_index(name) { // beste Inventar-Kopie: kaufbar >= BACKUP_LEVEL, nicht kaufbar jede Kopie
     var best = -1, bl = -1, min = is_buyable(name) ? BACKUP_LEVEL : 0;
     for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && it.name == name && (it.level || 0) >= min && (it.level || 0) > bl) { best = i; bl = it.level || 0; } }
@@ -4504,6 +4534,7 @@ async function process_slot_inner(slot, goal) {
         check_pause();
         // Nichts angelegt? -> Reserve anlegen, ggf. vorher neu bauen
         if (!character.slots[slot]) {
+            if (backup_index(name) < 0) await fetch_backup(name);
             if (backup_index(name) < 0) {
                 if (!buyable) { game_log(name + ": zerstört, nicht kaufbar – Slot bleibt leer"); break; }
                 if (!await ensure_backup(name)) { game_log(name + ": Neubau nicht möglich"); break; }
@@ -4515,7 +4546,7 @@ async function process_slot_inner(slot, goal) {
         var cur = character.slots[slot]; if (!cur) break;
         var lvl = cur.level || 0;
         // Reserve sicherstellen (die angelegte zählt nicht mit)
-        if (buyable && backup_index(name) < 0) { if (!await ensure_backup(name)) { game_log(name + ": keine Reserve möglich – kein Risiko-Upgrade"); break; } }
+        if (buyable && !has_backup(name)) { if (!await ensure_backup(name)) { game_log(name + ": keine Reserve möglich – kein Risiko-Upgrade"); break; } }
         if (lvl >= goal) break;
         unequip(slot); await sleep(600);
         var r = await upgrade_inv(name, lvl, goal, wish_item(slot) == name ? STAT_TYPE : null);
@@ -4524,7 +4555,7 @@ async function process_slot_inner(slot, goal) {
         for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && it.name == name && (it.level || 0) > bl) { best = i; bl = it.level || 0; } }
         if (best >= 0) { equip(best, slot); await sleep(600); }
         if (r.stopped) break;
-        if (r.level >= goal) { if (buyable && backup_index(name) < 0) await ensure_backup(name); break; }
+        if (r.level >= goal) { if (buyable && !has_backup(name)) await ensure_backup(name); break; }
     }
 }
 
@@ -4564,7 +4595,7 @@ async function upgrade_by_recommendation() {
         }
         if (!best) break;
         var name = best.it.name, lvl = best.it.level || 0, buyable = is_buyable(name);
-        if (!buyable && lvl >= SAFE_TARGET_DROP && backup_index(name) < 0) { game_log(name + ": Drop-Item ohne Reserve – bleibt bei +" + lvl); skipped[best.slot] = true; continue; }
+        if (!buyable && lvl >= SAFE_TARGET_DROP && !has_backup(name)) { game_log(name + ": Drop-Item ohne Reserve – bleibt bei +" + lvl); skipped[best.slot] = true; continue; }
         if (best.rec.cost > spendable()) { game_log(name + " +" + (lvl + 1) + ": zu teuer (~" + fmt(best.rec.cost) + ")"); skipped[best.slot] = true; continue; }
         game_log("Nächster Schritt: " + name + " +" + lvl + " → +" + (lvl + 1) + " (~" + fmt(best.rec.cost) + ")");
         await travel_place("upgrade");
@@ -4670,7 +4701,7 @@ function start_main() {
     rip_counted = false;
     session_tick();
     if (Date.now() - last_panel > 2000) { last_panel = Date.now(); try { update_panel(); update_char_panel(); update_tchar_panels(); } catch (e) {} }
-    try { if (!SOLO) { merch_test_tick(); arb_tick(); merch_buy_tick(); event_tick(); } team_tick(); team_broadcast(); if (!SOLO) { team_read_logs(); team_inject(); } bank_snapshot(); if (!manual_lock && !paused && !SOLO) { priest_gear_tick(); energize_tick(); team_wish_handover_tick(); } } catch (e) {}
+    try { if (!SOLO) { merch_test_tick(); arb_tick(); merch_buy_tick(); donate_tick(); event_tick(); } team_tick(); team_broadcast(); if (!SOLO) { team_read_logs(); team_inject(); } bank_snapshot(); if (!manual_lock && !paused && !SOLO) { priest_gear_tick(); energize_tick(); team_wish_handover_tick(); } } catch (e) {}
     if (paused) return;
     measure_tick();
 
