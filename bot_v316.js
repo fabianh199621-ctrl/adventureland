@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v315";
+var BOT_VERSION = "v316";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -318,7 +318,7 @@ function skill_available(name) {
 
 // Prüft das konkrete Exemplar (gelevelte Monster haben mehr HP/Angriff als die G-Daten)
 var PRIORITY_MONS = { phoenix: true }; // seltene, lohnende und harmlose Spawns: sofort angreifen und fokussieren (Team folgt dem Ziel)
-function priority_mon(mtype) { if (PRIORITY_MONS[mtype]) return true; var d = G.monsters[mtype]; return !!d && d.cooperative && (d.attack || 0) * 8 < character.max_hp && !d.boss; } // kooperative Spawns mit schwachem Angriff ebenfalls
+function priority_mon(mtype) { if (PRIORITY_MONS[mtype]) return true; if (event_mode && mtype == event_mode) return true; var d = G.monsters[mtype]; return !!d && d.cooperative && (d.attack || 0) * 8 < character.max_hp && !d.boss; } // kooperative Spawns mit schwachem Angriff ebenfalls
 function priority_target() { var best = null, bd = 700; for (var id in parent.entities) { var m = parent.entities[id]; if (!m || m.type != "monster" || m.dead || !priority_mon(m.mtype)) continue; var d = distance(character, m); if (d < bd) { bd = d; best = m; } } return best; }
 var prio_logged = "";
 function too_strong(m) {
@@ -365,6 +365,7 @@ function is_valid_target(m) {
     if (m.target && TEAM_NAMES.indexOf(m.target) >= 0) return true; // greift ein Teammitglied an
     if (priority_mon(m.mtype)) return true; // seltener Spawn (Phoenix): immer gültig
     if (character.map == "goobrawl" && (m.mtype == "goo" || m.mtype == "rgoo" || m.mtype == "bgoo")) return true; // Goo-Prügelei: alle Goos gültig, auch gebuffte
+    if (event_mode && m.mtype == event_mode && EVENTS[event_mode]) return true; // Event-Boss ist immer ein gültiges Ziel
     if (m.mtype == pick_farm_monster()) return m.target == character.name || !too_strong(m); // Angreifer wehren wir ab, sonst nur ungelevelte/sichere Exemplare
     if (m.max_hp > character.max_hp * MAX_TARGET_HP_FACTOR) return false;
     if (bycatch && is_safe_monster(m.mtype) && !hidden_mons[m.mtype] && (!m.target || m.target == character.name)) return true;
@@ -677,6 +678,7 @@ function event_tick() {
     var st = event_status();
     if (!event_mode) {
         if (!event_on || !st || paused || busy || upgrading || server_trip || focus_mode || arb_job || merch_test) return;
+        if (ev_best() != "crabxx") return; // ein wichtigeres Event (Goo-Prügelei) hat Vorrang
         if (st.hp != null && st.hp <= 0) return; // Boss schon tot, Meldung hängt nach
         event_prev = { manual_spot: manual_spot, user_manual: user_manual }; event_mode = "crabxx"; event_since = Date.now(); event_boss_hits = 0; event_empty_since = 0;
         manual_spot = "crabx"; user_manual = null; current_spot = "crabx"; need_repick = true; meas = null; if (hunt_spot) { hunt_spot = null; }
@@ -698,6 +700,45 @@ function event_tick() {
 function event_join() {
     try { var r = join("crabxx"); if (r && typeof r.then == "function") r.then(function () { game_log("Event: angekommen"); }, function (e) { game_log("Event: Sprung fehlgeschlagen: " + JSON.stringify(e).slice(0, 120)); }); } catch (e) { game_log("Event: join-Fehler " + err_txt(e)); }
     ["priest", "ranger"].forEach(function (k) { if (team_on[k] && team_running(TEAM[k])) team_send(TEAM[k], { t: "join", event: "crabxx" }); });
+}
+// ---------- Event-Bosse mit Vorrang: Liste nach Priorität; ein höheres Event unterbricht ein laufendes niedrigeres ----------
+var EVENTS = { // prio: kleiner = wichtiger. join: Teleport-Event. needPriest: nur mit Priest daneben.
+    goobrawl: { label: "Goo-Prügelei", prio: 1, join: true },
+    crabxx: { label: "Giga Crab", prio: 2, join: true },
+    dragold: { label: "Dragold", prio: 3, needPriest: true },
+    grinch: { label: "Grinch", prio: 4 },
+    wabbit: { label: "Wabbit", prio: 5 },
+    snowman: { label: "Snowman", prio: 6 },
+    pinkgoo: { label: "Love Goo", prio: 7 }
+};
+var ev_on = {}; try { ev_on = JSON.parse(localStorage.getItem("lp_ev_on") || "{}"); } catch (e) {}
+function ev_enabled(k) { if (k == "goobrawl") return goo_on; if (k == "crabxx") return event_on; return ev_on[k] !== false; }
+function ev_status(k) { try { var st = (typeof server != "undefined" && server && server.status) || parent.S || {}; var e = st[k]; if (!e || e.live === false) return null; if (e.hp != null && e.hp <= 0) return null; return e; } catch (e) { return null; } }
+function ev_boss_entity(k) { try { for (var id in parent.entities) { var m = parent.entities[id]; if (m && m.type == "monster" && m.mtype == k && !m.dead) return m; } } catch (e) {} return null; }
+function ev_best() { var best = null; for (var k in EVENTS) { if (!ev_enabled(k) || !ev_status(k)) continue; if (EVENTS[k].needPriest && !team_member_active("priest")) continue; if (!best || EVENTS[k].prio < EVENTS[best].prio) best = k; } return best; }
+function ev_leave_current(why) { if (event_mode == "goobrawl") goo_leave(why); else if (event_mode == "crabxx") event_leave(why); else ev_leave(why); }
+var last_ev_check = 0, ev_join_t = 0;
+function ev_tick() { // Bosse an fester Position (nicht goobrawl/crabxx – die haben eigene Steuerung, aber die Priorität gilt für alle)
+    if (Date.now() - last_ev_check < 10000) return; last_ev_check = Date.now();
+    var best = ev_best();
+    if (event_mode && EVENTS[event_mode] && best && best != event_mode && EVENTS[best].prio < EVENTS[event_mode].prio) { ev_leave_current("wichtigeres Event: " + EVENTS[best].label); return; } // Vorrang: laufendes Event verlassen, nächster Tick startet das wichtigere
+    if (event_mode) { if (EVENTS[event_mode] && !EVENTS[event_mode].join) { if (!ev_status(event_mode)) { ev_leave(EVENTS[event_mode].label + " vorbei"); } else if (!ev_enabled(event_mode)) ev_leave("abgeschaltet"); } return; }
+    if (!best || EVENTS[best].join) return; // Teleport-Events starten goo_tick/event_tick
+    if (paused || busy || upgrading || server_trip || focus_mode || arb_job || merch_test || kissing || handing || character.rip) return;
+    event_prev = { manual_spot: manual_spot, user_manual: user_manual }; event_mode = best; event_since = Date.now();
+    manual_spot = best; user_manual = null; current_spot = best; need_repick = true; meas = null; if (hunt_spot) hunt_spot = null;
+    var st = ev_status(best); game_log("Event: " + EVENTS[best].label + " ist da (" + (st && st.map ? st.map + " " + Math.round(st.x || 0) + "," + Math.round(st.y || 0) : "Position unbekannt") + (st && st.max_hp ? ", HP " + Math.round((st.hp || 0) / st.max_hp * 100) + " %" : "") + ") – Team geht hin, Jagd/Farmen wartet"); last_panel = 0;
+    stop("smart"); change_target(null); last_go = 0; go_to_farm_spot();
+}
+function ev_leave(why) {
+    game_log("Event: " + why + " – zurück zum normalen Betrieb");
+    if (event_prev) { manual_spot = event_prev.manual_spot; user_manual = event_prev.user_manual; } event_prev = null; event_mode = null;
+    current_spot = null; need_repick = true; meas = null; last_hunt_check = 0; last_panel = 0;
+    stop("smart"); change_target(null); if (!paused) go_to_farm_spot();
+}
+function ev_html() { // Schalter je Event im Panel
+    var h = ""; for (var k in EVENTS) { if (k == "goobrawl" || k == "crabxx") continue; var act = !!ev_status(k); h += "<button data-act='evtoggle' data-ev='" + k + "'" + (ev_enabled(k) ? " class='on'" : "") + " title='" + esc(EVENTS[k].label) + ": " + (ev_enabled(k) ? "Teilnahme an" : "aus") + (act ? " · läuft gerade" : "") + "'>" + esc(EVENTS[k].label) + (event_mode == k ? " ●" : act ? " !" : "") + "</button>"; }
+    return h;
 }
 // ---------- Goo-Prügelei (Server-Event goobrawl): Team springt hin, kloppt Goos, fokussiert Rainbow Goo, kommt danach zurück ----------
 var goo_on = true; try { goo_on = localStorage.getItem("lp_goo_on") != "0"; } catch (e) {}
@@ -1062,7 +1103,7 @@ function hunt_slot_state() { // Team holt nur eine Jagd zur Zeit: {busy, holder,
 }
 var hunt_slot_logged = 0;
 function team_hunt_pick() { // Jagdmonster von Priest/Ranger, das für uns sicher ist (nur wenn keine eigene Jagd läuft)
-    if (SOLO || hunt_spot) return null;
+    if (SOLO || hunt_spot || event_mode) return null; // Event hat Vorrang vor Team-Jagden
     var list = [], missing = 0; ["priest", "ranger"].forEach(function (k) { if (!team_on[k]) return; var st = team_state[TEAM[k]]; if (!st || Date.now() - st.t > 90000) { missing++; return; } if (!st.hunt || !(st.hunt.c > 0)) return; var id = st.hunt.id; if (hunt_target_ok(id) && spawn_count(id) > 0) list.push({ id: id, who: TEAM_LABEL[k], k: k, left: st.hunt.ms != null ? st.hunt.ms - (Date.now() - st.t) : 1e12 }); });
     if (missing && Date.now() - boot_t < 45000) return null; // kurz nach dem Start: erst alle Meldungen abwarten, sonst wird die falsche Jagd gewählt
     var cur = list.filter(function (x) { return team_hunt_cur && x.id == team_hunt_cur.id && x.k == team_hunt_cur.k; })[0] || list.filter(function (x) { return x.id == current_spot; })[0]; // begonnene Team-Jagd zu Ende bringen, auch wenn der andere inzwischen eine neue hat
@@ -1208,6 +1249,21 @@ var last_go = 0, roam_logged = false;
 function go_to_farm_spot() {
     if (paused || Date.now() - last_go < 5000) return;
     last_go = Date.now();
+    if (event_mode == "goobrawl") { // Goo-Prügelei: auf der Insel bleiben, ohne Goo in Sicht innerhalb des Feldes umherstreifen
+        if (character.map != "goobrawl") { if (Date.now() - goo_join_t > 30000) goo_join(); return; }
+        var gt = null, gd = 1e9; try { for (var gid in parent.entities) { var gm = parent.entities[gid]; if (gm && gm.type == "monster" && !gm.dead && (gm.mtype == "rgoo" || gm.mtype == "goo" || gm.mtype == "bgoo")) { var dd = distance(character, gm); if (dd < gd) { gd = dd; gt = gm; } } } } catch (e) {}
+        if (gt) { if (gd > 200) { busy = true; smart_move({ x: gt.x + 30, y: gt.y }).catch(function () {}).then(function () { busy = false; }); } return; }
+        var gb = [-400, -440, 420, 190]; busy = true; set_message("Suche Goos"); smart_move({ x: gb[0] + Math.random() * (gb[2] - gb[0]), y: gb[1] + Math.random() * (gb[3] - gb[1]) }).catch(function () {}).then(function () { busy = false; });
+        return;
+    }
+    if (event_mode && EVENTS[event_mode] && event_mode != "crabxx") { // Event-Boss an fester Position (Grinch, Wabbit, Snowman …): hin und dranbleiben
+        var evs = ev_status(event_mode), evb = ev_boss_entity(event_mode);
+        var evp = evb ? { map: character.map, x: evb.x, y: evb.y } : (evs && evs.x != null ? { map: evs.map, x: evs.x, y: evs.y } : null);
+        if (!evp) return;
+        if (character.map != evp.map || distance(character, evp) > 900) { busy = true; set_message("Zum Event: " + EVENTS[event_mode].label); travel({ map: evp.map, x: evp.x, y: evp.y }).catch(function () {}).then(function () { busy = false; }); return; }
+        if (distance(character, evp) > 250) { busy = true; var ang2 = Math.random() * Math.PI * 2; smart_move({ map: evp.map, x: evp.x + Math.cos(ang2) * 120, y: evp.y + Math.sin(ang2) * 120 }).catch(function () {}).then(function () { busy = false; }); }
+        return;
+    }
     if (event_mode) { // Event: beim Boss bleiben (Huge Crabs spawnen um ihn herum)
         var est = event_status(), bx = event_boss();
         var tp = bx ? { map: character.map, x: bx.x, y: bx.y } : est && est.x != null ? { map: est.map, x: est.x, y: est.y } : null;
@@ -1528,6 +1584,7 @@ function init_panel() {
         else if (act == "pauseafter") { pause_after = !pause_after; try { localStorage.setItem("lp_pause_after", pause_after ? "1" : "0"); } catch (x) {} game_log("Nach manueller Aktion: " + (pause_after ? "pausieren" : "weiterfarmen")); last_panel = 0; }
         else if (act == "unblock") { var nb = 0; Object.keys(blocked_spots).forEach(function (k) { if (blocked_spots[k] !== true) { delete blocked_spots[k]; nb++; } }); nb += Object.keys(hunt_bad).length; hunt_bad = {}; try { localStorage.setItem("lp_hunt_bad", "{}"); } catch (x) {} flee_log = {}; hunt_cooldown_until = 0; need_repick = true; game_log("Sperren aufgehoben (" + nb + ")"); }
         else if (act == "cavalry") call_cavalry("manuell");
+        else if (act == "evtoggle") { var evk = b.getAttribute("data-ev"); ev_on[evk] = !ev_enabled(evk); try { localStorage.setItem("lp_ev_on", JSON.stringify(ev_on)); } catch (x) {} game_log("Event " + (EVENTS[evk] ? EVENTS[evk].label : evk) + ": Teilnahme " + (ev_enabled(evk) ? "an" : "aus")); if (!ev_enabled(evk) && event_mode == evk) ev_leave("abgeschaltet"); }
         else if (act == "gootoggle") { goo_on = !goo_on; try { localStorage.setItem("lp_goo_on", goo_on ? "1" : "0"); } catch (x) {} game_log("Goo-Prügelei " + (goo_on ? "an" : "aus")); if (!goo_on && event_mode == "goobrawl") goo_leave("abgeschaltet"); }
         else if (act == "cavauto") { cav_on = !cav_on; try { localStorage.setItem("lp_cav_on", cav_on ? "1" : "0"); } catch (x) {} game_log("Cavalry-Automatik " + (cav_on ? "an" : "aus")); }
         else if (act == "waitteam") { wait_team_on = !wait_team_on; try { localStorage.setItem("lp_wait_team", wait_team_on ? "1" : "0"); } catch (x) {} game_log("Auf Team warten " + (wait_team_on ? "an (ab " + Math.round(wait_team_danger * 100) + " % Gefahr)" : "aus")); }
@@ -1952,7 +2009,7 @@ function update_panel() {
       + "<div class='lp_k'>Session " + fmt(sess.xp / sh) + " XP/h · " + fmt(sess.gold_farm / sh) + " G/h Beute <span title='inkl. Übergaben von Händler/Priest/Ranger und Verkäufen'>(gesamt " + fmt(sess.gold / sh) + ")</span> · nächstes Level in " + (rate > 0 ? fmt_time((G.levels[character.level] - character.xp) / rate * 3600000) : "-") + "</div></div>";
     h += "<div class='lp_row'><span class='lp_mode'>Modus: " + (manual_spot ? "fest (" + esc(manual_spot) + ")" : auto_on ? "automatisch" : "<span style='color:#ffb74d'>nur Jagden" + (current_spot ? "" : " – wartet bei Daisy") + "</span>") + "</span><button data-act='auto'" + (manual_spot || !auto_on ? "" : " class='on'") + " title='an: Automatik wählt den Spot (Lückenfüller) · aus: nur Jagden, sonst warten bei Daisy'>Auto</button><button data-act='bycatch'" + (bycatch ? " class='on'" : "") + " title='andere sichere Monster in der Nähe mit angreifen'>Beifang</button><button data-act='focus'" + (focus_mode ? " class='on'" : "") + " title='nur farmen/hunten: kein Kuss, Ponty, Markt, Kuchen, keine Ausrüstungsautomatik'>Fokus</button></div>";
     var cav_left = Math.max(0, Math.max(cav_next, cav_last + cav_cooldown()) - Date.now());
-    h += "<div class='lp_row'><span class='lp_k'>Aktionen</span><button data-act='copylog' title='Bot-Log in die Zwischenablage'>Log kopieren</button><button data-act='pauseafter'" + (pause_after ? " class='on'" : "") + " title='Nach Buttons/Tasten pausieren statt weiterfarmen'>Danach: " + (pause_after ? "Pause" : "Farmen") + "</button><button data-act='unblock' title='Alle Spot-/Jagd-Sperren (Tod, Rückzüge) aufheben'>Sperren aufheben</button><button data-act='cavalry' title='Tracktrix: Lv-100-Trupp rufen, räumt bis zu 24 Monster im Umkreis (90 s) – wer bereit ist: Magier, sonst Priest/Ranger mit eigenem Tracktrix'" + (any_cav_ready() ? " style='color:#C6AA62'" : "") + ">Cavalry " + (cav_ready() ? "bereit" : team_cav_ready() ? "bereit (" + TEAM_LABEL[team_cav_ready()] + ")" : "(" + Math.ceil(cav_left / 60000) + " min" + (function () { var m = null; ["priest", "ranger"].forEach(function (k) { var st = team_state[TEAM[k]]; if (team_on[k] && st && st.cav && st.cav.has) { var l = Math.ceil(Math.max(0, st.cav.next - Date.now()) / 60000); if (m == null || l < m) m = l; } }); return m != null ? ", Team " + m + " min" : ""; })() + ")") + "</button><button data-act='cavauto'" + (cav_on ? " class='on'" : "") + " title='Cavalry automatisch rufen, wenn am Spot nur gelevelte Exemplare stehen'>Cav-Auto</button><button data-act='gootoggle'" + (goo_on ? " class='on'" : "") + " title='Goo-Prügelei: bei aktivem Event springen Mage, Priest und Ranger hin (Fun Tokens, Rainbow Goo 48M XP) und kommen danach zurück'>Goo" + (event_mode == "goobrawl" ? " ●" : "") + "</button></div>";
+    h += "<div class='lp_row'><span class='lp_k'>Aktionen</span><button data-act='copylog' title='Bot-Log in die Zwischenablage'>Log kopieren</button><button data-act='pauseafter'" + (pause_after ? " class='on'" : "") + " title='Nach Buttons/Tasten pausieren statt weiterfarmen'>Danach: " + (pause_after ? "Pause" : "Farmen") + "</button><button data-act='unblock' title='Alle Spot-/Jagd-Sperren (Tod, Rückzüge) aufheben'>Sperren aufheben</button><button data-act='cavalry' title='Tracktrix: Lv-100-Trupp rufen, räumt bis zu 24 Monster im Umkreis (90 s) – wer bereit ist: Magier, sonst Priest/Ranger mit eigenem Tracktrix'" + (any_cav_ready() ? " style='color:#C6AA62'" : "") + ">Cavalry " + (cav_ready() ? "bereit" : team_cav_ready() ? "bereit (" + TEAM_LABEL[team_cav_ready()] + ")" : "(" + Math.ceil(cav_left / 60000) + " min" + (function () { var m = null; ["priest", "ranger"].forEach(function (k) { var st = team_state[TEAM[k]]; if (team_on[k] && st && st.cav && st.cav.has) { var l = Math.ceil(Math.max(0, st.cav.next - Date.now()) / 60000); if (m == null || l < m) m = l; } }); return m != null ? ", Team " + m + " min" : ""; })() + ")") + "</button><button data-act='cavauto'" + (cav_on ? " class='on'" : "") + " title='Cavalry automatisch rufen, wenn am Spot nur gelevelte Exemplare stehen'>Cav-Auto</button><button data-act='gootoggle'" + (goo_on ? " class='on'" : "") + " title='Goo-Prügelei: bei aktivem Event springen Mage, Priest und Ranger hin (Fun Tokens, Rainbow Goo 48M XP) und kommen danach zurück'>Goo" + (event_mode == "goobrawl" ? " ●" : "") + "</button>" + ev_html() + "</div>";
     h += event_html();
     h += "<div class='lp_sec'><div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Hunt: <span style='color:#e6e6e6'>" + esc(mh_txt()) + "</span> · " + tokens() + " Tokens</span><button data-act='hunt'" + (hunt_on ? " class='on'" : "") + " title='Monster Hunt automatisch (Rundlauf Magier → Priest → Ranger)'>Hunt</button>" + (mh_quest() ? "<button data-act='huntabandon'>Abbrechen</button>" : "") + "</div>"
       + hunts_grid_html() + "</div>";
@@ -5007,7 +5064,7 @@ function start_main() {
     session_tick();
     if (Date.now() - last_panel > 2000) { last_panel = Date.now(); try { update_panel(); update_char_panel(); update_tchar_panels(); if (bank_panel && Date.now() - (bank_rendered || 0) > 15000) { bank_rendered = Date.now(); render_bank(); } } catch (e) {} }
     if (handing && Date.now() - last_pickup > 5 * 60000) { game_log("Abholung hängt seit 5 min – gebe frei"); handing = false; pickup_state = null; if (busy) busy = false; } // Wächter: eine Übergabe darf nie dauerhaft blockieren (sperrt sonst Handelsreisen und weitere Abholungen)
-    try { if (!SOLO) { merch_test_tick(); arb_tick(); merch_buy_tick(); merch_need_tick(); donate_tick(); event_tick(); goo_tick(); } team_tick(); team_broadcast(); if (!SOLO) { team_read_logs(); team_inject(); } bank_snapshot(); if (!manual_lock && !paused && !SOLO) { priest_gear_tick(); energize_tick(); team_wish_handover_tick(); } } catch (e) {}
+    try { if (!SOLO) { merch_test_tick(); arb_tick(); merch_buy_tick(); merch_need_tick(); donate_tick(); ev_tick(); event_tick(); goo_tick(); } team_tick(); team_broadcast(); if (!SOLO) { team_read_logs(); team_inject(); } bank_snapshot(); if (!manual_lock && !paused && !SOLO) { priest_gear_tick(); energize_tick(); team_wish_handover_tick(); } } catch (e) {}
     if (paused) return;
     measure_tick();
 
