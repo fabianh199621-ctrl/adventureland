@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v321";
+var BOT_VERSION = "v323";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -1645,6 +1645,9 @@ function init_panel() {
         else if (act == "bycatch") { bycatch = !bycatch; try { localStorage.setItem("lp_bycatch", bycatch ? "1" : "0"); } catch (x) {} game_log("Beifang " + (bycatch ? "an" : "aus")); }
         else if (act == "sortinv") preempt("Inventar sortieren", sort_inventory, true);
         else if (act == "compound") preempt("Compound", compound_only);
+        else if (act == "bostart") build_start();
+        else if (act == "bostop") { build_stop = true; abort_requested = false; game_log("Bauauftrag: Stop angefordert – hält nach dem laufenden Versuch"); }
+        else if (act == "boclear") { build_order = null; build_save(); game_log("Bauauftrag gelöscht"); last_panel = 0; }
         else if (act == "tidy") preempt("Aufräumen", tidy_now);
         else if (act == "bank") preempt("Bank aufräumen", bank_cleanup_now);
         else if (act == "banksort") preempt("Bank sortieren", bank_sort_now);
@@ -1680,6 +1683,7 @@ function init_panel() {
         if (t.getAttribute("data-setk")) { settings_input(t); return; }
         if (t.getAttribute("data-mgk") == "donate") { var dv = parse_mio(t.value); if (dv >= 1000) { donate_amt = dv; try { localStorage.setItem("lp_donate_amt", String(dv)); } catch (x) {} game_log("Spendenbetrag: " + fmt(dv)); } try { t.blur(); } catch (x) {} return; }
         if (t.getAttribute("data-mgk")) { var mgk2 = t.getAttribute("data-mgk"); if (mgk2 == "esc") { var ev = parse_mio(t.value); if (ev >= 10000) MG.esc_max = ev; } else { var mv3 = parse_mio(t.value); if (mv3 > 0) MG[mgk2] = mv3; } if (MG.min > MG.target) MG.min = MG.target; mg_save(); game_log("Händler-Kasse: Ziel " + fmt(MG.target) + ", nachfüllen unter " + fmt(MG.min) + ", Priest/Ranger max. " + fmt(MG.esc_max)); try { t.blur(); } catch (x) {} return; }
+        if (t.getAttribute("data-bo")) { var bok = t.getAttribute("data-bo"); if (bok == "item") build_ui.item = t.value; else if (bok == "reserve") build_ui.reserve = parse_mio(t.value); else build_ui[bok] = parseInt(t.value) || 0; build_save(); try { t.blur(); } catch (x) {} last_panel = 0; return; }
         if (t.getAttribute("data-msel")) { mkt[t.getAttribute("data-msel")] = t.value; mkt_show = 0; save_mkt(); try { t.blur(); } catch (x) {} render_market(); return; }
         var ws = t.getAttribute("data-wslot"), wl = t.getAttribute("data-wlvl"), wm = t.getAttribute("data-wmax");
         var tws = t.getAttribute("data-twslot"), twl = t.getAttribute("data-twlvl"), twm = t.getAttribute("data-twmax");
@@ -1703,7 +1707,7 @@ function init_panel() {
     };
     win.addEventListener("change", onChange, true);
     var onInput = function (e) { var t = e.target; if (t && t.id == "lp_wiki_q") { wiki.q = t.value; wiki.page = null; render_wiki(); } else if (t && t.id == "lp_mkt_q") { mkt.q = t.value; mkt_show = 0; render_market(); } else if (t && t.id == "lp_bank_q") { bank_ui.q = t.value; bank_render_rows(); } };
-    var onKeyCap = function (e) { var t = e.target; if (t && (t.id == "lp_wiki_q" || (t.tagName == "INPUT" && inside(e)))) { e.stopPropagation(); if (e.key == "Escape") t.blur(); if (e.key == "Enter" && (t.getAttribute("data-wmax") || t.getAttribute("data-mgk") || t.getAttribute("data-huntmax") || t.getAttribute("data-huntttk") || t.getAttribute("data-arbmin") || t.getAttribute("data-twmax") || t.getAttribute("data-fixprice")) && e.type == "keydown") { try { t.dispatchEvent(new Event("change", { bubbles: true })); } catch (x) {} } } }; // Tasten im Suchfeld nicht ans Spiel/Bot weitergeben
+    var onKeyCap = function (e) { var t = e.target; if (t && (t.id == "lp_wiki_q" || (t.tagName == "INPUT" && inside(e)))) { e.stopPropagation(); if (e.key == "Escape") t.blur(); if (e.key == "Enter" && (t.getAttribute("data-wmax") || t.getAttribute("data-mgk") || t.getAttribute("data-bo") || t.getAttribute("data-huntmax") || t.getAttribute("data-huntttk") || t.getAttribute("data-arbmin") || t.getAttribute("data-twmax") || t.getAttribute("data-fixprice")) && e.type == "keydown") { try { t.dispatchEvent(new Event("change", { bubbles: true })); } catch (x) {} } } }; // Tasten im Suchfeld nicht ans Spiel/Bot weitergeben
     win.addEventListener("input", onInput, true);
     ["keydown", "keyup", "keypress"].forEach(function (t) { win.addEventListener(t, onKeyCap, true); });
     parent.__lp_panel_h = { down: onDown, move: onMove, up: onUp, click: onClick, change: onChange, input: onInput, key: onKeyCap };
@@ -2075,6 +2079,7 @@ function update_panel() {
     var tw_sum = ["priest", "ranger"].filter(function (k) { return team_on[k]; }).map(function (k) { var cfgs = team_wish[k] || {}, n = 0, done = 0; TEAM_WISH_SLOTS.forEach(function (sl) { var c = cfgs[sl]; if (c && c.item) { n++; var s2 = tw_status(k, sl); if (s2 && s2.state == "fertig") done++; } }); return TEAM_LABEL[k] + " " + (n ? done + "/" + n : "–"); }).join(" · ");
     h += lp_sec("zielbau", "Zielbau", "Ich " + esc(wish_text()) + (tw_sum ? " · " + tw_sum : "") + (AUTO_GEAR ? " · Reserve " + fmt(WISH_RESERVE) : ""),
         "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Zielbau " + wish_text() + (AUTO_GEAR ? " · automatisch, Reserve " + fmt(WISH_RESERVE) : "") + "</span><button data-act='wishist' data-slot='*' title='alle Slots auf das setzen, was du gerade trägst – Preislimits bleiben erhalten'>Ist</button><button data-act='wishreset' title='alle Ziele auf das Getragene setzen und alle Limits löschen'>Zielbau = aktuelle Ausrüstung</button><button data-act='wishtoggle'>" + (panel.__wish ? "▾" : "▸") + " Liste</button></div>" + (panel.__wish ? wish_ui_html() : "") + team_wish_html(panel));
+    h += lp_sec("bau", "Bauauftrag", esc(build_status_txt()), build_html());
     // Wartung (eingeklappt)
     h += lp_sec("wartung", "Wartung", "Inv sortieren · Compound · Aufräumen · Bank",
         "<div class='lp_row'><button data-act='sortinv' title='Inventar sortieren'>Inv ⇅</button><button data-act='compound' title='Schmuck compounden (getragen + ungetragen)'>Compound</button><button data-act='tidy' title='Schrott verkaufen, Rest in die Bank'>Aufräumen</button><button data-act='bank' title='Schrott aus der Bank holen und verkaufen'>Bank aufräumen</button><button data-act='banksort' title='Bank nach Gruppen sortieren, Reiter lückenlos füllen'>Bank ⇅</button><button data-act='bankstatus' title='Alle Bankfächer ins Log: Belegung, gesperrt/frei, Preis'>Bank-Status</button><button data-act='reset' title='alle Messwerte verwerfen und neu messen'>Neu messen</button><button data-act='clearlog' title='Log-Puffer leeren'>Log leeren</button></div>");
@@ -2142,9 +2147,17 @@ function status_message(prefix) {
 
 // ---------- Inventar aufräumen: Schrott verkaufen, Rest in die Bank ----------
 var EQUIP_TYPES = ["helmet", "chest", "pants", "shoes", "gloves", "cape", "weapon", "shield", "quiver", "source", "misc_offhand"]; // Schmuck nie verkaufen (Compound)
+// ---------- Manuelle Sperre je Item+Stufe (Bank-Fenster): gesperrt = nie verkaufen/ausstellen/abgeben, frei = automatische Schutzregeln aus, leer = Automatik ----------
+var item_lock = {}; try { item_lock = JSON.parse(localStorage.getItem("lp_item_lock_" + character.name) || "{}"); } catch (e) {}
+function lock_key(it) { return it.name + ((it.level || 0) ? "+" + it.level : ""); }
+function lock_state(it) { return it ? (item_lock[lock_key(it)] || "") : ""; }
+function is_locked(it) { return lock_state(it) == "lock"; }
+function is_freed(it) { return lock_state(it) == "free"; }
+function set_lock(key, st) { if (st) item_lock[key] = st; else delete item_lock[key]; try { localStorage.setItem("lp_item_lock_" + character.name, JSON.stringify(item_lock)); } catch (e) {} }
 function is_junk(it) { // kaufbare Standardausrüstung ohne Level/Attribut; ungetragener kaufbarer Schmuck +0 in Einzelstücken; fremde Elixiere; HP-Schmuck
     var def = G.items[it.name]; if (!def) return false;
-    if (is_team_wish_item(it) || NEVER_SELL.test(it.name)) return false; // Team-Zielbau-Teile und geschützte Items bleiben
+    if (is_locked(it)) return false; // manuell gesperrt
+    if (!is_freed(it) && (is_team_wish_item(it) || build_protected(it) || NEVER_SELL.test(it.name))) return false; // Team-Zielbau-Teile, Bauauftrag und geschützte Items bleiben (außer manuell freigegeben)
     if (HP_JEWELRY.test(it.name)) return true;
     if (def.type == "elixir" && !/^elixirint/.test(it.name)) return true;
     if (def.compound) return is_buyable(it.name) && (it.level || 0) == 0 && !equipped_names()[it.name] && find_inv_indices(it.name, 0).length < 3;
@@ -2169,8 +2182,9 @@ function all_copies(name) { // Inventar + Bank (bzw. letzter Bankstand), ohne ge
 }
 function dup_protected(it) {
     var def = G.items[it.name] || {};
-    if (NEVER_SELL.test(it.name)) return true;
-    if (is_team_wish_item(it)) return true;
+    if (is_locked(it)) return true; var freed = is_freed(it);
+    if (!freed && NEVER_SELL.test(it.name)) return true;
+    if (!freed && (is_team_wish_item(it) || build_protected(it))) return true;
     if (it.p || it.stat_type || EVENT_ITEMS.test(it.name)) return true;
     if (def.compound) return (it.level || 0) < COMPOUND_SPARE_MAX || (it.level || 0) > COMPOUND_TARGET; // fertiger Schmuck: nur die Stufe(n) am Ziel zählen als Duplikate
     return (it.level || 0) > DUP_MAX_LEVEL || !def.upgrade;
@@ -2212,8 +2226,9 @@ async function sell_duplicates(pre) { // im Laden stehen; pre = vorgefilterte In
 // Lohnt sich Aufbewahrung (Inventar/Bank)? Sonst verkaufen.
 function worth_keeping(it) {
     var def = G.items[it.name]; if (!def) return true;
-    if (NEVER_SELL.test(it.name)) return true;
-    if (is_team_wish_item(it)) return true;
+    if (is_locked(it)) return true;
+    if (!is_freed(it) && NEVER_SELL.test(it.name)) return true;
+    if (!is_freed(it) && (is_team_wish_item(it) || build_protected(it))) return true;
     if (HP_JEWELRY.test(it.name)) return false;
     if (on_wishlist(it.name)) return true;
     if (should_keep(it)) return true;
@@ -2225,7 +2240,7 @@ function worth_keeping(it) {
     if (bought_recently(it.name)) return true;
     return false;
 }
-function should_keep(it) { return is_team_wish_item(it) || (equipped_names()[it.name] && ((it.level || 0) > 0 || !is_buyable(it.name))) || (G.items[it.name] && G.items[it.name].compound && (equipped_names()[it.name] || find_inv_indices(it.name, it.level || 0).length >= 3)) || KEEP_ITEMS.test(it.name) || EVENT_ITEMS.test(it.name) || EVENT_ITEMS.test(G.items[it.name] && G.items[it.name].name || ""); }
+function should_keep(it) { return is_locked(it) || (!is_freed(it) && (is_team_wish_item(it) || build_protected(it))) || (equipped_names()[it.name] && ((it.level || 0) > 0 || !is_buyable(it.name))) || (G.items[it.name] && G.items[it.name].compound && (equipped_names()[it.name] || find_inv_indices(it.name, it.level || 0).length >= 3)) || KEEP_ITEMS.test(it.name) || EVENT_ITEMS.test(it.name) || EVENT_ITEMS.test(G.items[it.name] && G.items[it.name].name || ""); }
 var tidy_next = 0;
 // ---------- Priester ausrüsten: überzählige Teile des Magiers, die für ihn besser sind ----------
 var last_priest_gear = 0;
@@ -2246,7 +2261,7 @@ function spare_for_priest(key) { // [{i, slot, gain}] – Inventarteile, die der
         var worn = st.slots[slot], ws = worn && G.items[worn.name] ? gear_score_for(G.items[worn.name], worn.level || 0, ctype, worn.stat_type) : 0, best = null; // Bewertung aus Sicht der Klasse des Kollegen (DEX beim Ranger), nicht aus Magier-Sicht
         for (var i = 0; i < character.items.length; i++) {
             var it = character.items[i]; if (!it || used[i]) continue; var def = G.items[it.name]; if (!def || !fits_class(def, ctype, slot)) continue;
-            if (KEEP_ITEMS.test(it.name) || EVENT_ITEMS.test(it.name) || is_team_wish_item(it)) continue;
+            if (is_locked(it) || KEEP_ITEMS.test(it.name) || EVENT_ITEMS.test(it.name) || is_team_wish_item(it) || build_protected(it)) continue;
             if (on_wishlist(it.name)) { // Zielbau-Teil des Magiers
                 if (def.compound) { // Schmuck: Kopien nur abgeben, wenn alle Slots mit diesem Teil ihr Ziel erreicht haben (dann ist das Compound-Material übrig)
                     var all_done = true, any = false; for (var sl2 in SLOT_TYPES) { var w2 = character.slots[sl2]; if (w2 && w2.name == it.name) { any = true; if ((w2.level || 0) < wish_level(sl2)) all_done = false; } }
@@ -4248,7 +4263,7 @@ var bank_panel = null, bank_ui = { sort: "ratio", dir: -1, q: "", f: "" }; try {
 function bank_ui_save() { try { localStorage.setItem("lp_bank_ui", JSON.stringify(bank_ui)); } catch (e) {} }
 var npc_orders = {}; try { npc_orders = JSON.parse(localStorage.getItem("lp_npc_orders_" + TEAM.merch) || "{}"); } catch (e) {} // key -> {name, level, q, t}: Händler holt aus der Bank und verkauft beim NPC
 function npc_orders_save() { try { localStorage.setItem("lp_npc_orders_" + TEAM.merch, JSON.stringify(npc_orders)); } catch (e) {} }
-function bank_protect_reason(name) { if (NEVER_SELL.test(name)) return "geschützt (Token-Set / Attribut-Schmuck)"; if (is_team_wish(name)) return "Team-Wunsch (Priest/Ranger)"; if (on_wishlist(name)) return "dein Zielbau"; return ""; }
+function bank_protect_reason(name, level) { var lk = item_lock[name + ((level || 0) ? "+" + level : "")]; if (lk == "lock") return "gesperrt (manuell)"; if (lk == "free") return ""; if (NEVER_SELL.test(name)) return "geschützt (Token-Set / Attribut-Schmuck)"; if (is_team_wish(name)) return "Team-Wunsch (Priest/Ranger)"; if (on_wishlist(name)) return "dein Zielbau"; return ""; }
 function bank_rows() {
     var q = (bank_ui.q || "").toLowerCase(), out = [];
     bank_snapshot_items().forEach(function (e) {
@@ -4258,7 +4273,7 @@ function bank_rows() {
         if (bank_ui.f == "equip" && !equip) return; if (bank_ui.f == "mat" && equip) return;
         var npc = npc_sell_price(e.name, e.level), mk = null; (market_all || []).forEach(function (o) { if (o.b || o.name != e.name || (o.level || 0) != e.level) return; if (!mk || o.price < mk.price) mk = o; });
         var avg = market_avg_days(e.name, e.level, 3), best = avg || (mk ? mk.price : 0);
-        out.push({ key: e.key, name: e.name, level: e.level, label: nm, q: e.q, n: e.n, stack: !!d.s, npc: npc, mk: mk, avg: avg, ratio: npc > 0 && best > 0 ? best / npc : (best > 0 ? 99 : 0), sug: stand_suggest_price(e.name, e.level), prot: bank_protect_reason(e.name), equip: equip });
+        out.push({ key: e.key, name: e.name, level: e.level, label: nm, q: e.q, n: e.n, stack: !!d.s, npc: npc, mk: mk, avg: avg, ratio: npc > 0 && best > 0 ? best / npc : (best > 0 ? 99 : 0), sug: stand_suggest_price(e.name, e.level), prot: bank_protect_reason(e.name, e.level), lock: item_lock[e.key] || "", equip: equip });
     });
     var k = bank_ui.sort, dir = bank_ui.dir;
     out.sort(function (a, b) { var va, vb; if (k == "name") return dir * a.label.localeCompare(b.label) || a.level - b.level; if (k == "n") { va = a.q; vb = b.q; } else if (k == "npc") { va = a.npc; vb = b.npc; } else if (k == "mk") { va = a.mk ? a.mk.price : -1; vb = b.mk ? b.mk.price : -1; } else if (k == "avg") { va = a.avg; vb = b.avg; } else { va = a.ratio; vb = b.ratio; } return dir * (va - vb) || a.label.localeCompare(b.label); });
@@ -4300,16 +4315,16 @@ function render_bank() {
 function bank_table_html() {
     var rows = bank_rows();
     var th = function (k, lab, left, tip) { return "<th class='" + (left ? "l " : "") + (bank_ui.sort == k ? "sorted" : "") + "' data-bsort='" + k + "'" + (tip ? " title='" + tip + "'" : "") + ">" + lab + (bank_ui.sort == k ? (bank_ui.dir > 0 ? " ▲" : " ▼") : "") + "</th>"; };
-    var h = "<table><tr>" + th("name", "Item", true) + th("n", "in Bank") + "<th>Menge</th>" + th("npc", "NPC zahlt", false, "je Stück, mit gemessenem Verkaufsfaktor") + th("mk", "Markt jetzt", false, "günstigstes aktuelles Verkaufsangebot aller Server") + th("avg", "Ø 3 Tage", false, "Median der Tages-Tiefstpreise der letzten 3 Tage") + th("ratio", "Markt/NPC", false, "wie viel mehr der Markt gegenüber dem NPC bringt") + "<th>Preis (Mio)</th><th></th></tr>";
-    if (!rows.length) h += "<tr><td class='l' colspan='9' style='color:#9aa3b2'>" + (bank_snapshot_items().length ? "nichts passt zum Filter" : "kein Bankstand – beim nächsten Bankgang wird er eingelesen") + "</td></tr>";
+    var h = "<table><tr>" + th("name", "Item", true) + th("n", "in Bank") + "<th>Menge</th>" + th("npc", "NPC zahlt", false, "je Stück, mit gemessenem Verkaufsfaktor") + th("mk", "Markt jetzt", false, "günstigstes aktuelles Verkaufsangebot aller Server") + th("avg", "Ø 3 Tage", false, "Median der Tages-Tiefstpreise der letzten 3 Tage") + th("ratio", "Markt/NPC", false, "wie viel mehr der Markt gegenüber dem NPC bringt") + "<th>Preis (Mio)</th><th title='Sperre: auto = Bot-Regeln · 🔒 = nie verkaufen/ausstellen/abgeben · 🔓 = frei, Schutzregeln aus'>Sperre</th><th></th></tr>";
+    if (!rows.length) h += "<tr><td class='l' colspan='10' style='color:#9aa3b2'>" + (bank_snapshot_items().length ? "nichts passt zum Filter" : "kein Bankstand – beim nächsten Bankgang wird er eingelesen") + "</td></tr>";
     rows.forEach(function (r) {
         var cls = r.ratio >= 1.5 ? "good" : (r.ratio > 0 && r.ratio <= 1.1 ? "meh" : "");
         var inStand = !!stand_orders[r.key], inNpc = !!npc_orders[r.key];
         var qin = r.stack ? "<input data-bq='" + esc(r.key) + "' value='" + r.q + "' style='width:48px'>" : "1";
         var pin = "<input data-bp='" + esc(r.key) + "' value='" + esc(fmt_mio(r.sug)) + "' title='Vorschlag " + fmt(r.sug) + "' style='width:56px'>";
         var act = inStand ? "<span class='lp_k'>im Stand-Auftrag</span> <button data-act='standdel' data-key='" + esc(r.key) + "' title='Stand-Auftrag löschen'>✕</button>" : inNpc ? "<span class='lp_k'>NPC-Auftrag offen</span> <button data-act='bnpcdel' data-key='" + esc(r.key) + "' title='NPC-Auftrag löschen'>✕</button>"
-            : "<button data-act='bstand' data-key='" + esc(r.key) + "' data-name='" + esc(r.name) + "' data-lvl='" + r.level + "'" + (r.prot && r.prot.indexOf("geschützt") == 0 ? " disabled title='" + esc(r.prot) + "'" : " title='Händler holt es aus der Bank und stellt es zu diesem Preis aus'") + ">Ausstellen</button> <button data-act='bnpc' data-key='" + esc(r.key) + "' data-name='" + esc(r.name) + "' data-lvl='" + r.level + "'" + (r.prot ? " disabled title='" + esc(r.prot) + "'" : " title='Händler holt es aus der Bank und verkauft es beim NPC (Gold in die Händlerkasse)'") + ">NPC</button>";
-        h += "<tr class='" + cls + "' title='" + esc(r.name + (r.level ? "+" + r.level : "") + (r.mk ? " · Markt jetzt bei " + r.mk.seller + " (" + pretty_server(r.mk.server) + ")" : "") + (r.prot ? " · " + r.prot : "")) + "'><td class='l'>" + esc(r.label) + (r.level ? " <b>+" + r.level + "</b>" : "") + (r.prot ? " <span class='lp_k' style='font-size:10px'>🔒</span>" : "") + "</td><td>" + (r.stack ? r.q : r.n) + "</td><td>" + qin + "</td><td>" + fmt(Math.round(r.npc)) + "</td><td>" + (r.mk ? fmt(r.mk.price) : "–") + "</td><td>" + (r.avg ? fmt(r.avg) : "–") + "</td><td style='color:" + (r.ratio >= 1.5 ? "#7ed67e" : r.ratio > 0 && r.ratio <= 1.1 ? "#8b93a0" : "#e6e6e6") + "'>" + (r.ratio > 0 && r.ratio < 99 ? "×" + (Math.round(r.ratio * 10) / 10) : "–") + "</td><td>" + pin + "</td><td>" + act + "</td></tr>";
+            : "<button data-act='bstand' data-key='" + esc(r.key) + "' data-name='" + esc(r.name) + "' data-lvl='" + r.level + "'" + (r.lock == "lock" || (r.prot && r.prot.indexOf("geschützt") == 0) ? " disabled title='" + esc(r.lock == "lock" ? "gesperrt (manuell)" : r.prot) + "'" : " title='Händler holt es aus der Bank und stellt es zu diesem Preis aus'") + ">Ausstellen</button> <button data-act='bnpc' data-key='" + esc(r.key) + "' data-name='" + esc(r.name) + "' data-lvl='" + r.level + "'" + (r.prot ? " disabled title='" + esc(r.prot) + "'" : " title='Händler holt es aus der Bank und verkauft es beim NPC (Gold in die Händlerkasse)'") + ">NPC</button>";
+        h += "<tr class='" + cls + "' title='" + esc(r.name + (r.level ? "+" + r.level : "") + (r.mk ? " · Markt jetzt bei " + r.mk.seller + " (" + pretty_server(r.mk.server) + ")" : "") + (r.prot ? " · " + r.prot : "")) + "'><td class='l'>" + esc(r.label) + (r.level ? " <b>+" + r.level + "</b>" : "") + (r.prot ? " <span class='lp_k' style='font-size:10px'>🔒</span>" : "") + "</td><td>" + (r.stack ? r.q : r.n) + "</td><td>" + qin + "</td><td>" + fmt(Math.round(r.npc)) + "</td><td>" + (r.mk ? fmt(r.mk.price) : "–") + "</td><td>" + (r.avg ? fmt(r.avg) : "–") + "</td><td style='color:" + (r.ratio >= 1.5 ? "#7ed67e" : r.ratio > 0 && r.ratio <= 1.1 ? "#8b93a0" : "#e6e6e6") + "'>" + (r.ratio > 0 && r.ratio < 99 ? "×" + (Math.round(r.ratio * 10) / 10) : "–") + "</td><td>" + pin + "</td><td><button data-act='block' data-key='" + esc(r.key) + "' class='" + (r.lock ? "on" : "") + "' title='" + (r.lock == "lock" ? "gesperrt – Klick: frei" : r.lock == "free" ? "frei – Klick: Automatik" : "Automatik – Klick: sperren") + "'>" + (r.lock == "lock" ? "🔒" : r.lock == "free" ? "🔓" : "auto") + "</button></td><td>" + act + "</td></tr>";
     });
     return h + "</table>";
 }
@@ -4322,8 +4337,9 @@ function bank_click(b) { // Klicks im Bank-Fenster (true = verarbeitet)
     var key = b.getAttribute("data-key"), nm = b.getAttribute("data-name"), lv = parseInt(b.getAttribute("data-lvl")) || 0;
     var qe = bank_panel && bank_panel.querySelector("input[data-bq='" + key + "']"), pe = bank_panel && bank_panel.querySelector("input[data-bp='" + key + "']");
     var q = qe ? Math.max(1, parseInt(qe.value) || 1) : 1, price = pe ? parse_mio(pe.value) : 0;
-    if (act == "bstand") { if (!(price > 0)) { game_log("Bank: Preis fehlt"); return true; } stand_orders[key] = { name: nm, level: lv, q: q, price: price, fixed: price, since: Date.now(), t: Date.now() }; save_stand_orders(); game_log("Stand-Auftrag: " + nm + (lv ? "+" + lv : "") + (q > 1 ? " ×" + q : "") + " für " + fmt(price) + " – Händler holt es aus der Bank und stellt es aus"); last_panel = 0; render_bank(); return true; }
-    if (act == "bnpc") { if (bank_protect_reason(nm)) { game_log("Bank: " + nm + " ist " + bank_protect_reason(nm) + " – kein NPC-Verkauf"); return true; } npc_orders[key] = { name: nm, level: lv, q: q, t: Date.now() }; npc_orders_save(); game_log("NPC-Auftrag: " + q + "× " + nm + (lv ? "+" + lv : "") + " – Händler holt es aus der Bank und verkauft es beim NPC (~" + fmt(Math.round(npc_sell_price(nm, lv) * q)) + ")"); render_bank(); return true; }
+    if (act == "bstand") { if (item_lock[key] == "lock") { game_log("Bank: " + key + " ist manuell gesperrt"); return true; } if (!(price > 0)) { game_log("Bank: Preis fehlt"); return true; } stand_orders[key] = { name: nm, level: lv, q: q, price: price, fixed: price, since: Date.now(), t: Date.now() }; save_stand_orders(); game_log("Stand-Auftrag: " + nm + (lv ? "+" + lv : "") + (q > 1 ? " ×" + q : "") + " für " + fmt(price) + " – Händler holt es aus der Bank und stellt es aus"); last_panel = 0; render_bank(); return true; }
+    if (act == "bnpc") { if (bank_protect_reason(nm, lv)) { game_log("Bank: " + nm + " ist " + bank_protect_reason(nm, lv) + " – kein NPC-Verkauf"); return true; } npc_orders[key] = { name: nm, level: lv, q: q, t: Date.now() }; npc_orders_save(); game_log("NPC-Auftrag: " + q + "× " + nm + (lv ? "+" + lv : "") + " – Händler holt es aus der Bank und verkauft es beim NPC (~" + fmt(Math.round(npc_sell_price(nm, lv) * q)) + ")"); render_bank(); return true; }
+    if (act == "block") { var cur = item_lock[key] || "", nx = cur == "" ? "lock" : cur == "lock" ? "free" : ""; set_lock(key, nx); game_log("Bank: " + key + " " + (nx == "lock" ? "gesperrt – wird nie verkauft, ausgestellt oder abgegeben" : nx == "free" ? "freigegeben – Schutzregeln aus, verkaufbar" : "wieder Automatik")); render_bank(); return true; }
     if (act == "bnpcdel") { delete npc_orders[key]; npc_orders_save(); game_log("NPC-Auftrag gelöscht: " + key); render_bank(); return true; }
     return false;
 }
@@ -4821,7 +4837,7 @@ async function apply_stat_scroll(idx, st) { // Attribut-Scroll auf ein Inventart
 }
 async function upgrade_inv(name, level, target, stat_want) { // stat_want: Attribut, das vor dem Sprung auf Qualität 1 gesetzt wird
     while (level < target) {
-        check_pause();
+        check_pause(); if (build_running && build_stop) return { level: level, destroyed: false, stopped: true };
         var idx = find_inv_index(name, level);
         if (idx < 0) return { level: level, destroyed: true };
         if (stat_want && level == grade0_max(name)) { try { await apply_stat_scroll(idx, stat_want); } catch (e) {} idx = find_inv_index(name, level); if (idx < 0) return { level: level, destroyed: true }; } // letzter Schritt mit Qualität 0: Attribut jetzt oder nie
@@ -5106,6 +5122,101 @@ async function upgrade_routine_inner(manual) {
     if (manual) after_action("Upgrade"); else if (!paused) go_to_farm_spot();
 }
 
+
+// ---------- Bauauftrag: ein NPC-kaufbares Teil in Stückzahl auf Zielstufe bauen – ohne Zerstörungszähler, nur Stückzahl / Gold-Reserve / Stop ----------
+var build_order = null; try { build_order = JSON.parse(localStorage.getItem("lp_build_" + character.name) || "null"); } catch (e) {}
+var build_ui = { item: "coat", level: 7, n: 1, reserve: 0 }; try { var _bu = JSON.parse(localStorage.getItem("lp_build_ui_" + character.name) || "null"); if (_bu) build_ui = _bu; } catch (e) {}
+var build_running = false, build_stop = false, build_step_txt = "";
+function build_save() { try { localStorage.setItem("lp_build_" + character.name, JSON.stringify(build_order)); localStorage.setItem("lp_build_ui_" + character.name, JSON.stringify(build_ui)); } catch (e) {} }
+function build_protected(it) { return !!build_order && !!it && it.name == build_order.name; } // Kopien des Auftrags-Items: nie verkaufen, nie in die Bank
+function build_item_list() { // alle beim NPC kaufbaren Ausrüstungsteile mit Upgrade oder Compound
+    var out = []; for (var k in G.items) { var d = G.items[k]; if (!d || (!d.upgrade && !d.compound) || !is_buyable(k)) continue; if (EQUIP_TYPES.indexOf(d.type) < 0 && !MKT_EQUIP_TYPES[d.type]) continue; out.push(k); }
+    return out.sort(function (a, b) { return (G.items[a].name || a).localeCompare(G.items[b].name || b); });
+}
+function build_status_txt() {
+    var o = build_order; if (!o) return "kein Auftrag";
+    return o.name + " +" + o.level + ": " + o.done + "/" + o.n + " fertig · " + o.destroyed + " zerstört · " + fmt(o.spent) + " Gold" + (build_running ? " · läuft" + (build_step_txt ? " (" + build_step_txt + ")" : "") : o.done >= o.n ? " · fertig" : " · gestoppt");
+}
+function build_html() {
+    var o = build_order, items = build_item_list();
+    var h = "<div class='lp_row'><span class='lp_k'>Bauen:</span> <select data-bo='item' style='font-size:11px;background:#1c2029;color:#eee;border:1px solid #555;max-width:150px'>" + items.map(function (k) { return "<option value='" + k + "'" + (build_ui.item == k ? " selected" : "") + ">" + esc(G.items[k].name || k) + " (" + fmt(G.items[k].g) + ")</option>"; }).join("") + "</select>"
+        + " <span class='lp_k'>Stufe</span> <input data-bo='level' value='" + (build_ui.level || 0) + "' style='width:28px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'>"
+        + " <span class='lp_k'>Stück</span> <input data-bo='n' value='" + (build_ui.n || 1) + "' style='width:28px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'>"
+        + " <span class='lp_k' title='Gold, das beim Bauen immer übrig bleibt (Mio.); 0 = Standard-Reserve'>Reserve</span> <input data-bo='reserve' value='" + esc(fmt_mio(build_ui.reserve || 0)) + "' style='width:36px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'> <span class='lp_k'>Mio</span>"
+        + (build_running ? "<button data-act='bostop' class='on' title='nur diesen Bauauftrag anhalten – Stand bleibt gespeichert'>Stop</button>" : "<button data-act='bostart' title='Auftrag mit diesen Werten starten bzw. den gespeicherten fortsetzen'>Start</button>")
+        + (o && !build_running ? "<button data-act='boclear' title='Auftrag löschen (Kopien im Inventar werden danach wieder normal behandelt)'>Löschen</button>" : "") + "</div>";
+    h += "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>" + esc(build_status_txt()) + (o ? " · Chance je Stufe: " + Array.apply(null, Array(o.level)).map(function (_, l) { return "+" + (l + 1) + " " + Math.round(success_p(G.items[o.name].compound ? "c" : "u", l) * 100) + " %"; }).join(", ") : "") + "</span></div>";
+    return h;
+}
+function build_start() {
+    if (build_running) return;
+    var name = build_ui.item, def = G.items[name]; if (!def || !is_buyable(name)) { game_log("Bauauftrag: " + name + " ist nicht beim NPC kaufbar"); return; }
+    var level = Math.max(1, Math.min(parseInt(build_ui.level) || 0, max_level(def))), n = Math.max(1, parseInt(build_ui.n) || 1);
+    if (!build_order || build_order.name != name || build_order.level != level || build_order.done >= build_order.n) build_order = { name: name, level: level, n: n, done: 0, destroyed: 0, spent: 0, reserve: build_ui.reserve || 0 };
+    else { build_order.n = n; build_order.reserve = build_ui.reserve || 0; }
+    build_save(); preempt("Bauauftrag", build_run);
+}
+async function build_run() {
+    var o = build_order; if (!o || build_running) return;
+    if (busy || routine_running()) { game_log("Bauauftrag: gerade beschäftigt – gleich nochmal"); return; }
+    unpause("Bauauftrag"); build_running = true; build_stop = false; upgrading = true; busy = true; last_panel = 0;
+    var saved_reserve = GOLD_RESERVE; GOLD_RESERVE = Math.max(GOLD_RESERVE, o.reserve || WISH_RESERVE);
+    var def = G.items[o.name], comp = !!def.compound;
+    game_log("Bauauftrag: " + o.name + " +" + o.level + " × " + o.n + " (" + o.done + " fertig) – läuft bis Stückzahl, Reserve " + fmt(GOLD_RESERVE) + " oder Stop");
+    try {
+        await travel_place(comp ? "compound" : "upgrade");
+        while (o.done < o.n) {
+            check_pause(); if (build_stop) throw "STOP";
+            busy_since = Date.now(); // Wächter nicht auslösen – der Auftrag darf lange laufen
+            if (character.esize < 4) { game_log("Bauauftrag: Inventar voll (frei " + character.esize + ") – Stop"); break; }
+            var g0 = character.gold, r = comp ? await build_compound_step(o) : await build_upgrade_step(o);
+            o.spent += Math.max(0, g0 - character.gold);
+            if (r == "done") { o.done++; game_log("Bauauftrag: " + o.name + " +" + o.level + " fertig (" + o.done + "/" + o.n + ", bisher " + o.destroyed + " zerstört, " + fmt(o.spent) + " Gold)"); }
+            build_save(); last_panel = 0;
+            if (r == "stop") break;
+        }
+    } catch (e) { game_log(e == "PAUSE" ? "Bauauftrag: durch Pause unterbrochen – Start setzt fort" : e == "STOP" ? "Bauauftrag: gestoppt (" + o.done + "/" + o.n + ")" : e == "ABORT" ? "Bauauftrag: abgebrochen" : "Bauauftrag-Fehler: " + err_txt(e)); }
+    GOLD_RESERVE = saved_reserve; build_save();
+    if (o.done >= o.n) game_log("Bauauftrag fertig: " + o.n + "× " + o.name + " +" + o.level + " im Inventar · " + o.destroyed + " zerstört · " + fmt(o.spent) + " Gold");
+    build_running = false; build_step_txt = ""; upgrading = false; busy = false; last_panel = 0;
+    after_action("Bauauftrag");
+}
+async function build_upgrade_step(o) { // eine Kopie unter Zielstufe (höchste zuerst) hochziehen; keine da: eine kaufen
+    var idx = -1, lv = -1;
+    for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && it.name == o.name && (it.level || 0) < o.level && (it.level || 0) > lv) { idx = i; lv = it.level || 0; } }
+    var def = G.items[o.name];
+    if (idx < 0) {
+        if (spendable() < def.g) { game_log("Bauauftrag: Reserve erreicht (" + fmt(character.gold) + ") – Stop"); return "stop"; }
+        build_step_txt = "kaufe " + o.name; if (!await buy_items(o.name, 1)) return "stop";
+        await travel_place("upgrade"); lv = 0;
+    }
+    build_step_txt = "+" + lv + " → +" + o.level;
+    var r = await upgrade_inv(o.name, lv, o.level, null);
+    if (r.destroyed) { o.destroyed++; game_log("Bauauftrag: " + o.name + " bei +" + r.level + " zerstört (" + o.destroyed + ". Mal) – nächstes Teil"); return "again"; }
+    if (r.stopped) return "stop";
+    return r.level >= o.level ? "done" : "again";
+}
+async function build_compound_step(o) { // Schmuck: unterste Stufe mit 3 Kopien compounden; keine: +0 nachkaufen
+    var def = G.items[o.name], t = o.level, n_t0 = find_inv_indices(o.name, t).length, l = -1;
+    for (var k = t - 1; k >= 0; k--) if (find_inv_indices(o.name, k).length >= 3) { l = k; break; }
+    if (l < 0) {
+        var need = 3 - find_inv_indices(o.name, 0).length;
+        if (spendable() < def.g * need) { game_log("Bauauftrag: Reserve erreicht (" + fmt(character.gold) + ") – Stop"); return "stop"; }
+        build_step_txt = "kaufe " + need + "× " + o.name; if (!await buy_items(o.name, need)) return "stop";
+        await travel_place("compound"); return "again";
+    }
+    var scroll = "cscroll" + best_scroll_grade(def, l, "c", cost_to_reach(o.name, l));
+    if (spendable() < G.items[scroll].g) { game_log("Bauauftrag: Reserve erreicht – Stop"); return "stop"; }
+    if (quantity(scroll) < 1) { buy(scroll, 1); await sleep(600); }
+    var sc = locate_item(scroll); if (sc < 0) { game_log("Bauauftrag: keine " + scroll); return "stop"; }
+    var idx = find_inv_indices(o.name, l), prev = find_inv_indices(o.name, l + 1).length;
+    build_step_txt = "+" + l + " ×3 → +" + (l + 1); set_message(o.name + " +" + l + " x3");
+    try { await compound(idx[0], idx[1], idx[2], sc); } catch (e) {}
+    await wait_queue("compound");
+    if (find_inv_indices(o.name, l + 1).length > prev) { record_attempt("c", l, true); game_log("Bauauftrag: " + o.name + " +" + (l + 1) + " erstellt"); }
+    else { record_attempt("c", l, false); o.destroyed++; game_log("Bauauftrag: Compound +" + l + " ×3 fehlgeschlagen (" + o.destroyed + ". Mal)"); }
+    return find_inv_indices(o.name, t).length > n_t0 ? "done" : "again";
+}
 // ---------- Hauptschleife ----------
 var unreach_ids = {};
 function line_free(m) { try { return can_move_to(m.x, m.y); } catch (e) { return true; } }
