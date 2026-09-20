@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v285";
+var BOT_VERSION = "v286";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -2151,8 +2151,9 @@ async function tidy_inventory() {
         var dups = duplicate_indices();
         if (junk.length || dups.length || focus_mode) {
             set_message("Verkaufen"); await travel_place("potions");
-            for (var j = 0; j < junk.length; j++) { var it = character.items[junk[j]]; if (!it) continue; await sell_measured(junk[j], it.q || 1); }
-            if (junk.length) game_log("Inventar: " + junk.length + " Schrott-Items verkauft");
+            var sold_names = [];
+            for (var j = 0; j < junk.length; j++) { var it = character.items[junk[j]]; if (!it) continue; sold_names.push(it.name + ((it.level || 0) ? "+" + it.level : "") + ((it.q || 1) > 1 ? " ×" + it.q : "")); await sell_measured(junk[j], it.q || 1); }
+            if (junk.length) game_log("Inventar: " + junk.length + " Schrott-Items verkauft: " + sold_names.join(", "));
             await sell_duplicates();
             if (focus_mode) { try { var hp_t = pick_pot_tier(POTS_HP), mp_t = pick_pot_tier(POTS_MP), pp = G.items[hp_t].g + G.items[mp_t].g, need = Math.max(0, 150 - Math.min(pots_total(POTS_HP), pots_total(POTS_MP))), amt = Math.min(need, Math.floor((spendable() * 0.7) / pp)); if (amt >= 10) { buy(hp_t, amt); buy(mp_t, amt); await sleep(500); game_log("Tränke aufgefüllt: " + amt + " " + hp_t + " / " + amt + " " + mp_t); } } catch (e) { game_log("Tränke: " + err_txt(e)); } }
         }
