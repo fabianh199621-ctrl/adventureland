@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v280";
+var BOT_VERSION = "v281";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -1391,6 +1391,7 @@ function init_panel() {
         if (b.tagName == "TH" && b.getAttribute("data-sort")) { set_sort(b.getAttribute("data-sort")); return; }
         if (b.tagName == "INPUT" && b.getAttribute("data-mq")) return; // Mengenfeld im Markt: nur tippen
         var mkel = b.closest ? b.closest("[data-mf],[data-msort],[data-mcsort],[data-act='mbuy'],[data-act='msell'],[data-act='mgoto'],[data-act='mtrip'],[data-act='marb'],[data-act='mview'],[data-act='mmore'],[data-mg]") : null;
+        if (b.tagName == "INPUT" && (b.getAttribute("data-sp") || b.getAttribute("data-sq"))) return;
         if (mkel) { var mkr = false; try { mkr = market_click(mkel); } catch (mke) { game_log("Markt-Fehler: " + err_txt(mke) + (mke && mke.stack ? " @ " + String(mke.stack).split("\n")[1] : "")); mkr = true; } if (mkr) return; }
         if (b.tagName != "BUTTON") return;
         if (b.id == "lp_list_close") { div.__collapsed = true; try { localStorage.setItem("lp_panel_collapsed", "1"); } catch (x) {} last_panel = 0; return; }
@@ -1458,6 +1459,9 @@ function init_panel() {
         else if (act == "mkttoggle") toggle_market_panel();
         else if (act == "donate") { if (!team_on.merch || !team_running(TEAM.merch)) game_log("Spenden: Händler läuft nicht"); else { last_donate = Date.now(); team_send(TEAM.merch, { t: "donate", gold: donate_amt, target: 200 }); game_log("Spenden: Händler bringt " + fmt(donate_amt) + " Gold zu Ron"); } }
         else if (act == "donateauto") { donate_auto = !donate_auto; try { localStorage.setItem("lp_donate_auto", donate_auto ? "1" : "0"); } catch (x) {} game_log("Spenden-Automatik " + (donate_auto ? "an – Händler spendet alles über der Nachfüllgrenze bis Lv " + DONATE_LVL : "aus")); last_panel = 0; }
+        else if (act == "banklist") { div.__banklist = !div.__banklist; last_panel = 0; }
+        else if (act == "standadd") { var sk = b.getAttribute("data-key"), snm = b.getAttribute("data-name"), slv = parseInt(b.getAttribute("data-lvl")) || 0; var pe = div.querySelector("input[data-sp='" + sk + "']"), qe = div.querySelector("input[data-sq='" + sk + "']"); var sp = pe ? parse_mio(pe.value) : 0, sq = qe ? (parseInt(qe.value) || 1) : 1; if (!(sp > 0)) { game_log("Stand: Preis fehlt"); } else { stand_orders[sk] = { name: snm, level: slv, q: Math.max(1, sq), price: sp, fixed: sp, since: Date.now(), t: Date.now() }; save_stand_orders(); game_log("Stand-Auftrag: " + snm + (slv ? "+" + slv : "") + (sq > 1 ? " ×" + sq : "") + " für " + fmt(sp) + " – Händler holt es aus der Bank und stellt es aus"); last_panel = 0; } }
+        else if (act == "standdel") { var dk = b.getAttribute("data-key"); if (stand_orders[dk]) { game_log("Stand-Auftrag gelöscht: " + dk + " – Händler nimmt es vom Stand"); delete stand_orders[dk]; save_stand_orders(); last_panel = 0; } }
         else if (act == "bankstatus") { try { bank_status_log(); } catch (e) { game_log("Bank-Status: " + err_txt(e)); } }
         else if (act == "mbcancel") { if (merch_buy && merch_buy.stage == "away") game_log("Einkauf: Reise läuft, Abbruch erst nach Rückkehr"); else mb_fail("manuell abgebrochen"); }
         else if (act == "geartoggle") { div.__gear = !div.__gear; try { localStorage.setItem("lp_panel_gear", div.__gear ? "1" : "0"); } catch (x) {} }
@@ -1856,7 +1860,7 @@ function update_panel() {
     h += lp_sec("haendler", "Händler", stand_txt + (sc ? " · " + sc : "") + " · " + (tips.length ? tips.length + " Serverfund" + (tips.length > 1 ? "e" : "") : "kein Serverfund") + (arb_auto ? " · Handelsreise Auto" : ""),
         (merch_buy ? "<div class='lp_row'><span class='lp_k'>Einkauf:</span> <span style='color:#8ab4f8'>" + esc(mb_stage_txt()) + "</span><button data-act='mbcancel' title='Einkauf abbrechen (Gold kommt bei der nächsten Abholung zurück)'>Abbrechen</button></div>" : "") + "<div class='lp_row'><span class='lp_k'>Aktionen</span>" + (team_on.merch ? "<button data-act='goldback' title='Händler bringt alles über seinem Zielbestand, Priest/Ranger alles über ihrem Maximum zu dir'>Gold holen" + (mst0 && mst0.gold ? " (" + fmt(mst0.gold) + ")" : "") + "</button>" : "") + "<span class='lp_k' style='margin-left:6px'>Kasse:</span> <input data-mgk='target' value='" + esc(fmt_mio(MG.target)) + "' title='Zielbestand des Händlers in Mio. – er füllt bei dir auf, wenn er unter die Nachfüllgrenze fällt' style='width:44px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'> <span class='lp_k'>Mio · nachfüllen unter</span> <input data-mgk='min' value='" + esc(fmt_mio(MG.min)) + "' title='Nachfüllgrenze des Händlers in Mio.' style='width:44px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'> <span class='lp_k'>Mio · Priest/Ranger max.</span> <input data-mgk='esc' value='" + esc(fmt_mio(MG.esc_max)) + "' title='Priest/Ranger geben alles über diesem Betrag (in Mio.) an dich ab' style='width:44px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'> <span class='lp_k'>Mio</span>" + "<button data-act='mkttoggle' title='Markt-Fenster: alle Angebote aller Server, filterbar'>Markt</button><button data-act='marketscan' title='Alle Händlerstände jetzt abfragen: Zielbau-Angebote und Schnäppchen unter NPC-Wert'" + (scanning_now ? " class='on'" : "") + ">" + (scanning_now ? "Scan läuft…" : "Schnäppchen scannen") + "</button></div>"
         + (team_on.merch ? "<div class='lp_row'><span class='lp_k'>Spenden (Ron):</span> <input data-mgk='donate' value='" + esc(fmt_mio(donate_amt)) + "' title='Betrag in Mio., den der Händler bei Ron gegen XP spendet (4,8 XP/Gold bei leerer Schatzkammer)' style='width:44px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'> <span class='lp_k'>Mio</span><button data-act='donate' title='Händler läuft zu Ron und spendet den Betrag in 100k-Schritten (Kasse bleibt über der Nachfüllgrenze)'>Spenden</button><button data-act='donateauto'" + (donate_auto ? " class='on'" : "") + " title='Händler spendet automatisch alles über der Nachfüllgrenze, bis er Lv " + DONATE_LVL + " hat (mluck)'>Auto bis Lv " + DONATE_LVL + "</button>" + (mst0 && mst0.level != null ? "<span class='lp_k'>Händler Lv " + mst0.level + (mst0.level >= 40 ? " – mluck aktiv" : ", bis Lv 40 noch ~" + fmt(Math.round(lvl_xp_between(mst0.level, 40) / (donate_rate || 4.8))) + " Gold" + (donate_rate ? " (" + donate_rate.toFixed(2) + " XP/Gold gemessen)" : "")) + "</span>" : "") + "</div>" : "")
-        + "<div class='lp_row' style='flex-wrap:wrap;line-height:1.6'><span class='lp_k'>Serverwechsel:</span> <span style='font-size:11px'>" + server_tip_html() + "</span></div>" + arb_html(panel) + arb_trip_html() + watch_html());
+        + "<div class='lp_row' style='flex-wrap:wrap;line-height:1.6'><span class='lp_k'>Serverwechsel:</span> <span style='font-size:11px'>" + server_tip_html() + "</span></div>" + arb_html(panel) + arb_trip_html() + watch_html() + lp_sec("stand", "Stand-Aufträge", Object.keys(stand_orders).filter(function (k) { return !WATCH_ITEMS[k]; }).length + " Aufträge · Bankinhalt zum Ausstellen", stand_orders_html()));
     // Zielbau (eingeklappt)
     var tw_sum = ["priest", "ranger"].filter(function (k) { return team_on[k]; }).map(function (k) { var cfgs = team_wish[k] || {}, n = 0, done = 0; TEAM_WISH_SLOTS.forEach(function (sl) { var c = cfgs[sl]; if (c && c.item) { n++; var s2 = tw_status(k, sl); if (s2 && s2.state == "fertig") done++; } }); return TEAM_LABEL[k] + " " + (n ? done + "/" + n : "–"); }).join(" · ");
     h += lp_sec("zielbau", "Zielbau", "Ich " + esc(wish_text()) + (tw_sum ? " · " + tw_sum : "") + (AUTO_GEAR ? " · Reserve " + fmt(WISH_RESERVE) : ""),
@@ -3703,6 +3707,33 @@ function watch_after_scan() {
             if (np != o.price) { o.price = np; o.t = Date.now(); save_stand_orders(); game_log("Stand-Auftrag " + name + ": " + fmt(np) + (ws && ws.bid ? " (Kaufauftrag " + fmt(ws.bid.price) + ")" : "") + " – Händler holt es aus der Bank und stellt es aus"); }
         }
     }
+}
+function bank_snapshot_items() { // Bankinhalt (live oder letzter Stand) gruppiert nach Item+Level
+    var bk = (character.bank && typeof character.bank == "object") ? character.bank : (bank_cache || {}), g = {};
+    for (var pk in bk) if (pk.indexOf("items") == 0 && Array.isArray(bk[pk])) bk[pk].forEach(function (it) { if (!it || /^(hpot|mpot)/.test(it.name)) return; var k = it.name + ((it.level || 0) ? "+" + it.level : ""); var e = g[k] || (g[k] = { key: k, name: it.name, level: it.level || 0, q: 0, n: 0 }); e.q += it.q || 1; e.n++; });
+    return Object.keys(g).map(function (k) { return g[k]; }).sort(function (a, b) { return ((G.items[a.name] || {}).name || a.name).localeCompare((G.items[b.name] || {}).name || b.name) || a.level - b.level; });
+}
+function stand_suggest_price(name, level) { // Vorschlag: knapp unter dem günstigsten Anbieter aller Server, sonst 1,8× NPC-Wert
+    var mn = null; (market_all || []).forEach(function (o) { if (o.b || o.name != name || (o.level || 0) != (level || 0)) return; if (!mn || o.price < mn) mn = o.price; });
+    if (mn) return Math.max(1, Math.round(mn * 0.99));
+    return Math.max(100, Math.round(npc_value(name, level) * 1.8));
+}
+function stand_orders_html() {
+    var h = "", ms = team_state[TEAM.merch];
+    var keys = Object.keys(stand_orders).filter(function (k) { return !WATCH_ITEMS[k]; });
+    if (keys.length) { h += "<table class='lp_t' style='font-size:11px'><tr><th style='text-align:left'>Auftrag</th><th>Menge</th><th>Preis</th><th style='text-align:left'>Stand</th><th></th></tr>";
+        keys.forEach(function (k) { var o = stand_orders[k], nm = (G.items[o.name] || {}).name || o.name, st = ms && ms.orders && ms.orders[k]; h += "<tr><td>" + esc(nm) + (o.level ? " +" + o.level : "") + "</td><td>" + (o.q || 1) + "</td><td>" + fmt(o.price) + "</td><td style='text-align:left;color:#8ab4f8'>" + esc(st || "wartet auf Händler") + "</td><td><button data-act='standdel' data-key='" + esc(k) + "' title='Auftrag löschen – Händler nimmt es vom Stand, es kommt in die Bank'>✕</button></td></tr>"; });
+        h += "</table>"; }
+    h += "<div class='lp_row'><span class='lp_k'>Aus der Bank anbieten:</span><button data-act='banklist'>" + (panel.__banklist ? "▾" : "▸") + " Bankinhalt</button>" + (character.bank ? "" : "<span class='lp_k' style='font-size:11px'>(Stand vom letzten Bankbesuch)</span>") + "</div>";
+    if (panel.__banklist) {
+        var items = bank_snapshot_items();
+        if (!items.length) h += "<div class='lp_k'>Bank leer oder noch nicht gesehen</div>";
+        else { h += "<table class='lp_t' style='font-size:11px'><tr><th style='text-align:left'>Item</th><th>in Bank</th><th>Menge</th><th>Preis</th><th></th></tr>";
+            items.forEach(function (e) { var d = G.items[e.name] || {}, nm = d.name || e.name, has = !!stand_orders[e.key], sug = stand_suggest_price(e.name, e.level);
+                h += "<tr><td title='" + esc(e.name) + "'>" + esc(nm) + (e.level ? " +" + e.level : "") + "</td><td>" + (d.s ? e.q : e.n) + "</td><td>" + (d.s ? "<input data-sq='" + esc(e.key) + "' value='" + e.q + "' style='width:44px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'>" : "1") + "</td><td><input data-sp='" + esc(e.key) + "' value='" + esc(fmt_mio(sug)) + "' title='Preis in Mio. (Vorschlag: " + fmt(sug) + ")' style='width:56px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'> <span class='lp_k'>Mio</span></td><td>" + (has ? "<span class='lp_k'>im Auftrag</span>" : "<button data-act='standadd' data-key='" + esc(e.key) + "' data-name='" + esc(e.name) + "' data-lvl='" + e.level + "' title='Händler holt es aus der Bank und stellt es zu diesem Preis aus'>Ausstellen</button>") + "</td></tr>"; });
+            h += "</table>"; }
+    }
+    return h;
 }
 function watch_html() {
     var h = "";
