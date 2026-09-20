@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v320";
+var BOT_VERSION = "v322";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -424,7 +424,7 @@ function team_inject() { // läuft im Fenster des Teammitglieds nicht unser Skri
         var role = TEAM_ROLE[k];
         game_log("Team: " + nm + " – spiele " + role + "_" + BOT_VERSION + ".js ein" + (have ? " (bisher " + have + ")" : ""));
         (function (nm, cw, role) {
-            fetch(BOT_BASE + role + "_" + BOT_VERSION + ".js", { cache: "no-store" }).then(function (r) { if (!r.ok) throw "HTTP " + r.status; return r.text(); }).then(function (code) { if (code.indexOf("// =====") != 0) { game_log("Team: " + nm + " – " + role + "_" + BOT_VERSION + ".js noch nicht abrufbar, neuer Versuch"); return; } try { cw.eval(code); game_log("Team: " + nm + " – Skript eingespielt"); } catch (e) { game_log("Team: " + nm + " – Einspielen fehlgeschlagen: " + err_txt(e)); } }).catch(function (e) { game_log("Team: " + nm + " – Laden fehlgeschlagen: " + e); });
+            fetch(BOT_BASE + role + "_" + BOT_VERSION + ".js", { cache: "no-store" }).then(function (r) { if (!r.ok) throw "HTTP " + r.status; return r.text(); }).then(function (code) { if (code.indexOf("// =====") != 0) { game_log("Team: " + nm + " – " + role + "_" + BOT_VERSION + ".js noch nicht abrufbar, neuer Versuch"); return; } try { cw.eval(code); game_log("Team: " + nm + " – Skript eingespielt"); } catch (e) { game_log("Team: " + nm + " – Einspielen fehlgeschlagen: " + err_txt(e)); } }).catch(function (e) { game_log("Team: " + nm + " – Laden fehlgeschlagen: " + e); if (String(e).indexOf("404") >= 0) check_newer_version(); });
         })(nm, cw, role);
     }
 }
@@ -993,6 +993,11 @@ function event_debug() {
     game_log("Event-Diagnose angezeigt (Fenster) – bitte Screenshot");
 }
 
+var newer_check_t = 0;
+function check_newer_version() { // Teamdatei nicht mehr auf GitHub (neue Version veröffentlicht, alte gelöscht): selbst neu laden
+    if (Date.now() - newer_check_t < 120000) return; newer_check_t = Date.now();
+    fetch(BOT_BASE + "version.txt?t=" + Date.now(), { cache: "no-store" }).then(function (r) { return r.ok ? r.text() : ""; }).then(function (v) { v = String(v).trim(); if (v && v != BOT_VERSION) { game_log("Neue Version " + v + " auf GitHub (läuft " + BOT_VERSION + ") – lade neu"); reload_bot(); } }).catch(function () {});
+}
 function reload_bot() {
     try { if (parent.__lp_reloading && Date.now() - parent.__lp_reloading < 8000) return; parent.__lp_reloading = Date.now(); } catch (e) {} // gedrückt gehaltenes N / Doppelklick: nur ein Neuladen auf einmal (mehrere parallele Starts zerlegen sonst Team-Kanal und Timer)
     game_log("Lade neueste Version von GitHub …");
@@ -1640,6 +1645,9 @@ function init_panel() {
         else if (act == "bycatch") { bycatch = !bycatch; try { localStorage.setItem("lp_bycatch", bycatch ? "1" : "0"); } catch (x) {} game_log("Beifang " + (bycatch ? "an" : "aus")); }
         else if (act == "sortinv") preempt("Inventar sortieren", sort_inventory, true);
         else if (act == "compound") preempt("Compound", compound_only);
+        else if (act == "bostart") build_start();
+        else if (act == "bostop") { build_stop = true; abort_requested = false; game_log("Bauauftrag: Stop angefordert – hält nach dem laufenden Versuch"); }
+        else if (act == "boclear") { build_order = null; build_save(); game_log("Bauauftrag gelöscht"); last_panel = 0; }
         else if (act == "tidy") preempt("Aufräumen", tidy_now);
         else if (act == "bank") preempt("Bank aufräumen", bank_cleanup_now);
         else if (act == "banksort") preempt("Bank sortieren", bank_sort_now);
@@ -1675,6 +1683,7 @@ function init_panel() {
         if (t.getAttribute("data-setk")) { settings_input(t); return; }
         if (t.getAttribute("data-mgk") == "donate") { var dv = parse_mio(t.value); if (dv >= 1000) { donate_amt = dv; try { localStorage.setItem("lp_donate_amt", String(dv)); } catch (x) {} game_log("Spendenbetrag: " + fmt(dv)); } try { t.blur(); } catch (x) {} return; }
         if (t.getAttribute("data-mgk")) { var mgk2 = t.getAttribute("data-mgk"); if (mgk2 == "esc") { var ev = parse_mio(t.value); if (ev >= 10000) MG.esc_max = ev; } else { var mv3 = parse_mio(t.value); if (mv3 > 0) MG[mgk2] = mv3; } if (MG.min > MG.target) MG.min = MG.target; mg_save(); game_log("Händler-Kasse: Ziel " + fmt(MG.target) + ", nachfüllen unter " + fmt(MG.min) + ", Priest/Ranger max. " + fmt(MG.esc_max)); try { t.blur(); } catch (x) {} return; }
+        if (t.getAttribute("data-bo")) { var bok = t.getAttribute("data-bo"); if (bok == "item") build_ui.item = t.value; else if (bok == "reserve") build_ui.reserve = parse_mio(t.value); else build_ui[bok] = parseInt(t.value) || 0; build_save(); try { t.blur(); } catch (x) {} last_panel = 0; return; }
         if (t.getAttribute("data-msel")) { mkt[t.getAttribute("data-msel")] = t.value; mkt_show = 0; save_mkt(); try { t.blur(); } catch (x) {} render_market(); return; }
         var ws = t.getAttribute("data-wslot"), wl = t.getAttribute("data-wlvl"), wm = t.getAttribute("data-wmax");
         var tws = t.getAttribute("data-twslot"), twl = t.getAttribute("data-twlvl"), twm = t.getAttribute("data-twmax");
@@ -1698,7 +1707,7 @@ function init_panel() {
     };
     win.addEventListener("change", onChange, true);
     var onInput = function (e) { var t = e.target; if (t && t.id == "lp_wiki_q") { wiki.q = t.value; wiki.page = null; render_wiki(); } else if (t && t.id == "lp_mkt_q") { mkt.q = t.value; mkt_show = 0; render_market(); } else if (t && t.id == "lp_bank_q") { bank_ui.q = t.value; bank_render_rows(); } };
-    var onKeyCap = function (e) { var t = e.target; if (t && (t.id == "lp_wiki_q" || (t.tagName == "INPUT" && inside(e)))) { e.stopPropagation(); if (e.key == "Escape") t.blur(); if (e.key == "Enter" && (t.getAttribute("data-wmax") || t.getAttribute("data-mgk") || t.getAttribute("data-huntmax") || t.getAttribute("data-huntttk") || t.getAttribute("data-arbmin") || t.getAttribute("data-twmax") || t.getAttribute("data-fixprice")) && e.type == "keydown") { try { t.dispatchEvent(new Event("change", { bubbles: true })); } catch (x) {} } } }; // Tasten im Suchfeld nicht ans Spiel/Bot weitergeben
+    var onKeyCap = function (e) { var t = e.target; if (t && (t.id == "lp_wiki_q" || (t.tagName == "INPUT" && inside(e)))) { e.stopPropagation(); if (e.key == "Escape") t.blur(); if (e.key == "Enter" && (t.getAttribute("data-wmax") || t.getAttribute("data-mgk") || t.getAttribute("data-bo") || t.getAttribute("data-huntmax") || t.getAttribute("data-huntttk") || t.getAttribute("data-arbmin") || t.getAttribute("data-twmax") || t.getAttribute("data-fixprice")) && e.type == "keydown") { try { t.dispatchEvent(new Event("change", { bubbles: true })); } catch (x) {} } } }; // Tasten im Suchfeld nicht ans Spiel/Bot weitergeben
     win.addEventListener("input", onInput, true);
     ["keydown", "keyup", "keypress"].forEach(function (t) { win.addEventListener(t, onKeyCap, true); });
     parent.__lp_panel_h = { down: onDown, move: onMove, up: onUp, click: onClick, change: onChange, input: onInput, key: onKeyCap };
@@ -2070,6 +2079,7 @@ function update_panel() {
     var tw_sum = ["priest", "ranger"].filter(function (k) { return team_on[k]; }).map(function (k) { var cfgs = team_wish[k] || {}, n = 0, done = 0; TEAM_WISH_SLOTS.forEach(function (sl) { var c = cfgs[sl]; if (c && c.item) { n++; var s2 = tw_status(k, sl); if (s2 && s2.state == "fertig") done++; } }); return TEAM_LABEL[k] + " " + (n ? done + "/" + n : "–"); }).join(" · ");
     h += lp_sec("zielbau", "Zielbau", "Ich " + esc(wish_text()) + (tw_sum ? " · " + tw_sum : "") + (AUTO_GEAR ? " · Reserve " + fmt(WISH_RESERVE) : ""),
         "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Zielbau " + wish_text() + (AUTO_GEAR ? " · automatisch, Reserve " + fmt(WISH_RESERVE) : "") + "</span><button data-act='wishist' data-slot='*' title='alle Slots auf das setzen, was du gerade trägst – Preislimits bleiben erhalten'>Ist</button><button data-act='wishreset' title='alle Ziele auf das Getragene setzen und alle Limits löschen'>Zielbau = aktuelle Ausrüstung</button><button data-act='wishtoggle'>" + (panel.__wish ? "▾" : "▸") + " Liste</button></div>" + (panel.__wish ? wish_ui_html() : "") + team_wish_html(panel));
+    h += lp_sec("bau", "Bauauftrag", esc(build_status_txt()), build_html());
     // Wartung (eingeklappt)
     h += lp_sec("wartung", "Wartung", "Inv sortieren · Compound · Aufräumen · Bank",
         "<div class='lp_row'><button data-act='sortinv' title='Inventar sortieren'>Inv ⇅</button><button data-act='compound' title='Schmuck compounden (getragen + ungetragen)'>Compound</button><button data-act='tidy' title='Schrott verkaufen, Rest in die Bank'>Aufräumen</button><button data-act='bank' title='Schrott aus der Bank holen und verkaufen'>Bank aufräumen</button><button data-act='banksort' title='Bank nach Gruppen sortieren, Reiter lückenlos füllen'>Bank ⇅</button><button data-act='bankstatus' title='Alle Bankfächer ins Log: Belegung, gesperrt/frei, Preis'>Bank-Status</button><button data-act='reset' title='alle Messwerte verwerfen und neu messen'>Neu messen</button><button data-act='clearlog' title='Log-Puffer leeren'>Log leeren</button></div>");
@@ -2139,7 +2149,7 @@ function status_message(prefix) {
 var EQUIP_TYPES = ["helmet", "chest", "pants", "shoes", "gloves", "cape", "weapon", "shield", "quiver", "source", "misc_offhand"]; // Schmuck nie verkaufen (Compound)
 function is_junk(it) { // kaufbare Standardausrüstung ohne Level/Attribut; ungetragener kaufbarer Schmuck +0 in Einzelstücken; fremde Elixiere; HP-Schmuck
     var def = G.items[it.name]; if (!def) return false;
-    if (is_team_wish_item(it) || NEVER_SELL.test(it.name)) return false; // Team-Zielbau-Teile und geschützte Items bleiben
+    if (is_team_wish_item(it) || build_protected(it) || NEVER_SELL.test(it.name)) return false; // Team-Zielbau-Teile, Bauauftrag und geschützte Items bleiben
     if (HP_JEWELRY.test(it.name)) return true;
     if (def.type == "elixir" && !/^elixirint/.test(it.name)) return true;
     if (def.compound) return is_buyable(it.name) && (it.level || 0) == 0 && !equipped_names()[it.name] && find_inv_indices(it.name, 0).length < 3;
@@ -2165,7 +2175,7 @@ function all_copies(name) { // Inventar + Bank (bzw. letzter Bankstand), ohne ge
 function dup_protected(it) {
     var def = G.items[it.name] || {};
     if (NEVER_SELL.test(it.name)) return true;
-    if (is_team_wish_item(it)) return true;
+    if (is_team_wish_item(it) || build_protected(it)) return true;
     if (it.p || it.stat_type || EVENT_ITEMS.test(it.name)) return true;
     if (def.compound) return (it.level || 0) < COMPOUND_SPARE_MAX || (it.level || 0) > COMPOUND_TARGET; // fertiger Schmuck: nur die Stufe(n) am Ziel zählen als Duplikate
     return (it.level || 0) > DUP_MAX_LEVEL || !def.upgrade;
@@ -2208,7 +2218,7 @@ async function sell_duplicates(pre) { // im Laden stehen; pre = vorgefilterte In
 function worth_keeping(it) {
     var def = G.items[it.name]; if (!def) return true;
     if (NEVER_SELL.test(it.name)) return true;
-    if (is_team_wish_item(it)) return true;
+    if (is_team_wish_item(it) || build_protected(it)) return true;
     if (HP_JEWELRY.test(it.name)) return false;
     if (on_wishlist(it.name)) return true;
     if (should_keep(it)) return true;
@@ -2220,7 +2230,7 @@ function worth_keeping(it) {
     if (bought_recently(it.name)) return true;
     return false;
 }
-function should_keep(it) { return is_team_wish_item(it) || (equipped_names()[it.name] && ((it.level || 0) > 0 || !is_buyable(it.name))) || (G.items[it.name] && G.items[it.name].compound && (equipped_names()[it.name] || find_inv_indices(it.name, it.level || 0).length >= 3)) || KEEP_ITEMS.test(it.name) || EVENT_ITEMS.test(it.name) || EVENT_ITEMS.test(G.items[it.name] && G.items[it.name].name || ""); }
+function should_keep(it) { return is_team_wish_item(it) || build_protected(it) || (equipped_names()[it.name] && ((it.level || 0) > 0 || !is_buyable(it.name))) || (G.items[it.name] && G.items[it.name].compound && (equipped_names()[it.name] || find_inv_indices(it.name, it.level || 0).length >= 3)) || KEEP_ITEMS.test(it.name) || EVENT_ITEMS.test(it.name) || EVENT_ITEMS.test(G.items[it.name] && G.items[it.name].name || ""); }
 var tidy_next = 0;
 // ---------- Priester ausrüsten: überzählige Teile des Magiers, die für ihn besser sind ----------
 var last_priest_gear = 0;
@@ -2241,7 +2251,7 @@ function spare_for_priest(key) { // [{i, slot, gain}] – Inventarteile, die der
         var worn = st.slots[slot], ws = worn && G.items[worn.name] ? gear_score_for(G.items[worn.name], worn.level || 0, ctype, worn.stat_type) : 0, best = null; // Bewertung aus Sicht der Klasse des Kollegen (DEX beim Ranger), nicht aus Magier-Sicht
         for (var i = 0; i < character.items.length; i++) {
             var it = character.items[i]; if (!it || used[i]) continue; var def = G.items[it.name]; if (!def || !fits_class(def, ctype, slot)) continue;
-            if (KEEP_ITEMS.test(it.name) || EVENT_ITEMS.test(it.name) || is_team_wish_item(it)) continue;
+            if (KEEP_ITEMS.test(it.name) || EVENT_ITEMS.test(it.name) || is_team_wish_item(it) || build_protected(it)) continue;
             if (on_wishlist(it.name)) { // Zielbau-Teil des Magiers
                 if (def.compound) { // Schmuck: Kopien nur abgeben, wenn alle Slots mit diesem Teil ihr Ziel erreicht haben (dann ist das Compound-Material übrig)
                     var all_done = true, any = false; for (var sl2 in SLOT_TYPES) { var w2 = character.slots[sl2]; if (w2 && w2.name == it.name) { any = true; if ((w2.level || 0) < wish_level(sl2)) all_done = false; } }
@@ -3887,7 +3897,8 @@ function note_sell(it, delta) { // nach einem NPC-Verkauf: gezahltes Gold mit de
     if (!sell_factor || Math.abs(f - sell_factor) > 0.02) { sell_factor = f; try { localStorage.setItem("lp_sell_factor", String(f)); } catch (e) {} game_log("NPC zahlt " + Math.round(f * 100) + " % des Itemwerts (" + it.name + (it.level ? "+" + it.level : "") + ": " + fmt(delta) + " für Wert " + fmt(v) + ")"); }
 }
 function arb_profit(o) { return npc_sell_price(o.name, o.level) - o.price; }
-function arb_list() { return arb_offers.filter(function (o) { return o.profit >= ARB_MIN_PROFIT && o.profit >= o.price * ARB_MIN_MARGIN && (o.same || !is_pvp_server(o.server)); }).sort(function (a, b) { return (b.same - a.same) || (b.profit - a.profit); }); }
+function arb_bad(o) { try { var bad = JSON.parse(localStorage.getItem("lp_arb_bad_" + TEAM.merch) || "{}"); return (bad[o.name + "+" + (o.level || 0) + "@" + o.seller + "@" + o.price] || 0) > Date.now(); } catch (e) { return false; } } // vom Händler als nicht kaufbar gemeldet (24 h)
+function arb_list() { return arb_offers.filter(function (o) { return !arb_bad(o) && o.profit >= ARB_MIN_PROFIT && o.profit >= o.price * ARB_MIN_MARGIN && (o.same || !is_pvp_server(o.server)); }).sort(function (a, b) { return (b.same - a.same) || (b.profit - a.profit); }); }
 function gather_html() { // Händler-Sammeln: Bergbau/Angeln – Zähler, Werkzeuge, nächster Versuch (aus der Händler-Statusmeldung)
     var st = team_state[TEAM.merch], g = st && st.gather; if (!team_on.merch) return "";
     if (!g) return "<div class='lp_row'><span class='lp_k'>Sammeln:</span> <span class='lp_k'>keine Meldung vom Händler</span></div>";
@@ -4599,6 +4610,7 @@ async function scan_all_merchants(force, only_slot) {
             var it = m.slots[sl]; if (!it || !it.price) continue;
             if (WATCH_ITEMS[it.name]) { var wl = (watch_prices[it.name] = watch_prices[it.name] || { asks: [], bids: [], t: Date.now() }); (it.b ? wl.bids : wl.asks).push({ price: it.price, q: it.q || 1, seller: m.name, server: m.server || "?", level: it.level || 0 }); }
             if (it.b) continue;
+            if (arb_bad({ name: it.name, level: it.level || 0, seller: m.name, price: it.price })) continue; // Händler konnte es nicht kaufen (Schein-Angebot)
             var d0 = G.items[it.name];
             if (d0) { var ao = { name: it.name, level: it.level || 0, price: it.price, q: it.q || 1, seller: m.name, server: m.server || "?", same: norm_server(m.server) == mine, map: m.map, x: m.x, y: m.y, tslot: sl, t: Date.now() }; ao.profit = arb_profit(ao); if (ao.profit > 0) arb.push(ao); }
             if (d0 && slot_for_item(d0)) all.push({ name: it.name, level: it.level || 0, price: it.price, seller: m.name, server: m.server || "?", same: norm_server(m.server) == mine, map: m.map, x: m.x, y: m.y, tslot: sl, stat_type: it.stat_type || null, score: gear_score(d0, it.level || 0, it.stat_type), t: Date.now() });
@@ -4814,7 +4826,7 @@ async function apply_stat_scroll(idx, st) { // Attribut-Scroll auf ein Inventart
 }
 async function upgrade_inv(name, level, target, stat_want) { // stat_want: Attribut, das vor dem Sprung auf Qualität 1 gesetzt wird
     while (level < target) {
-        check_pause();
+        check_pause(); if (build_running && build_stop) return { level: level, destroyed: false, stopped: true };
         var idx = find_inv_index(name, level);
         if (idx < 0) return { level: level, destroyed: true };
         if (stat_want && level == grade0_max(name)) { try { await apply_stat_scroll(idx, stat_want); } catch (e) {} idx = find_inv_index(name, level); if (idx < 0) return { level: level, destroyed: true }; } // letzter Schritt mit Qualität 0: Attribut jetzt oder nie
@@ -5099,6 +5111,101 @@ async function upgrade_routine_inner(manual) {
     if (manual) after_action("Upgrade"); else if (!paused) go_to_farm_spot();
 }
 
+
+// ---------- Bauauftrag: ein NPC-kaufbares Teil in Stückzahl auf Zielstufe bauen – ohne Zerstörungszähler, nur Stückzahl / Gold-Reserve / Stop ----------
+var build_order = null; try { build_order = JSON.parse(localStorage.getItem("lp_build_" + character.name) || "null"); } catch (e) {}
+var build_ui = { item: "coat", level: 7, n: 1, reserve: 0 }; try { var _bu = JSON.parse(localStorage.getItem("lp_build_ui_" + character.name) || "null"); if (_bu) build_ui = _bu; } catch (e) {}
+var build_running = false, build_stop = false, build_step_txt = "";
+function build_save() { try { localStorage.setItem("lp_build_" + character.name, JSON.stringify(build_order)); localStorage.setItem("lp_build_ui_" + character.name, JSON.stringify(build_ui)); } catch (e) {} }
+function build_protected(it) { return !!build_order && !!it && it.name == build_order.name; } // Kopien des Auftrags-Items: nie verkaufen, nie in die Bank
+function build_item_list() { // alle beim NPC kaufbaren Ausrüstungsteile mit Upgrade oder Compound
+    var out = []; for (var k in G.items) { var d = G.items[k]; if (!d || (!d.upgrade && !d.compound) || !is_buyable(k)) continue; if (EQUIP_TYPES.indexOf(d.type) < 0 && !MKT_EQUIP_TYPES[d.type]) continue; out.push(k); }
+    return out.sort(function (a, b) { return (G.items[a].name || a).localeCompare(G.items[b].name || b); });
+}
+function build_status_txt() {
+    var o = build_order; if (!o) return "kein Auftrag";
+    return o.name + " +" + o.level + ": " + o.done + "/" + o.n + " fertig · " + o.destroyed + " zerstört · " + fmt(o.spent) + " Gold" + (build_running ? " · läuft" + (build_step_txt ? " (" + build_step_txt + ")" : "") : o.done >= o.n ? " · fertig" : " · gestoppt");
+}
+function build_html() {
+    var o = build_order, items = build_item_list();
+    var h = "<div class='lp_row'><span class='lp_k'>Bauen:</span> <select data-bo='item' style='font-size:11px;background:#1c2029;color:#eee;border:1px solid #555;max-width:150px'>" + items.map(function (k) { return "<option value='" + k + "'" + (build_ui.item == k ? " selected" : "") + ">" + esc(G.items[k].name || k) + " (" + fmt(G.items[k].g) + ")</option>"; }).join("") + "</select>"
+        + " <span class='lp_k'>Stufe</span> <input data-bo='level' value='" + (build_ui.level || 0) + "' style='width:28px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'>"
+        + " <span class='lp_k'>Stück</span> <input data-bo='n' value='" + (build_ui.n || 1) + "' style='width:28px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'>"
+        + " <span class='lp_k' title='Gold, das beim Bauen immer übrig bleibt (Mio.); 0 = Standard-Reserve'>Reserve</span> <input data-bo='reserve' value='" + esc(fmt_mio(build_ui.reserve || 0)) + "' style='width:36px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'> <span class='lp_k'>Mio</span>"
+        + (build_running ? "<button data-act='bostop' class='on' title='nur diesen Bauauftrag anhalten – Stand bleibt gespeichert'>Stop</button>" : "<button data-act='bostart' title='Auftrag mit diesen Werten starten bzw. den gespeicherten fortsetzen'>Start</button>")
+        + (o && !build_running ? "<button data-act='boclear' title='Auftrag löschen (Kopien im Inventar werden danach wieder normal behandelt)'>Löschen</button>" : "") + "</div>";
+    h += "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>" + esc(build_status_txt()) + (o ? " · Chance je Stufe: " + Array.apply(null, Array(o.level)).map(function (_, l) { return "+" + (l + 1) + " " + Math.round(success_p(G.items[o.name].compound ? "c" : "u", l) * 100) + " %"; }).join(", ") : "") + "</span></div>";
+    return h;
+}
+function build_start() {
+    if (build_running) return;
+    var name = build_ui.item, def = G.items[name]; if (!def || !is_buyable(name)) { game_log("Bauauftrag: " + name + " ist nicht beim NPC kaufbar"); return; }
+    var level = Math.max(1, Math.min(parseInt(build_ui.level) || 0, max_level(def))), n = Math.max(1, parseInt(build_ui.n) || 1);
+    if (!build_order || build_order.name != name || build_order.level != level || build_order.done >= build_order.n) build_order = { name: name, level: level, n: n, done: 0, destroyed: 0, spent: 0, reserve: build_ui.reserve || 0 };
+    else { build_order.n = n; build_order.reserve = build_ui.reserve || 0; }
+    build_save(); preempt("Bauauftrag", build_run);
+}
+async function build_run() {
+    var o = build_order; if (!o || build_running) return;
+    if (busy || routine_running()) { game_log("Bauauftrag: gerade beschäftigt – gleich nochmal"); return; }
+    unpause("Bauauftrag"); build_running = true; build_stop = false; upgrading = true; busy = true; last_panel = 0;
+    var saved_reserve = GOLD_RESERVE; GOLD_RESERVE = Math.max(GOLD_RESERVE, o.reserve || WISH_RESERVE);
+    var def = G.items[o.name], comp = !!def.compound;
+    game_log("Bauauftrag: " + o.name + " +" + o.level + " × " + o.n + " (" + o.done + " fertig) – läuft bis Stückzahl, Reserve " + fmt(GOLD_RESERVE) + " oder Stop");
+    try {
+        await travel_place(comp ? "compound" : "upgrade");
+        while (o.done < o.n) {
+            check_pause(); if (build_stop) throw "STOP";
+            busy_since = Date.now(); // Wächter nicht auslösen – der Auftrag darf lange laufen
+            if (character.esize < 4) { game_log("Bauauftrag: Inventar voll (frei " + character.esize + ") – Stop"); break; }
+            var g0 = character.gold, r = comp ? await build_compound_step(o) : await build_upgrade_step(o);
+            o.spent += Math.max(0, g0 - character.gold);
+            if (r == "done") { o.done++; game_log("Bauauftrag: " + o.name + " +" + o.level + " fertig (" + o.done + "/" + o.n + ", bisher " + o.destroyed + " zerstört, " + fmt(o.spent) + " Gold)"); }
+            build_save(); last_panel = 0;
+            if (r == "stop") break;
+        }
+    } catch (e) { game_log(e == "PAUSE" ? "Bauauftrag: durch Pause unterbrochen – Start setzt fort" : e == "STOP" ? "Bauauftrag: gestoppt (" + o.done + "/" + o.n + ")" : e == "ABORT" ? "Bauauftrag: abgebrochen" : "Bauauftrag-Fehler: " + err_txt(e)); }
+    GOLD_RESERVE = saved_reserve; build_save();
+    if (o.done >= o.n) game_log("Bauauftrag fertig: " + o.n + "× " + o.name + " +" + o.level + " im Inventar · " + o.destroyed + " zerstört · " + fmt(o.spent) + " Gold");
+    build_running = false; build_step_txt = ""; upgrading = false; busy = false; last_panel = 0;
+    after_action("Bauauftrag");
+}
+async function build_upgrade_step(o) { // eine Kopie unter Zielstufe (höchste zuerst) hochziehen; keine da: eine kaufen
+    var idx = -1, lv = -1;
+    for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && it.name == o.name && (it.level || 0) < o.level && (it.level || 0) > lv) { idx = i; lv = it.level || 0; } }
+    var def = G.items[o.name];
+    if (idx < 0) {
+        if (spendable() < def.g) { game_log("Bauauftrag: Reserve erreicht (" + fmt(character.gold) + ") – Stop"); return "stop"; }
+        build_step_txt = "kaufe " + o.name; if (!await buy_items(o.name, 1)) return "stop";
+        await travel_place("upgrade"); lv = 0;
+    }
+    build_step_txt = "+" + lv + " → +" + o.level;
+    var r = await upgrade_inv(o.name, lv, o.level, null);
+    if (r.destroyed) { o.destroyed++; game_log("Bauauftrag: " + o.name + " bei +" + r.level + " zerstört (" + o.destroyed + ". Mal) – nächstes Teil"); return "again"; }
+    if (r.stopped) return "stop";
+    return r.level >= o.level ? "done" : "again";
+}
+async function build_compound_step(o) { // Schmuck: unterste Stufe mit 3 Kopien compounden; keine: +0 nachkaufen
+    var def = G.items[o.name], t = o.level, n_t0 = find_inv_indices(o.name, t).length, l = -1;
+    for (var k = t - 1; k >= 0; k--) if (find_inv_indices(o.name, k).length >= 3) { l = k; break; }
+    if (l < 0) {
+        var need = 3 - find_inv_indices(o.name, 0).length;
+        if (spendable() < def.g * need) { game_log("Bauauftrag: Reserve erreicht (" + fmt(character.gold) + ") – Stop"); return "stop"; }
+        build_step_txt = "kaufe " + need + "× " + o.name; if (!await buy_items(o.name, need)) return "stop";
+        await travel_place("compound"); return "again";
+    }
+    var scroll = "cscroll" + best_scroll_grade(def, l, "c", cost_to_reach(o.name, l));
+    if (spendable() < G.items[scroll].g) { game_log("Bauauftrag: Reserve erreicht – Stop"); return "stop"; }
+    if (quantity(scroll) < 1) { buy(scroll, 1); await sleep(600); }
+    var sc = locate_item(scroll); if (sc < 0) { game_log("Bauauftrag: keine " + scroll); return "stop"; }
+    var idx = find_inv_indices(o.name, l), prev = find_inv_indices(o.name, l + 1).length;
+    build_step_txt = "+" + l + " ×3 → +" + (l + 1); set_message(o.name + " +" + l + " x3");
+    try { await compound(idx[0], idx[1], idx[2], sc); } catch (e) {}
+    await wait_queue("compound");
+    if (find_inv_indices(o.name, l + 1).length > prev) { record_attempt("c", l, true); game_log("Bauauftrag: " + o.name + " +" + (l + 1) + " erstellt"); }
+    else { record_attempt("c", l, false); o.destroyed++; game_log("Bauauftrag: Compound +" + l + " ×3 fehlgeschlagen (" + o.destroyed + ". Mal)"); }
+    return find_inv_indices(o.name, t).length > n_t0 ? "done" : "again";
+}
 // ---------- Hauptschleife ----------
 var unreach_ids = {};
 function line_free(m) { try { return can_move_to(m.x, m.y); } catch (e) { return true; } }

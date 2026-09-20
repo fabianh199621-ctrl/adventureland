@@ -1,12 +1,15 @@
 // ===== Adventure Land – LogicPlan Händler (F4llenMerch) – Stufe 1 =====
 // Läuft unsichtbar neben dem Magier. Aufgaben: Stand kaufen und öffnen, Loot abholen/verkaufen/einlagern,
 // Startgold vom Magier holen. mluck ist abgeschaltet (braucht Lv 40, Händler levelt praktisch nicht) – USE_MLUCK/LEVEL_MODE. Meldungen gehen per Charakter-Nachricht an den Magier und erscheinen dort als "[Merch] …".
-var MERCH_VERSION = "v320";
+var MERCH_VERSION = "v322";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
 
 var MAGE = "F4llen";
+// Fehlgekaufte Angebote (Kauf ohne Antwort): 24 h meiden – der Magier liest die Liste bei der Reiseplanung (lp_arb_bad_<Händler>)
+function arb_bad_key(o) { return o.name + "+" + (o.level || 0) + "@" + o.seller + "@" + o.price; }
+function arb_bad_note(o, why) { try { var bad = JSON.parse(localStorage.getItem("lp_arb_bad_" + character.name) || "{}"); var now = Date.now(); for (var k in bad) if (bad[k] < now) delete bad[k]; bad[arb_bad_key(o)] = now + 24 * 3600000; localStorage.setItem("lp_arb_bad_" + character.name, JSON.stringify(bad)); } catch (e) {} say("Kauf " + o.name + "+" + (o.level || 0) + " bei " + o.seller + " fehlgeschlagen (" + why + ") – 24 h gemieden"); }
 try { localStorage.setItem("lp_tlog_" + character.name, JSON.stringify([{ t: Date.now(), m: "Skript geladen (" + character.ctype + ", Lv " + character.level + ", Server " + (typeof server != "undefined" && server ? (server.region + " " + server.id) : "?") + ")" }])); } catch (e) {}
 var STAND_ITEM = "stand0";
 var MLUCK_EVERY = 25 * 60000;      // mluck hält 60 min, wir frischen ab 25 min Restlaufzeit auf
@@ -244,6 +247,7 @@ async function do_market_buy(b) { // Einkauf auf diesem Server: hin, kaufen, zum
         try { trade_buy(seller, slot, q); } catch (e) { try { parent.socket.emit("trade_buy", { slot: slot, id: seller.id, q: String(q), rid: it.rid }); } catch (e2) {} }
         await sleep(1500);
         got = count_item(b.name, b.level) - n0; spent = g0 - character.gold;
+        if (got <= 0) arb_bad_note(b, character.gold < it.price ? "zu wenig Gold" : "keine Antwort");
         if (got <= 0) throw "Kauf nicht gelungen (" + (character.gold < it.price ? "zu wenig Gold" : "keine Antwort") + ")";
         ok = true; if (!b.for_merch) { hold_items[item_key(b.name, b.level)] = true; hold_save(); }
     } catch (e) { why = e && e.message ? e.message : String(e); }
@@ -520,6 +524,7 @@ async function run_arbitrage(job) {
             var qb = job.keep ? Math.max(1, Math.min(o.q || 1, it.q || 1, Math.floor(character.gold / it.price))) : 1;
             try { trade_buy(seller, o.tslot, qb); } catch (e) { try { parent.socket.emit("trade_buy", { slot: o.tslot, id: seller.id, q: String(qb), rid: it.rid }); } catch (e2) {} }
             await sleep(1200);
+            if (count_item(o.name, o.level) <= n0) arb_bad_note(o, character.gold < it.price ? "zu wenig Gold" : "keine Antwort");
             if (count_item(o.name, o.level) > n0) { if (job.keep && !o.for_merch) { hold_items[item_key(o.name, o.level)] = true; hold_save(); } arb_res.bought++; arb_res.spent += g0 - character.gold; bought[item_key(o.name, o.level)] = (bought[item_key(o.name, o.level)] || 0) + 1; arb_log("gekauft " + o.name + "+" + o.level + " für " + (g0 - character.gold)); }
             else { arb_res.skipped++; arb_log("Kauf " + o.name + "+" + o.level + " nicht gelungen"); }
             arb_save();
