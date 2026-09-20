@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v295";
+var BOT_VERSION = "v296";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -220,6 +220,7 @@ var FILL_SLOTS = {
 var INV_MIN_FREE = 5;                // unter so vielen freien Plätzen -> aufräumen
 var INV_TARGET_FREE = 14;            // ... und dann so viele Plätze wieder frei machen
 var BANK_MIN_FREE = 10;              // unter so vielen freien Bankplätzen -> Bank aufräumen
+var HP_JEWELRY = /^(hpamulet|hpbelt)$/; // früh definiert (wird auch in is_team_wish gebraucht)
 var NEVER_SELL = /^mm|^(dex|int|str|vit)(ring|earring|amulet|belt)$/; // Token-Set (mm*) und Attribut-Schmuck: nie verkaufen, nie als Duplikat werten
 var KEEP_MIN_LEVEL = 4;              // Ausrüstung ab diesem Level behalten
 var KEEP_MIN_VALUE = 50000;          // Items ab diesem Grundwert behalten
@@ -497,7 +498,7 @@ var TEAM_WISH_SLOTS = ["mainhand", "offhand", "helmet", "chest", "pants", "shoes
 function save_team_wish() { try { localStorage.setItem("lp_teamwish_" + character.name, JSON.stringify(team_wish)); } catch (e) {} last_panel = 0; }
 function tw_cfg(key, slot) { return (team_wish[key] || {})[slot] || null; }
 function tw_names() { var o = {}; for (var k in team_wish) for (var sl in team_wish[k]) { var c = team_wish[k][sl]; if (c && c.item) o[c.item] = true; } return o; }
-function is_team_wish(name) { return !!tw_names()[name]; }
+function is_team_wish(name) { return !HP_JEWELRY.test(name) && !!tw_names()[name]; } // HP-Schmuck zählt nie als Team-Wunsch (auch wenn er per „Ist-Stand übernehmen“ in der Liste gelandet ist)
 function tw_overlap(name) { return !!equipped_names()[name] || on_wishlist(name); } // Teil, das der Magier selbst trägt/anstrebt: Reserven gehören ihm, nur Kopien über Reserve-Stufe sind Team-Teile
 function is_team_wish_item(it) { return is_team_wish(it.name) && (!tw_overlap(it.name) || (it.level || 0) > BACKUP_LEVEL); }
 function tw_market_offer(name) { // günstigstes Angebot auf diesem Server (Stufe egal – höhere Stufe ist willkommen)
@@ -1441,7 +1442,7 @@ function init_panel() {
         else if (act == "twtoggle") { var tk = b.getAttribute("data-k"); div["__tw_" + tk] = !div["__tw_" + tk]; }
         else if (act == "twmode") { team_wish_mode = team_wish_mode >= 2 ? 1 : 2; try { localStorage.setItem("lp_teamwish_mode", String(team_wish_mode)); } catch (x) {} game_log("Team-Zielbau: " + (team_wish_mode >= 2 ? "NPC + Marktangebote" : "nur NPC-Teile")); }
         else if (act == "twclear") { team_wish[b.getAttribute("data-k")] = {}; save_team_wish(); }
-        else if (act == "twist") { var ik = b.getAttribute("data-k"), ist = team_state[TEAM[ik]]; if (!ist || !ist.slots) game_log("Team-Zielbau: keine Statusmeldung von " + TEAM_LABEL[ik]); else { team_wish[ik] = {}; TEAM_WISH_SLOTS.forEach(function (sl) { var w = ist.slots[sl]; if (w && G.items[w.name]) team_wish[ik][sl] = { item: w.name, level: w.level || 0 }; }); save_team_wish(); game_log("Team-Zielbau " + TEAM_LABEL[ik] + ": Ist-Stand übernommen"); } }
+        else if (act == "twist") { var ik = b.getAttribute("data-k"), ist = team_state[TEAM[ik]]; if (!ist || !ist.slots) game_log("Team-Zielbau: keine Statusmeldung von " + TEAM_LABEL[ik]); else { team_wish[ik] = {}; TEAM_WISH_SLOTS.forEach(function (sl) { var w = ist.slots[sl]; if (w && G.items[w.name] && !HP_JEWELRY.test(w.name)) team_wish[ik][sl] = { item: w.name, level: w.level || 0 }; }); save_team_wish(); game_log("Team-Zielbau " + TEAM_LABEL[ik] + ": Ist-Stand übernommen (HP-Schmuck ausgelassen)"); } }
         else if (act == "wishtoggle") { div.__wish = !div.__wish; try { localStorage.setItem("lp_panel_wish", div.__wish ? "1" : "0"); } catch (x) {} }
         else if (act == "pauseafter") { pause_after = !pause_after; try { localStorage.setItem("lp_pause_after", pause_after ? "1" : "0"); } catch (x) {} game_log("Nach manueller Aktion: " + (pause_after ? "pausieren" : "weiterfarmen")); last_panel = 0; }
         else if (act == "unblock") { var nb = 0; Object.keys(blocked_spots).forEach(function (k) { if (blocked_spots[k] !== true) { delete blocked_spots[k]; nb++; } }); nb += Object.keys(hunt_bad).length; hunt_bad = {}; try { localStorage.setItem("lp_hunt_bad", "{}"); } catch (x) {} flee_log = {}; hunt_cooldown_until = 0; need_repick = true; game_log("Sperren aufgehoben (" + nb + ")"); }
