@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Priester (F4llenPriest) – Stufe 1 =====
 // Folgt dem Magier, heilt ihn und sich, nimmt die Party-Einladung an, greift erst ab PRIEST_ATTACK_LEVEL mit an.
 // Meldungen gehen per Charakter-Nachricht an den Magier ("[Priest] …").
-var PRIEST_VERSION = "v317";
+var PRIEST_VERSION = "v318";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -264,6 +264,7 @@ async function follow() { // hinter dem Magier bleiben, Karte wechseln, wenn nö
         else if (d > FOLLOW_DIST && !is_moving(character)) { var mx = character.x + (t.x - character.x) * 0.5, my = character.y + (t.y - character.y) * 0.5, straight = true; try { straight = can_move_to(mx, my); } catch (e) {} if (straight) { try { move(mx, my); } catch (e) {} } else if (!moving) { moving = true; try { await smart_move({ map: t.map, x: t.x, y: t.y }); } catch (e) {} moving = false; } } // letzte Meter: gerade Linie blockiert → Wegfindung statt Stehenbleiben
         return;
     }
+    if (mage && mage.map == "abtesting" && character.map != "abtesting") { status("wartet (Magier im PvP-Event)"); return; } // PvP-Arena ist nicht erreichbar: bleiben und Spot halten
     if (mage && Date.now() - mage.t < 30000 && !moving && Date.now() - last_move > 8000) { // Magier nicht in Sicht: zu seiner gemeldeten Position
         last_move = Date.now(); moving = true; status("unterwegs zum Magier");
         var ok = false; try { await smart_move({ map: mage.map, x: mage.x, y: mage.y }); ok = true; } catch (e) {}

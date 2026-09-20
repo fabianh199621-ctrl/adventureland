@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Ranger (F4llenRanger) =====
 // Folgt dem Magier, greift dessen Ziel an (Supershot, Hunter's Mark, 3-/5-Shot), versorgt sich selbst mit NPC-Ausrüstung und Tränken.
 // Meldungen gehen per Charakter-Nachricht an den Magier ("[Ranger] …").
-var RANGER_VERSION = "v317";
+var RANGER_VERSION = "v318";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -263,6 +263,7 @@ async function follow() { // hinter dem Magier bleiben, Karte wechseln, wenn nö
         else if (d > FOLLOW_DIST && !is_moving(character)) { var mx = character.x + (t.x - character.x) * 0.5, my = character.y + (t.y - character.y) * 0.5, straight = true; try { straight = can_move_to(mx, my); } catch (e) {} if (straight) { try { move(mx, my); } catch (e) {} } else if (!moving) { moving = true; try { await smart_move({ map: t.map, x: t.x, y: t.y }); } catch (e) {} moving = false; } } // letzte Meter: gerade Linie blockiert → Wegfindung statt Stehenbleiben
         return;
     }
+    if (mage && mage.map == "abtesting" && character.map != "abtesting") { status("wartet (Magier im PvP-Event)"); return; } // PvP-Arena ist nicht erreichbar: bleiben und Spot halten
     if (mage && Date.now() - mage.t < 30000 && !moving && Date.now() - last_move > 8000) { // Magier nicht in Sicht: zu seiner gemeldeten Position
         last_move = Date.now(); moving = true; status("unterwegs zum Magier");
         var ok = false; try { await smart_move({ map: mage.map, x: mage.x, y: mage.y }); ok = true; } catch (e) {}
@@ -273,6 +274,20 @@ async function follow() { // hinter dem Magier bleiben, Karte wechseln, wenn nö
 var last_mark = 0;
 function skill_ready(name) { var sk = G.skills[name]; if (!sk) return false; if (sk.level && character.level < sk.level) return false; if (sk.mp && character.mp < sk.mp + 50) return false; try { return can_use(name); } catch (e) { return false; } }
 function targets_near(n) { var out = []; for (var id in parent.entities) { var m = parent.entities[id]; if (m && m.type == "monster" && !m.dead && is_in_range(m) && (m.target == character.name || m.target == MAGE || (mage && mage.tgt == m.id))) out.push(m); } return out.slice(0, n); }
+function pvp_enemy() { // A/B-Test: nächster Spieler des anderen Teams
+    var best = null, bd = 1e9;
+    try { for (var id in parent.entities) { var p = parent.entities[id]; if (!p || p.type != "character" || p.npc || p.rip || p.dead) continue; if (character.team) { if (!p.team || p.team == character.team) continue; } else if (p.id == MAGE) continue; var d = dist(character, p); if (d < bd) { bd = d; best = p; } } } catch (e) {}
+    return best;
+}
+var pvp_roam_t = 0;
+function pvp_step() {
+    var e = pvp_enemy();
+    if (!e) { status("PvP: kein Gegner"); if (!is_moving(character) && Date.now() - pvp_roam_t > 4000) { pvp_roam_t = Date.now(); try { move(character.x + (Math.random() - 0.5) * 300, character.y + (Math.random() - 0.5) * 300); } catch (x) {} } return; }
+    if (!is_in_range(e)) { if (!is_moving(character)) { try { move(character.x + (e.x - character.x) / 2, character.y + (e.y - character.y) / 2); } catch (x) {} } status("PvP: zu " + e.id); return; }
+    if (skill_ready("supershot")) { try { use_skill("supershot", e); } catch (x) {} }
+    if (can_attack(e)) { try { attack(e); } catch (x) {} }
+    status("PvP: " + e.id);
+}
 async function tick() {
     if (character.rip) { status("tot"); await sleep(15000); try { respawn(); } catch (e) {} await sleep(5000); return; }
     // Pause des Magiers: trotzdem folgen, heilen, verteidigen und sein Ziel mitangreifen (volle Unterstützung beim manuellen Spielen)
@@ -280,6 +295,7 @@ async function tick() {
     if (hpr < HEAL_SELF_BELOW) { if (!use_pot("hpot")) { try { use_skill("regen_hp"); } catch (e) {} } }
     if (mpr < 0.3) { if (!use_pot("mpot")) { try { use_skill("regen_mp"); } catch (e) {} } }
     if (shopping) return;
+    if (character.map == "abtesting") { pvp_step(); return; } // A/B-Test: Gegner-Team beschießen, sonst nichts
     if (give_req && !my_attacker()) { go_give_mage(); return; }
     if (tidy_req && !my_attacker() && !moving) { go_tidy(); return; }
     if (kiss_req && !my_attacker()) { do_kiss(kiss_req); return; }
