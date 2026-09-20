@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v287";
+var BOT_VERSION = "v288";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -4243,7 +4243,7 @@ function merch_buy_tick() {
         return;
     }
     if (j.stage == "buying" || j.stage == "deliver" || j.stage == "selling") { if (el > 12 * 60000) mb_fail("keine Rückmeldung vom Händler"); return; }
-    if (j.stage == "trip") { if (arb_job) return; var why = arb_blocked(); if (why && !/Pause bis/.test(why)) { mb_fail("Reise nicht möglich: " + why); return; } if (why) return; mb_start_trip(); return; }
+    if (j.stage == "trip") { if (arb_job) return; var why = arb_blocked(); if (why && !/Pause bis/.test(why)) { if (el > 10 * 60000) { mb_fail("Reise nicht möglich: " + why); return; } if (Date.now() - (j.wait_logged || 0) > 60000) { j.wait_logged = Date.now(); game_log((j.kind == "sell" ? "Verkauf" : "Einkauf") + ": warte mit der Reise – " + why); } return; } mb_start_trip(); return; } // die 15-min-Pause zwischen automatischen Handelsreisen gilt nicht für deinen Auftrag
     if (j.stage == "away") { if (!arb_job) { if (j.kind == "sell") { mb_done("Verkaufsreise beendet – Erlös liegt in der Händlerkasse"); return; } j.stage = "fetch"; j.t = Date.now(); j.tries = 0; mb_save(); } else if (el > 20 * 60000) mb_fail("Reise ohne Ende"); return; }
 }
 function mb_start_trip() { // Handelsreise mit genau diesem Angebot, Item wird behalten
