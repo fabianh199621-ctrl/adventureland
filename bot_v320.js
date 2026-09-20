@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v319";
+var BOT_VERSION = "v320";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -3719,7 +3719,8 @@ function wish_ui_html() { // Zielbau-Tabelle
 
 var WISH_MAX = { harbringer: 4000000, firestaff: 2500000, froststaff: 2500000, wbook1: 5000000, wbook0: 800000, cearring: 2000000, intearring: 800000, t2intamulet: 2500000, intamulet: 800000, intbelt: 800000, orbofint: 2500000, orbg: 500000, cring: 2000000, intring: 500000, ringsj: 300000, mmhat: 1500000, mmarmor: 1500000, mmpants: 1500000, mmgloves: 1500000, mmshoes: 2000000 };
 var HP_JEWELRY = /^(hpamulet|hpbelt)$/;   // nur HP – für Magierschaden wertlos, wird verkauft statt compoundet
-var AUTO_GEAR = true, AUTO_GEAR_INTERVAL = 30 * 60000, last_auto_gear = Math.max(rt("last_auto_gear", 0), Date.now() - 20 * 60000), WEAPON_SAFE_TARGET = 7, AUTO_ARMOR_MAX = 7;
+var AUTO_GEAR = false, AUTO_GEAR_INTERVAL = 30 * 60000, // Ausrüstungsroutine nur noch von Hand (U-Knopf) – kein automatischer 30-Minuten-Lauf mehr
+    last_auto_gear = Math.max(rt("last_auto_gear", 0), Date.now() - 20 * 60000), WEAPON_SAFE_TARGET = 7, AUTO_ARMOR_MAX = 7;
 var NONWISH_MAX_PRICE = 400000; // Käufe außerhalb des Zielbaus ("jetzt besser") nur bis zu diesem Preis
 var auto_mode = false; // läuft die Ausrüstungsroutine gerade automatisch?
 var last_best_check = 0;
