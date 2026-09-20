@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v298";
+var BOT_VERSION = "v299";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -398,10 +398,10 @@ function team_tick() { // fehlende Teammitglieder starten, abgeschaltete stoppen
     // Party: Priester einladen, wenn er läuft und nicht dabei ist
     if (Date.now() - last_party_try > 60000) { var need = []; if (team_on.priest && act[TEAM.priest]) need.push(TEAM.priest); if (team_on.ranger && act[TEAM.ranger]) need.push(TEAM.ranger); if (team_on.hunter && act[TEAM.hunter]) need.push(TEAM.hunter); var ms = team_state[TEAM.merch]; if (team_on.merch && act[TEAM.merch] && ms && /levelt|folgt/.test(ms.state || "")) need.push(TEAM.merch); var missing = need.filter(function (nm) { return !(character.party && parent.party && parent.party[nm]); }); if (missing.length) { last_party_try = Date.now(); missing.forEach(function (nm) { try { send_party_invite(nm); } catch (e) {} }); } }
 }
-var team_inject_t = {};
+var team_inject_t = {}, team_ver = {}; // zuletzt gemeldete Skriptversion je Teammitglied (aus "hello")
 function team_windows() { // Fenster der mitgestarteten Charaktere finden (gleiche Herkunft, daher zugreifbar)
     var out = {};
-    try { var fr = parent.document.querySelectorAll("iframe"); for (var i = 0; i < fr.length; i++) { try { var cw = fr[i].contentWindow; var nm = cw && cw.character && cw.character.name; if (nm && TEAM_NAMES.indexOf(nm) >= 0) { var ci = cw.document && cw.document.querySelector("iframe"); out[nm] = { win: cw, code: ci && ci.contentWindow }; } } catch (e) {} } } catch (e) {}
+    try { var fr = parent.document.querySelectorAll("iframe"); for (var i = 0; i < fr.length; i++) { try { var cw = fr[i].contentWindow; var nm = cw && cw.character && cw.character.name; if (nm && TEAM_NAMES.indexOf(nm) >= 0) { var code = null, any = null; try { var cis = cw.document ? cw.document.querySelectorAll("iframe") : []; for (var j = 0; j < cis.length; j++) { try { var cwin = cis[j].contentWindow; if (!cwin) continue; if (!any) any = cwin; if (typeof cwin.smart_move == "function" || cwin.MERCH_VERSION || cwin.PRIEST_VERSION || cwin.RANGER_VERSION) { code = cwin; break; } } catch (e2) {} } } catch (e3) {} out[nm] = { win: cw, code: code || any }; } } catch (e) {} } } catch (e) {} // Code-Frame = der Iframe mit der Runner-API (nicht blind der erste Iframe – sonst Neustart-Schleife, wenn das Spiel einen weiteren Iframe anlegt)
     return out;
 }
 function team_inject() { // läuft im Fenster des Teammitglieds nicht unser Skript (falscher Code-Slot), spielen wir es direkt ein
@@ -413,6 +413,7 @@ function team_inject() { // läuft im Fenster des Teammitglieds nicht unser Skri
         var cw = w.code, have = null;
         try { have = cw && (cw.MERCH_VERSION || cw.PRIEST_VERSION || cw.RANGER_VERSION); } catch (e) {}
         if (have == BOT_VERSION) continue;
+        var st0 = team_state[nm]; if (team_ver[nm] == BOT_VERSION && st0 && Date.now() - st0.t < 60000) continue; // meldet sich mit aktueller Version: läuft, auch wenn der Code-Frame gerade nicht auffindbar ist – nicht neu starten
         team_inject_t[nm] = Date.now();
         if (!cw) { // das Spiel hat für den Charakter noch keinen Code-Frame angelegt: Code-Start anstoßen (läuft dessen eigenen, meist leeren Slot), danach spielen wir unser Skript ein
             try { if (typeof w.win.start_runner == "function") { w.win.start_runner(); game_log("Team: " + nm + " – Code-Start angestoßen"); } else game_log("Team: " + nm + " – kein Code-Frame und kein start_runner"); } catch (e) { game_log("Team: " + nm + " start_runner: " + err_txt(e)); }
@@ -461,7 +462,7 @@ function on_cm(name, data) { // Nachrichten der eigenen Charaktere
         else if (data.t == "bought") { if (merch_buy && data.id == merch_buy.id) { if (data.ok) { merch_buy.stage = "deliver"; merch_buy.t = Date.now(); mb_save(); } else mb_fail(data.why || "Kauf nicht gelungen"); } }
         else if (data.t == "delivered_item") { if (merch_buy && data.id == merch_buy.id) { if (data.q > 0) mb_done(data.name + (data.q > 1 ? " ×" + data.q : "") + " erhalten" + (data.gold ? ", " + fmt(data.gold) + " Gold zurück" : "")); else if (data.ok) { merch_buy.stage = "fetch"; merch_buy.t = Date.now(); mb_save(); game_log("Einkauf: Händler hat mich nicht erreicht – rufe ihn zum Abholen"); } } }
         else if (data.t == "delivered") { if (pickup_state) pickup_state.done = true; if (merch_buy && merch_buy.stage == "fetching" && data.items) merch_buy.got = data.items; if (data.pots) game_log("[Merch] Tränke erhalten: " + data.pots); if (data.gold) game_log("[Merch] " + fmt(data.gold) + " Gold Verkaufserlös erhalten"); }
-        else if (data.t == "hello") { game_log("[" + who + "] verbunden (" + (data.v || "?") + (data.sv ? ", Server " + pretty_server(data.sv) : "") + ")"); if (merch_test && name == TEAM.merch) merch_test_result(data.sv); team_send(name, { t: "state", paused: paused || !bot_running, spot: current_spot }); team_broadcast(); }
+        else if (data.t == "hello") { team_ver[name] = data.v || null; game_log("[" + who + "] verbunden (" + (data.v || "?") + (data.sv ? ", Server " + pretty_server(data.sv) : "") + ")"); if (merch_test && name == TEAM.merch) merch_test_result(data.sv); team_send(name, { t: "state", paused: paused || !bot_running, spot: current_spot }); team_broadcast(); }
         else if (data.t == "need") { var np = get_player(name); var ni = locate_item(data.item); if (np && ni >= 0 && distance(character, np) < 400) { var nq = Math.min(data.q || 1, character.items[ni].q || 1); try { send_item(name, ni, nq); game_log("[" + who + "] " + nq + "x " + data.item + " übergeben"); } catch (e) {} } else if (ni < 0) { merch_needs[data.item] = Date.now(); game_log("[" + who + "] braucht " + data.item + " – wird beim nächsten Fund/Abholung mitgegeben"); } }
         else if (data.t == "gold?") { var p = get_player(name); var want = data.amount || 100000, avail = Math.max(0, character.gold - WISH_RESERVE), amt = Math.min(want, avail); if (data.kind == "refill" && avail < want) { amt = 0; game_log("[" + who + "] will " + fmt(want) + " Gold zum Auffüllen – ich habe nur " + fmt(avail) + " über der Reserve, gebe nichts"); } if (p && distance(character, p) < 400 && amt >= 1000) { send_gold(name, amt); game_log("[" + who + "] " + fmt(amt) + " Gold übergeben"); } else team_send(name, { t: "nogold", near: !!(p && distance(character, p) < 400) }); }
         else if (data.t == "pots?") { var pp = get_player(name); if (pp && distance(character, pp) < 400) { var gave = 0; [POTS_HP, POTS_MP].forEach(function (list) { var idx = -1, q = 0; for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && list.indexOf(it.name) >= 0 && (it.q || 0) > q) { idx = i; q = it.q; } } if (idx >= 0 && q >= 60) { send_item(name, idx, 25); gave++; } }); if (gave) game_log("[" + who + "] Tränke übergeben"); } }
