@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Händler (F4llenMerch) – Stufe 1 =====
 // Läuft unsichtbar neben dem Magier. Aufgaben: Stand kaufen und öffnen, Loot abholen/verkaufen/einlagern,
 // Startgold vom Magier holen. mluck ist abgeschaltet (braucht Lv 40, Händler levelt praktisch nicht) – USE_MLUCK/LEVEL_MODE. Meldungen gehen per Charakter-Nachricht an den Magier und erscheinen dort als "[Merch] …".
-var MERCH_VERSION = "v302";
+var MERCH_VERSION = "v303";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -245,10 +245,11 @@ async function do_market_buy(b) { // Einkauf auf diesem Server: hin, kaufen, zum
         await sleep(1500);
         got = count_item(b.name, b.level) - n0; spent = g0 - character.gold;
         if (got <= 0) throw "Kauf nicht gelungen (" + (character.gold < it.price ? "zu wenig Gold" : "keine Antwort") + ")";
-        ok = true; hold_items[item_key(b.name, b.level)] = true; hold_save();
+        ok = true; if (!b.for_merch) { hold_items[item_key(b.name, b.level)] = true; hold_save(); }
     } catch (e) { why = e && e.message ? e.message : String(e); }
-    say(ok ? "Einkauf: " + b.name + (b.level ? "+" + b.level : "") + (got > 1 ? " ×" + got : "") + " gekauft für " + spent + " Gold" : "Einkauf fehlgeschlagen: " + why);
+    say(ok ? "Einkauf: " + b.name + (b.level ? "+" + b.level : "") + (got > 1 ? " ×" + got : "") + " gekauft für " + spent + " Gold" + (b.for_merch ? " (eigener Bedarf, bleibt bei mir)" : "") : "Einkauf fehlgeschlagen: " + why);
     try { send_cm(MAGE, { t: "bought", id: b.id, ok: ok, spent: spent, why: why, q: got }); } catch (e) {}
+    if (b.for_merch) return; // Material für mich selbst (z. B. Spinnenseide): nicht zum Magier bringen
     await deliver_to_mage(b, ok);
 }
 function find_order(buyer, b) { // Kaufgesuch des Käufers für dieses Item finden
@@ -478,7 +479,7 @@ async function run_arbitrage(job) {
             var qb = job.keep ? Math.max(1, Math.min(o.q || 1, it.q || 1, Math.floor(character.gold / it.price))) : 1;
             try { trade_buy(seller, o.tslot, qb); } catch (e) { try { parent.socket.emit("trade_buy", { slot: o.tslot, id: seller.id, q: String(qb), rid: it.rid }); } catch (e2) {} }
             await sleep(1200);
-            if (count_item(o.name, o.level) > n0) { if (job.keep) { hold_items[item_key(o.name, o.level)] = true; hold_save(); } arb_res.bought++; arb_res.spent += g0 - character.gold; bought[item_key(o.name, o.level)] = (bought[item_key(o.name, o.level)] || 0) + 1; arb_log("gekauft " + o.name + "+" + o.level + " für " + (g0 - character.gold)); }
+            if (count_item(o.name, o.level) > n0) { if (job.keep && !o.for_merch) { hold_items[item_key(o.name, o.level)] = true; hold_save(); } arb_res.bought++; arb_res.spent += g0 - character.gold; bought[item_key(o.name, o.level)] = (bought[item_key(o.name, o.level)] || 0) + 1; arb_log("gekauft " + o.name + "+" + o.level + " für " + (g0 - character.gold)); }
             else { arb_res.skipped++; arb_log("Kauf " + o.name + "+" + o.level + " nicht gelungen"); }
             arb_save();
         }
