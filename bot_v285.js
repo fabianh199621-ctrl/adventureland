@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v284";
+var BOT_VERSION = "v285";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -161,7 +161,7 @@ function rally_back(farm) { // Team-Spot und ich stehe schon im/zu nah am Spawnf
     return true;
 }
 function meet_escort() { // Begleiter hängt auf derselben Karte länger fest (kein Weg zu mir?): ich gehe ihm entgegen
-    var b = escort_behind(); if (!b || !isFinite(b.d) || b.rip) { wait_since = 0; return; }
+    var b = escort_behind(strict_mon(current_spot) ? WAIT_NEAR : WAIT_BEHIND); if (!b || !isFinite(b.d) || b.rip) { wait_since = 0; return; } // gleiche Grenze wie die Wartebedingung – sonst steht der Magier bei Team-Pflicht ewig 310 px neben dem Priest
     if (wait_who != b.nm) { wait_who = b.nm; wait_since = Date.now(); return; }
     if (Date.now() - wait_since < 45000 || busy) return;
     var p = null; try { p = get_player(b.nm); } catch (e) {}
@@ -507,10 +507,10 @@ function tw_candidates(key, slot) { // "leichte" Teile: NPC-kaufbar (Stufe 1) bz
     out.sort(function (a, b) { return b.score - a.score; });
     return out;
 }
-function gear_score_for(def, level, ctype) { // Bewertung mit dem Hauptattribut der anderen Klasse
-    var ms = ctype == "priest" || ctype == "mage" ? "int" : ctype == "warrior" || ctype == "paladin" ? "str" : "dex";
-    function w(st) { return ((st[ms] || 0) + (st.stat || 0)) * 30 + (st.attack || 0) * 3 + (st.range || 0) * 0.5 + (st.frequency || 0) * 5 + (st.hp || 0) * 0.05 + (st.mp || 0) * 0.1 + (st.armor || 0) * 0.5 + (st.resistance || 0) * 0.5 + (st.rpiercing || 0) * 0.8; }
-    var sc = w(def); if (level > 0 && def.upgrade) sc += level * w(def.upgrade); return sc;
+function gear_score_for(def, level, ctype, stat_type) { // Bewertung mit dem Hauptattribut der anderen Klasse (gleiche Formel wie stat_w in priest.js/ranger.js)
+    var ms = ctype == "priest" || ctype == "mage" ? "int" : ctype == "warrior" || ctype == "paladin" ? "str" : "dex", ok = !stat_type || stat_type == ms;
+    function w(st) { return ((st[ms] || 0) + (ok ? (st.stat || 0) : 0)) * 30 + (st.attack || 0) * 3 + (st.range || 0) * 0.5 + (st.frequency || 0) * 5 + (st.hp || 0) * 0.05 + (st.mp || 0) * 0.1 + (st.armor || 0) * 0.5 + (st.resistance || 0) * 0.5 + (st.rpiercing || 0) * 0.8; }
+    var sc = w(def); if (level > 0) { if (def.upgrade) sc += level * w(def.upgrade); else if (def.compound) sc += level * w(def.compound); } return sc;
 }
 function tw_copies(name) { // Inventarkopien, die dem Team-Zielbau gehören, höchste Stufe zuerst
     var out = []; for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && it.name == name && !it.p) out.push({ i: i, level: it.level || 0 }); }
@@ -2033,7 +2033,7 @@ function spare_for_priest(key) { // [{i, slot, gain}] – Inventarteile, die der
     var out = [], used = {};
     var slots = ["mainhand", "offhand", "helmet", "chest", "pants", "shoes", "gloves", "cape", "ring1", "ring2", "earring1", "earring2", "amulet", "belt", "orb"];
     slots.forEach(function (slot) {
-        var worn = st.slots[slot], ws = worn && G.items[worn.name] ? gear_score(G.items[worn.name], worn.level || 0) : 0, best = null;
+        var worn = st.slots[slot], ws = worn && G.items[worn.name] ? gear_score_for(G.items[worn.name], worn.level || 0, ctype, worn.stat_type) : 0, best = null; // Bewertung aus Sicht der Klasse des Kollegen (DEX beim Ranger), nicht aus Magier-Sicht
         for (var i = 0; i < character.items.length; i++) {
             var it = character.items[i]; if (!it || used[i]) continue; var def = G.items[it.name]; if (!def || !fits_class(def, ctype, slot)) continue;
             if (KEEP_ITEMS.test(it.name) || EVENT_ITEMS.test(it.name) || is_team_wish_item(it)) continue;
@@ -2046,7 +2046,7 @@ function spare_for_priest(key) { // [{i, slot, gain}] – Inventarteile, die der
                 }
             }
             if (equipped_names()[it.name] && i == backup_index(it.name)) continue; // beste Reserve des Getragenen bleibt
-            var sc = gear_score(def, it.level || 0); if (sc <= ws * 1.05 || sc <= 0) continue;
+            var sc = gear_score_for(def, it.level || 0, ctype, it.stat_type); if (sc <= ws * 1.05 || sc <= 0) continue;
             if (!best || sc > best.sc) best = { i: i, slot: slot, sc: sc, gain: sc - ws };
         }
         if (best) { used[best.i] = true; out.push(best); }
