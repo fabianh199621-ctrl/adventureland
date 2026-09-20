@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v307";
+var BOT_VERSION = "v308";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -1110,7 +1110,7 @@ function measure_tick() {
     meas.last_xp = character.xp; meas.last_level = character.level;
     // Gold: nur Zuwächse zählen (Käufe ignorieren)
     var dg = character.gold - meas.last_gold;
-    if (dg > 0) meas.gold += dg;
+    if (gold_is_farm(dg)) meas.gold += dg; // nur Beute – Übergaben/Verkäufe verfälschen sonst die Spot-Bewertung
     meas.last_gold = character.gold;
     // Zeit, in der er unterwegs/beschäftigt war, nicht mitzählen
     if (busy || upgrading) { if (!meas.pause_start) meas.pause_start = Date.now(); }
@@ -1274,7 +1274,7 @@ function try_cburst() {
 }
 
 // ---------- Eigenes Fenster im Spiel (verschiebbar) ----------
-var sess = { start: Date.now(), xp: 0, gold: 0, last_xp: character.xp, last_level: character.level, last_gold: character.gold };
+var sess = { start: Date.now(), xp: 0, gold: 0, gold_farm: 0, last_xp: character.xp, last_level: character.level, last_gold: character.gold };
 // ---------- Tagesbilanz (bleibt über N/Neustart erhalten) ----------
 var DAY_REPORT_MS = 30 * 60000;
 function today_key() { var d = new Date(); return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2); }
@@ -1284,14 +1284,15 @@ if (!day || day.day != today_key()) day = new_day();
 function save_day() { try { localStorage.setItem("lp_day_" + character.name, JSON.stringify(day)); } catch (e) {} }
 function day_text(d) {
     var h = Math.max(1 / 60, d.run_ms / 3600000);
-    return "XP " + fmt(d.xp) + " (" + fmt(d.xp / h) + "/h), Gold " + fmt(d.gold) + " (" + fmt(d.gold / h) + "/h), Kills " + d.kills + ", Tode " + d.deaths + ", Küsse " + d.kisses + ", Jagden " + d.hunts + ", Tränke " + d.pots + ", Laufzeit " + fmt_time(d.run_ms);
+    return "XP " + fmt(d.xp) + " (" + fmt(d.xp / h) + "/h), Gold " + fmt(d.gold) + " (" + fmt(d.gold / h) + "/h, davon Beute " + fmt(d.gold_farm || 0) + " = " + fmt((d.gold_farm || 0) / h) + "/h), Kills " + d.kills + ", Tode " + d.deaths + ", Küsse " + d.kisses + ", Jagden " + d.hunts + ", Tränke " + d.pots + ", Laufzeit " + fmt_time(d.run_ms);
 }
-function day_tick(dxp, dgold) {
+function gold_is_farm(dg) { return dg > 0 && dg < 20000 && !busy && !handing && !upgrading && !paused && !marketing && !pontying; } // Beute-Gold: kleine Zuwächse beim Farmen; Übergaben (≥ 50k), Verkäufe (beim Stadtgang = busy) und Händler-Lieferungen zählen nicht
+function day_tick(dxp, dgold, dfarm) {
     var now = Date.now();
     if (day.day != today_key()) { game_log("Tagesbilanz " + day.day + ": " + day_text(day)); day = new_day(); }
     if (!paused) day.run_ms += Math.min(5000, now - day.last_tick);
     day.last_tick = now;
-    day.xp += dxp; day.gold += dgold;
+    day.xp += dxp; day.gold += dgold; day.gold_farm = (day.gold_farm || 0) + (dfarm || 0);
     if (now - day.last_report >= DAY_REPORT_MS) { day.last_report = now; game_log("Bilanz heute: " + day_text(day)); }
     if (now % 10000 < 300) save_day();
 }
@@ -1360,8 +1361,8 @@ function session_tick() {
     else sess.xp += Math.max(0, character.xp - sess.last_xp);
     if (sess.xp > before) last_gain = Date.now();
     sess.last_xp = character.xp; sess.last_level = character.level;
-    var dg = character.gold - sess.last_gold; if (dg > 0) sess.gold += dg; sess.last_gold = character.gold;
-    day_tick(sess.xp - before, dg > 0 ? dg : 0);
+    var dg = character.gold - sess.last_gold; if (dg > 0) sess.gold += dg; var dfarm = gold_is_farm(dg) ? dg : 0; sess.gold_farm += dfarm; sess.last_gold = character.gold;
+    day_tick(sess.xp - before, dg > 0 ? dg : 0, dfarm);
 }
 function clamp_pos(el, x, y) {
     var w = parent.window.innerWidth || 1200, h = parent.window.innerHeight || 800;
@@ -1908,7 +1909,7 @@ function update_panel() {
     h += "<div class='lp_spot'><div><span class='lp_k'>Spot</span> <b>" + esc(current_spot || (auto_on ? "-" : "nur Jagden")) + "</b>" + (meas_txt ? " <span class='lp_k'>(" + meas_txt + ")</span>" : "") + "</div>"
       + "<div class='lp_k'>" + (travel_dest ? "→ unterwegs zu <b style='color:#8ab4f8'>" + esc(travel_dest.label) + "</b> (" + esc(travel_dest.map) + (travel_dest.x != null ? " " + travel_dest.x + "," + travel_dest.y : "") + ") · " + esc(travel_dest.why) : "steht auf " + esc(character.map) + " " + Math.round(character.x) + "," + Math.round(character.y) + (current_spot ? " · " + esc(current_spot) + ": " + esc(travel_why(current_spot)) : "")) + "</div>"
       + "<div class='lp_big'>" + fmt(cur_xp_h) + " XP/h &nbsp;·&nbsp; " + fmt(cur_gold_h) + " G/h</div>"
-      + "<div class='lp_k'>Session " + fmt(sess.xp / sh) + " XP/h · " + fmt(sess.gold / sh) + " G/h · nächstes Level in " + (rate > 0 ? fmt_time((G.levels[character.level] - character.xp) / rate * 3600000) : "-") + "</div></div>";
+      + "<div class='lp_k'>Session " + fmt(sess.xp / sh) + " XP/h · " + fmt(sess.gold_farm / sh) + " G/h Beute <span title='inkl. Übergaben von Händler/Priest/Ranger und Verkäufen'>(gesamt " + fmt(sess.gold / sh) + ")</span> · nächstes Level in " + (rate > 0 ? fmt_time((G.levels[character.level] - character.xp) / rate * 3600000) : "-") + "</div></div>";
     h += "<div class='lp_row'><span class='lp_mode'>Modus: " + (manual_spot ? "fest (" + esc(manual_spot) + ")" : auto_on ? "automatisch" : "<span style='color:#ffb74d'>nur Jagden" + (current_spot ? "" : " – wartet bei Daisy") + "</span>") + "</span><button data-act='auto'" + (manual_spot || !auto_on ? "" : " class='on'") + " title='an: Automatik wählt den Spot (Lückenfüller) · aus: nur Jagden, sonst warten bei Daisy'>Auto</button><button data-act='bycatch'" + (bycatch ? " class='on'" : "") + " title='andere sichere Monster in der Nähe mit angreifen'>Beifang</button><button data-act='focus'" + (focus_mode ? " class='on'" : "") + " title='nur farmen/hunten: kein Kuss, Ponty, Markt, Kuchen, keine Ausrüstungsautomatik'>Fokus</button></div>";
     var cav_left = Math.max(0, Math.max(cav_next, cav_last + cav_cooldown()) - Date.now());
     h += "<div class='lp_row'><span class='lp_k'>Aktionen</span><button data-act='copylog' title='Bot-Log in die Zwischenablage'>Log kopieren</button><button data-act='pauseafter'" + (pause_after ? " class='on'" : "") + " title='Nach Buttons/Tasten pausieren statt weiterfarmen'>Danach: " + (pause_after ? "Pause" : "Farmen") + "</button><button data-act='unblock' title='Alle Spot-/Jagd-Sperren (Tod, Rückzüge) aufheben'>Sperren aufheben</button><button data-act='cavalry' title='Tracktrix: Lv-100-Trupp rufen, räumt bis zu 24 Monster im Umkreis (90 s) – wer bereit ist: Magier, sonst Priest/Ranger mit eigenem Tracktrix'" + (any_cav_ready() ? " style='color:#C6AA62'" : "") + ">Cavalry " + (cav_ready() ? "bereit" : team_cav_ready() ? "bereit (" + TEAM_LABEL[team_cav_ready()] + ")" : "(" + Math.ceil(cav_left / 60000) + " min" + (function () { var m = null; ["priest", "ranger"].forEach(function (k) { var st = team_state[TEAM[k]]; if (team_on[k] && st && st.cav && st.cav.has) { var l = Math.ceil(Math.max(0, st.cav.next - Date.now()) / 60000); if (m == null || l < m) m = l; } }); return m != null ? ", Team " + m + " min" : ""; })() + ")") + "</button><button data-act='cavauto'" + (cav_on ? " class='on'" : "") + " title='Cavalry automatisch rufen, wenn am Spot nur gelevelte Exemplare stehen'>Cav-Auto</button></div>";
