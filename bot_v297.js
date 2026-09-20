@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v296";
+var BOT_VERSION = "v297";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -1693,10 +1693,18 @@ function mon_ttk(d) { // Sekunden pro Kill inkl. Lebensraub
     var net = dps - heal; if (net <= 0) return Infinity;
     return (d.hp || 0) / net;
 }
+var death_log = {}; try { death_log = JSON.parse(localStorage.getItem("lp_deaths") || "{}"); } catch (e) {} // Monster -> [Zeitstempel der Tode] (7 Tage): jeder Tod erhöht die angezeigte Gefahr
+function note_death(mon) { if (!mon) return; var a = (death_log[mon] || []).filter(function (t) { return Date.now() - t < 7 * 86400000; }); a.push(Date.now()); death_log[mon] = a; try { localStorage.setItem("lp_deaths", JSON.stringify(death_log)); } catch (e) {} }
+function deaths_at(mon) { return (death_log[mon] || []).filter(function (t) { return Date.now() - t < 7 * 86400000; }).length; }
+var mon_id_cache = null;
+function mon_id_of(d) { if (!mon_id_cache) { mon_id_cache = new Map(); for (var k in G.monsters) mon_id_cache.set(G.monsters[k], k); } return mon_id_cache.get(d) || null; }
 function mon_danger(d) { // Anteil meiner HP, den ein Kill kostet
     var ttk = mon_ttk(d); if (!isFinite(ttk)) return Infinity;
-    var incoming = Math.max(0, mon_dps_on_me(d) * pack_factor(d) + my_dps_vs(d) * (d.reflection || 0) / 100 - team_heal_rate());
-    return incoming * ttk / character.max_hp;
+    var raw = mon_dps_on_me(d) * pack_factor(d) + my_dps_vs(d) * (d.reflection || 0) / 100;
+    var incoming = Math.max(raw * 0.5, raw - team_heal_rate()); // Priest-Heilung zählt höchstens die Hälfte – er ist nicht immer daneben (Stadtgang, andere Karte), Gefahr darf nie 0 werden
+    var dg = incoming * ttk / character.max_hp;
+    var id = mon_id_of(d); if (id) dg += 0.15 * deaths_at(id); // jeder Tod der letzten 7 Tage: +15 % Gefahr
+    return dg;
 }
 // Anzahl gleichzeitiger Spawns eines Monstertyps (alle Karten)
 var spawn_count_cache = {};
@@ -4804,7 +4812,7 @@ function start_main() {
   if (main_timer) clearInterval(main_timer);
   main_timer = parent.__lp_main_timer = setInterval(function () {
     heal_logic(); loot();
-    if (character.rip) { if (!rip_counted) { rip_counted = true; day_count("deaths"); game_log("Gestorben (heute " + day.deaths + "x)"); try { var hq = mh_quest(); if (hq && hq.c > 0 && hunt_spot == hq.id) { game_log("Tod bei der Jagd auf " + hq.id + " – Jagd abgebrochen, Jagd-Häkchen für " + hq.id + " entfernt"); note_hunt_bad(hq.id); set_hunt_allow(hq.id, false); hunt_reset(30 * 60000); hunt_cooldown_until = Date.now() + (hq.ms || 1800000); } else if (current_spot && !event_mode) { blocked_spots[current_spot] = Date.now() + LEVELED_BLOCK_MS; note_hunt_bad(current_spot); if (hunt_allow[current_spot]) { set_hunt_allow(current_spot, false); } game_log("Tod bei " + current_spot + " – Jagd-Häkchen entfernt, Spot 30 min " + (manual_spot == current_spot ? "ausgesetzt, solange wählt die Automatik" : "gesperrt")); need_repick = true; meas = null; } } catch (e) {} } if (meas) finish_measure(true); respawn(); busy = false; fleeing = false; kissing = false; return; }
+    if (character.rip) { if (!rip_counted) { rip_counted = true; day_count("deaths"); game_log("Gestorben (heute " + day.deaths + "x)"); try { var hq = mh_quest(); if (hq && hq.c > 0 && hunt_spot == hq.id) { game_log("Tod bei der Jagd auf " + hq.id + " – Jagd abgebrochen, Jagd-Häkchen für " + hq.id + " entfernt"); note_hunt_bad(hq.id); note_death(hq.id); set_hunt_allow(hq.id, false); hunt_reset(30 * 60000); hunt_cooldown_until = Date.now() + (hq.ms || 1800000); } else if (current_spot && !event_mode) { blocked_spots[current_spot] = Date.now() + LEVELED_BLOCK_MS; note_hunt_bad(current_spot); note_death(current_spot); if (hunt_allow[current_spot]) { set_hunt_allow(current_spot, false); } game_log("Tod bei " + current_spot + " – Jagd-Häkchen entfernt, Spot 30 min " + (manual_spot == current_spot ? "ausgesetzt, solange wählt die Automatik" : "gesperrt")); need_repick = true; meas = null; } } catch (e) {} } if (meas) finish_measure(true); respawn(); busy = false; fleeing = false; kissing = false; return; }
     rip_counted = false;
     session_tick();
     if (Date.now() - last_panel > 2000) { last_panel = Date.now(); try { update_panel(); update_char_panel(); update_tchar_panels(); } catch (e) {} }
