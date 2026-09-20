@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v283";
+var BOT_VERSION = "v284";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -3920,7 +3920,7 @@ var mkt_show = 0; // sichtbare Zeilen (wächst mit „weitere anzeigen“, Filte
 var market_all = [], market_scan_t = 0, market_n_merch = 0, market_panel = null, market_job = null, mkt_rows = [];
 try { market_all = parent.__lp_market_all || []; market_scan_t = parent.__lp_market_t || 0; market_n_merch = parent.__lp_market_n || 0; } catch (e) {}
 var market_hist = {}; try { market_hist = JSON.parse(localStorage.getItem("lp_market_hist") || "{}"); } catch (e) {} // "name+lv" -> letzte Scan-Minimalpreise (Ø Markt)
-var mkt = { f: { schn: true, ziel: true, watch: true, team: true, buy: false, all: false, arb: true }, q: "", sv: "", slot: "", sort: "price", dir: 1, view: "kompakt", csort: "span", cdir: -1, open: {} };
+var mkt = { f: { schn: true, ziel: true, watch: true, team: true, buy: false, all: false, arb: true }, q: "", sv: "", slot: "", cls: "", sort: "price", dir: 1, view: "kompakt", csort: "span", cdir: -1, open: {} };
 try { var mk0 = JSON.parse(localStorage.getItem("lp_mkt") || "null"); if (mk0) { for (var mk1 in mk0) mkt[mk1] = mk0[mk1]; mkt.q = ""; mkt.open = {}; if (!mkt.view) mkt.view = "kompakt"; if (!mkt.csort) { mkt.csort = "span"; mkt.cdir = -1; } } } catch (e) {}
 function save_mkt() { try { localStorage.setItem("lp_mkt", JSON.stringify(mkt)); } catch (e) {} }
 function market_note_scan(merchants) { // aus dem Rohscan: komplette Angebotsliste + Preisgeschichte
@@ -3944,6 +3944,22 @@ function market_note_scan(merchants) { // aus dem Rohscan: komplette Angebotslis
 function market_avg(name, level) { var h = market_hist[name + "+" + (level || 0)]; if (!h || h.length < 3) return 0; var s = h.slice().sort(function (a, b) { return a - b; }); return s[Math.floor(s.length / 2)]; }
 var MKT_SLOT_LABEL = { weapon: "Waffe", helmet: "Helm", chest: "Rüstung", pants: "Hose", shoes: "Schuhe", gloves: "Handschuhe", cape: "Umhang", ring: "Schmuck", earring: "Schmuck", amulet: "Schmuck", belt: "Schmuck", orb: "Schmuck", shield: "Nebenhand", quiver: "Nebenhand", source: "Nebenhand", cscroll: "Schriftrollen", uscroll: "Schriftrollen", pscroll: "Schriftrollen", offering: "Schriftrollen", elixir: "Elixiere", pot: "Tränke" };
 function mkt_slot_of(name) { var d = G.items[name] || {}; return MKT_SLOT_LABEL[d.type] || (d.s ? "Material" : "Sonstiges"); }
+var MKT_EQUIP_TYPES = { helmet: 1, chest: 1, pants: 1, shoes: 1, gloves: 1, cape: 1, ring: 1, earring: 1, amulet: 1, belt: 1, orb: 1 };
+function mkt_classes_of(name) { // für welche unserer Klassen ein Item taugt: {mage,priest,ranger} – null = kein Ausrüstungsteil (Material, Scroll, Trank …)
+    var d = G.items[name]; if (!d) return null;
+    var out = { mage: false, priest: false, ranger: false }, any = false;
+    if (d.class && d.class.length) { d.class.forEach(function (c) { if (out[c] != null) out[c] = true; }); return out; }
+    if (d.type == "weapon") { ["mage", "priest", "ranger"].forEach(function (c) { var gc = G.classes[c] || {}; if ((gc.mainhand || {})[d.wtype] || (gc.doublehand || {})[d.wtype]) out[c] = true; }); return out; }
+    if (d.type == "source" || d.type == "shield" || d.type == "quiver" || d.type == "misc_offhand") { ["mage", "priest", "ranger"].forEach(function (c) { if (((G.classes[c] || {}).offhand || {})[d.type]) out[c] = true; }); return out; }
+    if (!MKT_EQUIP_TYPES[d.type]) return null;
+    var hi = (d.int || 0) > 0, hd = (d.dex || 0) > 0, hs = (d.str || 0) > 0; // Hauptstat entscheidet: INT → Mage/Priest, DEX → Ranger, nur STR → keiner, ohne Stat (Luck/HP/Armor) → alle
+    if (hi) { out.mage = true; out.priest = true; }
+    if (hd) out.ranger = true;
+    if (!hi && !hd && !hs) { out.mage = true; out.priest = true; out.ranger = true; }
+    return out;
+}
+function mkt_class_ok(name) { if (!mkt.cls) return true; var c = mkt_classes_of(name); return !!(c && c[mkt.cls]); }
+function mkt_team_wish_level(key, name) { var c = team_wish[key] || {}, best = null; for (var sl in c) if (c[sl] && c[sl].item == name) { var lv = c[sl].level || 0; if (best == null || lv < best) best = lv; } return best; }
 function mkt_team_wants(name) { var best = null; for (var k in team_wish) { var c = team_wish[k] || {}; for (var sl in c) if (c[sl] && c[sl].item == name) { var lv = c[sl].level || 0; if (best == null || lv < best) best = lv; } } return best; } // niedrigstes gewünschtes Level oder null
 function mkt_wish_level(name) { var best = null; for (var slot in WISHLIST) { if (wish_rank(slot, name) < 0) continue; var lv = wish_level(slot) || 0; if (best == null || lv < best) best = lv; } return best; }
 var mkt_min = {}, mkt_dupname = {}; // Item+Lv -> günstigstes Verkaufsangebot; Anzeigename -> Kürzel-Liste
@@ -3957,7 +3973,8 @@ function mkt_tags(o) { // welche Chips passen zu diesem Angebot
     var t = {};
     if (o.b) { t.buy = true; return t; }
     var p = arb_profit(o); if (p >= ARB_MIN_PROFIT && p >= o.price * ARB_MIN_MARGIN) t.schn = true;
-    var zl = mkt_wish_level(o.name); if (zl != null && o.level >= zl) { t.ziel = true; if (!wish_wants(o.name, o.level, o.price)) t.ziel_teuer = true; } // nur ab Ziel-Level; über Preislimit = grau
+    if (mkt.cls == "priest" || mkt.cls == "ranger") { var zt = mkt_team_wish_level(mkt.cls, o.name); if (zt != null && o.level >= zt) t.ziel = true; } // Klassenfilter Priest/Ranger: Zielbau aus deren Wunschliste
+    else { var zl = mkt_wish_level(o.name); if (zl != null && o.level >= zl) { t.ziel = true; if (!wish_wants(o.name, o.level, o.price)) t.ziel_teuer = true; } } // nur ab Ziel-Level; über Preislimit = grau
     if (WATCH_ITEMS[o.name]) t.watch = true;
     var tl = mkt_team_wants(o.name); if (tl != null && o.level >= tl) t.team = true;
     return t;
@@ -3990,6 +4007,7 @@ function toggle_market_panel() {
 function mkt_basic_ok(o, q) { // Server-, Slot- und Suchfilter (ohne Chips)
     if (mkt.sv && (mkt.sv == "here" ? !o.same : norm_server(o.server) != mkt.sv)) return false;
     if (mkt.slot && mkt_slot_of(o.name) != mkt.slot) return false;
+    if (mkt.cls && !mkt_class_ok(o.name)) return false;
     if (q) { var nm = ((G.items[o.name] || {}).name || o.name).toLowerCase(); if (nm.indexOf(q) < 0 && o.name.toLowerCase().indexOf(q) < 0 && o.seller.toLowerCase().indexOf(q) < 0) return false; }
     return true;
 }
@@ -4063,7 +4081,8 @@ function render_market_inner() {
     var bar = chip("schn", "Schnäppchen") + chip("ziel", "Zielbau") + chip("watch", "Beobachtung") + chip("team", "Team-Wünsche") + chip("arb", "Kaufgesuch > Kaufpreis") + chip("buy", "Kaufgesuche") + chip("all", "Alle") + " <button data-act='mview' title='Kompakt: eine Zeile je Item (günstigstes Angebot + bestes Kaufgesuch), Klick auf die Zeile klappt alle Angebote auf · Einzeln: jedes Angebot als Zeile'>" + (mkt.view == "kompakt" ? "Kompakt" : "Einzeln") + "</button>"
       + "<span style='flex:1'></span><input id='lp_mkt_q' placeholder='Suche: Item / Händler …' value='" + esc(mkt.q) + "'>"
       + "<select data-msel='sv'><option value=''>alle Server</option><option value='here'" + (mkt.sv == "here" ? " selected" : "") + ">nur hier (" + esc(pretty_server(my_server())) + ")</option>" + Object.keys(servers).sort().map(function (k) { return "<option value='" + k + "'" + (mkt.sv == k ? " selected" : "") + ">" + esc(pretty_server(servers[k])) + "</option>"; }).join("") + "</select>"
-      + "<select data-msel='slot'><option value=''>alle Slots</option>" + Object.keys(slots).sort().map(function (k) { return "<option value='" + esc(k) + "'" + (mkt.slot == k ? " selected" : "") + ">" + esc(k) + "</option>"; }).join("") + "</select>";
+      + "<select data-msel='slot'><option value=''>alle Slots</option>" + Object.keys(slots).sort().map(function (k) { return "<option value='" + esc(k) + "'" + (mkt.slot == k ? " selected" : "") + ">" + esc(k) + "</option>"; }).join("") + "</select>"
+      + "<select data-msel='cls' title='nur Ausrüstung, die diese Klasse tragen kann (Waffe/Offhand laut Spiel, Rüstung/Schmuck nach Hauptstat: INT → Mage/Priest, DEX → Ranger) · bei Priest/Ranger kommt die Zielbau-Markierung aus deren Wunschliste'><option value=''>alle Klassen</option>" + [["mage", "Mage"], ["priest", "Priest"], ["ranger", "Ranger"]].map(function (c) { return "<option value='" + c[0] + "'" + (mkt.cls == c[0] ? " selected" : "") + ">" + c[1] + "</option>"; }).join("") + "</select>";
     if (!keep) market_panel.querySelector("#lp_mkt_bar").innerHTML = bar;
     var h = "";
     if (!market_all.length) h = "<div style='color:#9aa3b2;padding:6px 0'>noch kein Scan – „Jetzt scannen“ drücken</div>";
@@ -4091,7 +4110,7 @@ function mkt_compact_html() {
     var groups = mkt_groups(); mkt_rows = [];
     var th = function (k, lab, left, tip) { return "<th class='" + (left ? "l " : "") + (mkt.csort == k ? "sorted" : "") + "' data-mcsort='" + k + "'" + (tip ? " title='" + tip + "'" : "") + ">" + lab + (mkt.csort == k ? (mkt.cdir > 0 ? " ▲" : " ▼") : "") + "</th>"; };
     var h = "<table><tr>" + th("name", "Item", true) + th("level", "Lv") + th("price", "günstigstes Angebot", false, "Preis · Händler · Server (Anzahl Anbieter)") + th("bid", "bestes Kaufgesuch", false, "Gebot · Händler · Server (Anzahl Gesuche)") + th("span", "Spanne", false, "Kaufgesuch minus günstigstes Angebot – grün = jemand zahlt mehr, als der Kauf kostet") + "<th></th></tr>";
-    if (!groups.length) h += "<tr><td class='l' colspan='6' style='color:#9aa3b2'>nichts passt zu den Filtern" + (mkt.slot || mkt.sv || mkt.q ? " (aktiv: " + esc([mkt.slot, mkt.sv ? (mkt.sv == "here" ? "nur hier" : pretty_server(mkt.sv)) : "", mkt.q ? "Suche „" + mkt.q + "“" : ""].filter(Boolean).join(", ")) + ")" : "") + "</td></tr>";
+    if (!groups.length) h += "<tr><td class='l' colspan='6' style='color:#9aa3b2'>nichts passt zu den Filtern" + (mkt.slot || mkt.sv || mkt.q || mkt.cls ? " (aktiv: " + esc([mkt.slot, mkt.sv ? (mkt.sv == "here" ? "nur hier" : pretty_server(mkt.sv)) : "", mkt.cls ? "Klasse " + mkt.cls : "", mkt.q ? "Suche „" + mkt.q + "“" : ""].filter(Boolean).join(", ")) + ")" : "") + "</td></tr>";
     var idx = function (o) { mkt_rows.push(o); return mkt_rows.length - 1; };
     var lim = mkt_show || 150;
     groups.slice(0, lim).forEach(function (gr) {
