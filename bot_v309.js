@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v308";
+var BOT_VERSION = "v309";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -1284,7 +1284,7 @@ if (!day || day.day != today_key()) day = new_day();
 function save_day() { try { localStorage.setItem("lp_day_" + character.name, JSON.stringify(day)); } catch (e) {} }
 function day_text(d) {
     var h = Math.max(1 / 60, d.run_ms / 3600000);
-    return "XP " + fmt(d.xp) + " (" + fmt(d.xp / h) + "/h), Gold " + fmt(d.gold) + " (" + fmt(d.gold / h) + "/h, davon Beute " + fmt(d.gold_farm || 0) + " = " + fmt((d.gold_farm || 0) / h) + "/h), Kills " + d.kills + ", Tode " + d.deaths + ", Küsse " + d.kisses + ", Jagden " + d.hunts + ", Tränke " + d.pots + ", Laufzeit " + fmt_time(d.run_ms);
+    return "XP " + fmt(d.xp) + " (" + fmt(d.xp / h) + "/h), Beute " + fmt(d.gold_farm || 0) + " (" + fmt((d.gold_farm || 0) / h) + "/h), Verkäufe/Übergaben " + fmt(Math.max(0, d.gold - (d.gold_farm || 0))) + ", Kills " + d.kills + ", Tode " + d.deaths + ", Küsse " + d.kisses + ", Jagden " + d.hunts + ", Tränke " + d.pots + ", Laufzeit " + fmt_time(d.run_ms);
 }
 function gold_is_farm(dg) { return dg > 0 && dg < 20000 && !busy && !handing && !upgrading && !paused && !marketing && !pontying; } // Beute-Gold: kleine Zuwächse beim Farmen; Übergaben (≥ 50k), Verkäufe (beim Stadtgang = busy) und Händler-Lieferungen zählen nicht
 function day_tick(dxp, dgold, dfarm) {
