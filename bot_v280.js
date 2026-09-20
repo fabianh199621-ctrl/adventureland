@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v279";
+var BOT_VERSION = "v280";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -1389,6 +1389,7 @@ function init_panel() {
         var tile = b.closest ? b.closest("[data-inv],[data-slot-eq]") : null;
         if (tile) { var ii = tile.getAttribute("data-inv"), se = tile.getAttribute("data-slot-eq"); if (ii != null) inv_click(parseInt(ii)); else if (se) { unequip(se); game_log(se + " abgelegt"); } return; }
         if (b.tagName == "TH" && b.getAttribute("data-sort")) { set_sort(b.getAttribute("data-sort")); return; }
+        if (b.tagName == "INPUT" && b.getAttribute("data-mq")) return; // Mengenfeld im Markt: nur tippen
         var mkel = b.closest ? b.closest("[data-mf],[data-msort],[data-mcsort],[data-act='mbuy'],[data-act='msell'],[data-act='mgoto'],[data-act='mtrip'],[data-act='marb'],[data-act='mview'],[data-act='mmore'],[data-mg]") : null;
         if (mkel) { var mkr = false; try { mkr = market_click(mkel); } catch (mke) { game_log("Markt-Fehler: " + err_txt(mke) + (mke && mke.stack ? " @ " + String(mke.stack).split("\n")[1] : "")); mkr = true; } if (mkr) return; }
         if (b.tagName != "BUTTON") return;
@@ -4005,11 +4006,12 @@ function mkt_filtered() {
     return out;
 }
 function mkt_action_html(o, i) {
-    if (o.b) { var have = inv_count(o.name, o.level), viam2 = merch_can_buy() && !is_pvp_server(o.server); var why = !have ? "nicht in deinem Inventar" : is_pvp_server(o.server) ? "PVP-Server" : (!o.same && !viam2) ? "anderer Server – nur über den Händler möglich (" + (merch_buy ? "Einkauf/Verkauf läuft" : "Händler aus") + ")" : ""; return "<button data-act='msell' data-i='" + i + "' title='" + esc(why || (viam2 ? "Händler holt " + Math.min(have, o.q || 1) + "× " + o.name + " bei dir ab" + (o.same ? "" : ", reist nach " + pretty_server(o.server)) + " und verkauft für " + fmt(o.price) + " je Stück" : "Magier läuft zum Käufer und verkauft " + Math.min(have, o.q || 1) + "× " + o.name)) + "'" + (why ? " disabled" : "") + ">Verkaufen" + (have ? " (" + Math.min(have, o.q || 1) + ")" : "") + (viam2 || !have ? "" : " (Magier)") + "</button>"; }
-    if (o.same) { var viam = merch_can_buy() && MB_SAFE_MAPS[o.map]; return "<button data-act='mbuy' data-i='" + i + "' title='" + (viam ? "Händler holt das Gold beim Magier, kauft und bringt es – Magier farmt weiter" : merch_buy ? "Einkauf läuft schon – Magier kauft selbst" : !team_on.merch || !team_running(TEAM.merch) ? "Händler aus – Magier kauft selbst" : "Verkäufer steht auf " + (o.map || "?") + " (für den Händler zu gefährlich) – Magier kauft selbst") + "'>Kaufen" + (viam ? "" : " (Magier)") + "</button> <button data-act='mgoto' data-i='" + i + "' title='nur hinlaufen und pausieren – du schaust selbst'>Hin</button>"; }
+    if (o.b) { var have = inv_count(o.name, o.level), viam2 = merch_can_buy() && !is_pvp_server(o.server); var why = !have ? "nicht in deinem Inventar" : is_pvp_server(o.server) ? "PVP-Server" : (!o.same && !viam2) ? "anderer Server – nur über den Händler möglich (" + (merch_buy ? "Einkauf/Verkauf läuft" : "Händler aus") + ")" : ""; var dqs = G.items[o.name] || {}, qin2 = dqs.s && have > 1 ? "<input data-mq='" + i + "' value='" + Math.min(have, o.q || 1) + "' title='Menge (du hast " + have + ", gesucht " + (o.q || 1) + ")' style='width:38px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555;margin-right:3px'> " : ""; return qin2 + "<button data-act='msell' data-i='" + i + "' title='" + esc(why || (viam2 ? "Händler holt " + Math.min(have, o.q || 1) + "× " + o.name + " bei dir ab" + (o.same ? "" : ", reist nach " + pretty_server(o.server)) + " und verkauft für " + fmt(o.price) + " je Stück" : "Magier läuft zum Käufer und verkauft " + Math.min(have, o.q || 1) + "× " + o.name)) + "'" + (why ? " disabled" : "") + ">Verkaufen" + (have ? " (" + Math.min(have, o.q || 1) + ")" : "") + (viam2 || !have ? "" : " (Magier)") + "</button>"; }
+    var dq = G.items[o.name] || {}, qin = dq.s && (o.q || 1) > 1 ? "<input data-mq='" + i + "' value='" + (o.q || 1) + "' title='Menge (max. " + (o.q || 1) + ")' style='width:38px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555;margin-right:3px'> " : "";
+    if (o.same) { var viam = merch_can_buy() && MB_SAFE_MAPS[o.map]; return qin + "<button data-act='mbuy' data-i='" + i + "' title='" + (viam ? "Händler holt das Gold beim Magier, kauft und bringt es – Magier farmt weiter" : merch_buy ? "Einkauf läuft schon – Magier kauft selbst" : !team_on.merch || !team_running(TEAM.merch) ? "Händler aus – Magier kauft selbst" : "Verkäufer steht auf " + (o.map || "?") + " (für den Händler zu gefährlich) – Magier kauft selbst") + "'>Kaufen" + (viam ? "" : " (Magier)") + "</button> <button data-act='mgoto' data-i='" + i + "' title='nur hinlaufen und pausieren – du schaust selbst'>Hin</button>"; }
     if (is_pvp_server(o.server)) return "<span class='lp_k' title='PVP-Server – kein Serverwechsel'>PVP</span>";
     var viat = merch_can_buy();
-    var h = "<button data-act='mtrip' data-i='" + i + "' title='" + (viat ? "Händler holt das Gold, reist auf den Server, kauft und bringt es – Magier farmt weiter" : "Magier wechselt selbst auf diesen Server, kauft und kommt zurück") + " (" + (o.price > character.gold ? "zu wenig Gold" : "Gold reicht") + ")'" + (server_trip || arb_job || merch_buy || o.price > character.gold ? " disabled" : "") + ">Serverkauf" + (viat ? "" : " (Magier)") + "</button>";
+    var h = qin + "<button data-act='mtrip' data-i='" + i + "' title='" + (viat ? "Händler holt das Gold, reist auf den Server, kauft und bringt es – Magier farmt weiter" : "Magier wechselt selbst auf diesen Server, kauft und kommt zurück") + " (" + (o.price > character.gold ? "zu wenig Gold" : "Gold reicht") + ")'" + (server_trip || arb_job || merch_buy || o.price > character.gold ? " disabled" : "") + ">Serverkauf" + (viat ? "" : " (Magier)") + "</button>";
     if (o._tags.schn) h += " <button data-act='marb' data-i='" + i + "' title='Händler reist auf diesen Server und kauft alle lohnenden Angebote dort'" + (arb_blocked() ? " disabled" : "") + ">Handelsreise</button>";
     return h;
 }
@@ -4080,16 +4082,18 @@ function market_click(b) { // Klicks im Markt-Fenster (true = verarbeitet)
     if (act == "mmore") { var body = market_panel && market_panel.querySelector("#lp_mkt_body"), stop = body ? body.scrollTop : 0; mkt_show = (mkt_show || (mkt.view == "kompakt" ? 150 : 200)) + (mkt.view == "kompakt" ? 150 : 200); render_market(); try { if (body) body.scrollTop = stop; } catch (e) {} return true; }
     if (act == "mview") { mkt.view = mkt.view == "kompakt" ? "alle" : "kompakt"; save_mkt(); render_market(); return true; }
     if (mcs) { if (mkt.csort == mcs) mkt.cdir = -mkt.cdir; else { mkt.csort = mcs; mkt.cdir = (mcs == "name" || mcs == "level" || mcs == "price") ? 1 : -1; } save_mkt(); render_market(); return true; }
-    if (mg && !act) { mkt.open[mg] = !mkt.open[mg]; render_market(); return true; }
+    if (mg && !act) { if (b.tagName == "INPUT") return true; mkt.open[mg] = !mkt.open[mg]; render_market(); return true; }
     if (ms) { if (mkt.sort == ms) mkt.dir = -mkt.dir; else { mkt.sort = ms; mkt.dir = (ms == "name" || ms == "seller" || ms == "server" || ms == "price") ? 1 : -1; } save_mkt(); render_market(); return true; }
     if (!act) return false; var o = mkt_rows[i];
+    var mq = null; try { var qe = b.parentNode && b.parentNode.querySelector("input[data-mq='" + i + "']"); if (qe) { mq = parseInt(qe.value); if (!(mq > 0)) mq = null; } } catch (e) {}
+    if (o && mq) o = Object.assign({}, o, { want: mq });
     if (act == "mbuy" && o && merch_can_buy() && MB_SAFE_MAPS[o.map]) { merch_buy_start(o, "here"); render_market(); return true; }
     if (act == "mbuy" && o) { market_job = { mode: "buy", o: o }; game_log("Markt: kaufe " + o.name + (o.level ? "+" + o.level : "") + " für " + fmt(o.price) + " bei " + o.seller + " – laufe hin"); run_market_job(); return true; }
     if (act == "msell" && o && merch_can_buy() && !is_pvp_server(o.server)) { merch_sell_start(o); render_market(); return true; }
     if (act == "msell" && o && o.same) { market_job = { mode: "sell", o: o }; game_log("Markt: verkaufe " + o.name + (o.level ? "+" + o.level : "") + " an " + o.seller + " für " + fmt(o.price) + " – laufe hin"); run_market_job(); return true; }
     if (act == "mgoto" && o) { market_job = { mode: "goto", o: o }; game_log("Markt: laufe zu " + o.seller + " (" + (o.map || "?") + ")"); run_market_job(); return true; }
     if (act == "mtrip" && o && merch_can_buy() && !is_pvp_server(o.server)) { merch_buy_start(o, "trip"); render_market(); return true; }
-    if (act == "mtrip" && o) { var f = global_finds.filter(function (x) { return x.name == o.name && x.seller == o.seller && x.price == o.price; })[0]; if (!f) f = { name: o.name, level: o.level, price: o.price, q: o.q, seller: o.seller, server: o.server, map: o.map, x: o.x, y: o.y, tslot: o.tslot, slot: "markt", force: true, market: true, t: Date.now() }; game_log("Serverkauf: " + o.name + (o.level ? "+" + o.level : "") + " für " + fmt(o.price) + " bei " + o.seller + " auf " + pretty_server(o.server)); start_trip(f); render_market(); return true; }
+    if (act == "mtrip" && o) { var f = global_finds.filter(function (x) { return x.name == o.name && x.seller == o.seller && x.price == o.price; })[0]; if (!f) f = { name: o.name, level: o.level, price: o.price, q: o.q, want: o.want, seller: o.seller, server: o.server, map: o.map, x: o.x, y: o.y, tslot: o.tslot, slot: "markt", force: true, market: true, t: Date.now() }; game_log("Serverkauf: " + o.name + (o.level ? "+" + o.level : "") + " für " + fmt(o.price) + " bei " + o.seller + " auf " + pretty_server(o.server)); start_trip(f); render_market(); return true; }
     if (act == "marb" && o) { start_arb_trip(norm_server(o.server)); render_market(); return true; }
     return false;
 }
@@ -4105,14 +4109,14 @@ async function run_market_job() { // Klick im Markt-Fenster: hinlaufen und kaufe
             else {
                 var bs = null, bsl = o.tslot; var c0 = buyer.slots[bsl]; if (c0 && c0.b && c0.name == o.name && (c0.level || 0) == (o.level || 0) && c0.price >= o.price * 0.95) bs = c0; else for (var sl2 in buyer.slots) { var c2 = buyer.slots[sl2]; if (sl2.indexOf("trade") == 0 && c2 && c2.b && c2.name == o.name && (c2.level || 0) == (o.level || 0) && c2.price >= o.price * 0.95) { bs = c2; bsl = sl2; break; } }
                 if (!bs) game_log("Markt: Kaufgesuch bei " + o.seller + " nicht mehr da oder niedriger");
-                else { var qs = Math.max(1, Math.min(bs.q || 1, inv_count(o.name, o.level))), g1 = character.gold; try { await trade_sell(buyer, bsl, qs); } catch (e) { try { trade_sell(buyer, bsl, qs); } catch (e2) {} } await sleep(1500); game_log("Markt: " + o.name + (o.level ? "+" + o.level : "") + (qs > 1 ? " ×" + qs : "") + (character.gold > g1 ? " verkauft für " + fmt(character.gold - g1) : " – Verkauf nicht bestätigt (Gold unverändert)")); }
+                else { var qs = Math.max(1, Math.min(o.want || bs.q || 1, inv_count(o.name, o.level))), g1 = character.gold; try { await trade_sell(buyer, bsl, qs); } catch (e) { try { trade_sell(buyer, bsl, qs); } catch (e2) {} } await sleep(1500); game_log("Markt: " + o.name + (o.level ? "+" + o.level : "") + (qs > 1 ? " ×" + qs : "") + (character.gold > g1 ? " verkauft für " + fmt(character.gold - g1) : " – Verkauf nicht bestätigt (Gold unverändert)")); }
             }
         }
         else if (j.mode == "goto") { paused = true; set_message("PAUSE"); game_log("Markt: bei " + o.seller + " – Bot pausiert, damit du in Ruhe schauen kannst (Pause aufheben zum Weiterfarmen)"); }
         else {
             var lo = await locate_offer(o);
             if (lo) {
-                var d = G.items[o.name] || {}, price = lo.it.price, q = d.s ? Math.max(1, Math.min(lo.it.q || 1, Math.floor(spendable() / price))) : 1;
+                var d = G.items[o.name] || {}, price = lo.it.price, q = d.s ? Math.max(1, Math.min(o.want || lo.it.q || 1, Math.floor(spendable() / price))) : 1;
                 if (price * q > character.gold) game_log("Markt: nicht genug Gold für " + o.name + " (" + fmt(price) + ")");
                 else if (character.esize < 1) game_log("Markt: Inventar voll");
                 else { var g0 = character.gold; trade_buy(lo.seller, lo.slot, q); await sleep(1500); game_log("Markt: " + o.name + (o.level ? "+" + o.level : "") + (q > 1 ? " ×" + q : "") + (character.gold < g0 ? " gekauft für " + fmt(g0 - character.gold) : " – Kauf nicht bestätigt (Gold unverändert)")); }
@@ -4145,7 +4149,7 @@ function mb_stage_txt() { if (!merch_buy) return ""; var j = merch_buy, o = j.o,
 function merch_buy_start(o, mode) {
     if (!merch_can_buy()) { game_log("Einkauf über Händler nicht möglich" + (merch_buy ? " – läuft schon: " + mb_stage_txt() : arb_job ? " – Handelsreise läuft" : "")); return false; }
     var mst = team_state[TEAM.merch], mgold = mst && mst.gold != null ? mst.gold : 0, budget = spendable() + Math.max(0, mgold - 50000);
-    var d = G.items[o.name] || {}, q = d.s ? Math.max(1, Math.min(o.q || 1, Math.floor(budget / o.price))) : 1;
+    var d = G.items[o.name] || {}, q = d.s ? Math.max(1, Math.min(o.want || o.q || 1, Math.floor(budget / o.price))) : 1;
     var need = Math.ceil(o.price * q * 1.05) + 2000, own = mgold - 50000 >= need; // Händler zahlt aus eigener Kasse, wenn sie reicht
     var gold = 0;
     if (!own) { var gap = need - Math.max(0, mgold - 50000), top = Math.max(gap, MG.target - mgold); if (spendable() >= top) gold = top; else if (spendable() >= gap) gold = gap; else { game_log("Einkauf: zu wenig Gold – nötig " + fmt(gap) + " zusätzlich zur Händlerkasse (" + fmt(mgold) + "), verfügbar " + fmt(spendable()) + " über der Reserve"); return false; } }
@@ -4156,7 +4160,7 @@ function merch_buy_start(o, mode) {
 function merch_sell_start(o) {
     if (!merch_can_buy()) { game_log("Verkauf über Händler nicht möglich" + (merch_buy ? " – läuft schon: " + mb_stage_txt() : arb_job ? " – Handelsreise läuft" : "")); return false; }
     var have = inv_count(o.name, o.level); if (!have) { game_log("Verkauf: " + o.name + " nicht im Inventar"); return false; }
-    var q = Math.max(1, Math.min(o.q || 1, have));
+    var q = Math.max(1, Math.min(o.want || o.q || 1, have));
     merch_buy = { id: Date.now(), kind: "sell", o: { name: o.name, level: o.level || 0, price: o.price, q: o.q, seller: o.seller, server: o.server, map: o.map, x: o.x, y: o.y, tslot: o.tslot }, q: q, gold: 0, mode: o.same ? "here" : "trip", stage: "call", t: Date.now(), tries: 0 }; mb_save();
     game_log("Verkauf über Händler: " + q + "× " + o.name + (o.level ? "+" + o.level : "") + " an " + o.seller + " für " + fmt(o.price) + " je Stück" + (o.same ? "" : " auf " + pretty_server(o.server)) + " – Händler holt das Item");
     return true;
@@ -4276,7 +4280,7 @@ async function run_pending_buy() { // zum Händler auf diesem Server laufen und 
         set_message("Kauf " + f.name);
         if (f.map && f.x != null) await travel({ map: f.map, x: f.x, y: f.y + 30 });
         var lo = await locate_offer(f);
-        if (lo) { var seller = lo.seller, it = lo.it, dq = G.items[it.name] || {}, qn = f.market && dq.s ? Math.max(1, Math.min(it.q || 1, Math.floor(spendable() / it.price))) : 1; await wish_buy_from_offer({ name: it.name, level: it.level || 0, price: it.price, force: !!f.force, slot: f.slot, seller: f.seller }, async function () { trade_buy(seller, lo.slot, qn); return true; }); }
+        if (lo) { var seller = lo.seller, it = lo.it, dq = G.items[it.name] || {}, qn = f.market && dq.s ? Math.max(1, Math.min(f.want || it.q || 1, Math.floor(spendable() / it.price))) : 1; await wish_buy_from_offer({ name: it.name, level: it.level || 0, price: it.price, force: !!f.force, slot: f.slot, seller: f.seller }, async function () { trade_buy(seller, lo.slot, qn); return true; }); }
     } catch (e) { game_log("Händler-Kauf: " + err_txt(e)); }
     busy = false; marketing = false;
     if (trip_buying) { trip_buying = false; server_targets = server_targets.filter(function (x) { return !(x.name == f.name && x.seller == f.seller); }); save_server_targets(); end_trip("Kauf auf " + pretty_server(my_server()) + (locate_item(f.name) >= 0 || (character.slots[f.slot] && character.slots[f.slot].name == f.name) ? " erledigt" : " nicht möglich")); return; }
