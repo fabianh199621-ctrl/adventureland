@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Händler (F4llenMerch) – Stufe 1 =====
 // Läuft unsichtbar neben dem Magier. Aufgaben: Stand kaufen und öffnen, Loot abholen/verkaufen/einlagern,
 // Startgold vom Magier holen. mluck ist abgeschaltet (braucht Lv 40, Händler levelt praktisch nicht) – USE_MLUCK/LEVEL_MODE. Meldungen gehen per Charakter-Nachricht an den Magier und erscheinen dort als "[Merch] …".
-var MERCH_VERSION = "v309";
+var MERCH_VERSION = "v310";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -341,7 +341,7 @@ async function ensure_tool(tool) { // Werkzeug vorhanden? sonst Zutaten kaufen/a
     if (missing.length) { if (missing.indexOf("spidersilk") >= 0 && Date.now() - last_silk_ask > 10 * 60000) { last_silk_ask = Date.now(); try { send_cm(MAGE, { t: "need", item: "spidersilk", q: 1 }); } catch (e) {} /* je Werkzeug eine Seide */ say_once("silk", "Für " + tool + " fehlt Spinnenseide – beim Magier angefragt", 1800000); } else say_once("toolmiss", "Werkzeug " + tool + ": fehlt " + missing.join(", "), 1800000); return false; }
     var cp = npc_pos("craftsman"); if (!cp) return false;
     await go({ map: cp.map, x: cp.x, y: cp.y + 20 }, 60);
-    try { if (typeof craft == "function") await craft(tool); else parent.socket.emit("craft", { name: tool }); } catch (e) { say("Handwerker " + tool + ": " + (e && e.reason || e && e.message || JSON.stringify(e).slice(0, 80))); }
+    try { var cr = null; if (typeof auto_craft == "function") cr = await auto_craft(tool); else { var pos = {}, cri = []; need.forEach(function (n, k) { pos[n] = have_item(n); }); parent.cr_items = need.map(function (n) { return have_item(n); }).concat([null, null, null, null, null, null]).slice(0, 9); cr = await parent.craft(); } if (cr && (cr.failed || cr.reason)) say("Handwerker " + tool + ": " + (cr.reason || "fehlgeschlagen")); } catch (e) { say("Handwerker " + tool + ": " + (e && e.reason || e && e.message || JSON.stringify(e).slice(0, 80))); } // auto_craft sucht die Inventarplätze selbst; craft(name) war falsch (erwartet Slot-Nummern → "invalid")
     await sleep(1500);
     if (have_item(tool) != -1) { say(tool + " beim Handwerker gebaut"); return true; }
     say("Werkzeug " + tool + " nicht gebaut (Zutaten da: " + need.map(function (n) { return n + (have_item(n) != -1 ? "✓" : "✗"); }).join(" ") + ")"); return false;

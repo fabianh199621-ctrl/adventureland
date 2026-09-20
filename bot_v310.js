@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v309";
+var BOT_VERSION = "v310";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -2163,7 +2163,7 @@ function handover_plan() { // was der Händler mitnehmen soll: [{i, action}] –
 }
 async function merchant_pickup(reason) { // Händler rufen, Items übergeben, Tränke entgegennehmen; false = nicht geklappt (dann alter Stadtgang)
     if (handing) return false;
-    handing = true; busy = true; last_pickup = Date.now();
+    handing = true; busy = false; last_pickup = Date.now(); // während der Händler anläuft, farmt der Magier weiter – erst bei der Übergabe selbst bleibt er stehen
     var ok = false;
     try {
         var need_hp = Math.max(0, MAGE_POT_FULL - pots_total(POTS_HP)), need_mp = Math.max(0, MAGE_POT_FULL - pots_total(POTS_MP));
@@ -2174,13 +2174,14 @@ async function merchant_pickup(reason) { // Händler rufen, Items übergeben, Tr
         game_log("Händler gerufen (" + reason + "): " + plan.length + " Items" + (need_hp >= 30 || need_mp >= 30 ? ", Tränke " + need_hp + "/" + need_mp : ""));
         set_message("Händler kommt");
         var t0 = Date.now(), m = null;
-        while (Date.now() - t0 < 4 * 60000 && !character.rip) { // warten, bis er neben uns steht (weiter kämpfen tut der Magier in der Zeit nicht – er steht)
+        while (Date.now() - t0 < 4 * 60000 && !character.rip) { // warten, bis er neben uns steht – der Magier farmt derweil normal weiter
             m = get_player(TEAM.merch); if (m && m.map == character.map && distance(character, m) < 300 && pickup_state.ready) break;
             if (!bot_running || aborted()) throw "PAUSE"; // P unterbricht die Übergabe nicht mehr – nur Bot aus
             if (arb_job || !team_running(TEAM.merch)) { game_log("Händler ist auf Reise/neu gestartet – Übergabe abgebrochen"); break; }
             await sleep(500);
         }
         if (!(m && m.map == character.map && distance(character, m) < 300)) { game_log("Händler nicht angekommen – mache den Stadtgang selbst"); team_send(TEAM.merch, { t: "pickup_cancel" }); return false; }
+        busy = true; try { stop("smart"); } catch (e) {} // jetzt stehen bleiben: Übergabe dauert nur ein paar Sekunden
         // Übergabe: erst Ansage, dann Item
         var given = 0, plan2 = handover_plan(); // frisch, Indizes können sich verschoben haben
         for (var k = 0; k < plan2.length; k++) {
