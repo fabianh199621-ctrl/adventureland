@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Händler (F4llenMerch) – Stufe 1 =====
 // Läuft unsichtbar neben dem Magier. Aufgaben: Stand kaufen und öffnen, Loot abholen/verkaufen/einlagern,
 // Startgold vom Magier holen. mluck ist abgeschaltet (braucht Lv 40, Händler levelt praktisch nicht) – USE_MLUCK/LEVEL_MODE. Meldungen gehen per Charakter-Nachricht an den Magier und erscheinen dort als "[Merch] …".
-var MERCH_VERSION = "v303";
+var MERCH_VERSION = "v304";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -331,7 +331,7 @@ async function ensure_tool(tool) { // Werkzeug vorhanden? sonst Zutaten kaufen/a
     // kaufbare Zutaten (Stab, Klinge) beim NPC holen
     for (var i = 0; i < missing.length; i++) { var n = missing[i]; var npc = npc_selling(n); if (!npc) continue; var pr = (G.items[n] || {}).g || 0; if (character.gold < pr + 20000) { say_once("toolgold", "Werkzeug " + tool + ": zu wenig Gold für " + n, 1800000); return false; } var pos = npc_pos(npc); if (!pos) continue; await go({ map: pos.map, x: pos.x, y: pos.y + 20 }, 60); try { buy(n, 1); await sleep(600); } catch (e) {} }
     missing = need.filter(function (n) { return have_item(n) == -1; });
-    if (missing.length) { if (missing.indexOf("spidersilk") >= 0 && Date.now() - last_silk_ask > 10 * 60000) { last_silk_ask = Date.now(); try { send_cm(MAGE, { t: "need", item: "spidersilk", q: 2 }); } catch (e) {} say_once("silk", "Für " + tool + " fehlt Spinnenseide – beim Magier angefragt", 1800000); } else say_once("toolmiss", "Werkzeug " + tool + ": fehlt " + missing.join(", "), 1800000); return false; }
+    if (missing.length) { if (missing.indexOf("spidersilk") >= 0 && Date.now() - last_silk_ask > 10 * 60000) { last_silk_ask = Date.now(); try { send_cm(MAGE, { t: "need", item: "spidersilk", q: 1 }); } catch (e) {} /* je Werkzeug eine Seide */ say_once("silk", "Für " + tool + " fehlt Spinnenseide – beim Magier angefragt", 1800000); } else say_once("toolmiss", "Werkzeug " + tool + ": fehlt " + missing.join(", "), 1800000); return false; }
     var cp = npc_pos("craftsman"); if (!cp) return false;
     await go({ map: cp.map, x: cp.x, y: cp.y + 20 }, 60);
     try { if (typeof craft == "function") await craft(tool); else parent.socket.emit("craft", { name: tool }); } catch (e) { say("Handwerker " + tool + ": " + (e && e.reason || e && e.message || JSON.stringify(e).slice(0, 80))); }
