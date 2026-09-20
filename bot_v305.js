@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v304";
+var BOT_VERSION = "v305";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -940,8 +940,11 @@ async function travel_place(name) { // Orte in der Stadt: bei großer Entfernung
     } catch (e) {}
     return smart_move(name);
 }
+var travel_dest = null; // aktuelles Reiseziel fürs Panel: {label, map, x, y, why}
+function travel_why(dest) { if (typeof dest != "string" || !G.monsters[dest]) return typeof dest == "string" ? dest : "Ort"; if (hunt_spot == dest) return "eigene Jagd"; var th = null; try { th = team_hunt_pick(); } catch (e) {} if (th && th.id == dest) return "Team-Jagd (" + th.who + ")"; if (manual_spot == dest) return "fester Spot"; return "Farmspot"; }
 async function travel(dest) { // dest: Monstername, Ortsname oder {map,x,y}
     var pos = typeof dest == "string" ? (G.monsters[dest] ? spot_position(dest) : null) : dest;
+    try { travel_dest = { label: typeof dest == "string" ? dest : (dest.map || "?"), map: pos && pos.map || (typeof dest == "string" ? "?" : dest.map), x: pos ? Math.round(pos.x) : null, y: pos ? Math.round(pos.y) : null, why: travel_why(dest), t: Date.now() }; last_panel = 0; } catch (e) {}
     try {
         if (pos && pos.map && !character.rip && skill_available("town") && !is_on_cooldown("town")) {
             var ts = town_spawn(character.map);
@@ -953,6 +956,7 @@ async function travel(dest) { // dest: Monstername, Ortsname oder {map,x,y}
     } catch (e) {}
     try { return await smart_move(dest); }
     catch (e) { if (paused || aborted()) throw e; await sleep(2000); if (paused || aborted()) throw e; stop("smart"); return smart_move(dest); } // einmal erneut versuchen – nicht bei Pause/Abbruch
+    finally { travel_dest = null; last_panel = 0; }
 }
 
 // ---------- Farmspot: automatisch nach XP/h und Gold/h ----------
@@ -1881,6 +1885,7 @@ function update_panel() {
       + "<div style='grid-column:1/3;color:#6b7280;font-size:11px'>Elixier " + (character.slots.elixir ? "an" : "aus") + " · Kuss " + kiss_txt + (a2 ? " · Kuchen " + (6 - missing_slices().length) + "/6" + (missing_slices().length ? " (fehlt: " + esc(missing_slices().map(function (n) { return n.replace("slice_", ""); }).join(", ")) + ")" : quantity("sixcake") ? " · Sixfold Cake ×" + quantity("sixcake") : ", bereit zum Backen") : "") + " · Ref " + fmt(gold_per_hour()) + " G/h</div>"
       + "</div>";
     h += "<div class='lp_spot'><div><span class='lp_k'>Spot</span> <b>" + esc(current_spot || (auto_on ? "-" : "nur Jagden")) + "</b>" + (meas_txt ? " <span class='lp_k'>(" + meas_txt + ")</span>" : "") + "</div>"
+      + "<div class='lp_k'>" + (travel_dest ? "→ unterwegs zu <b style='color:#8ab4f8'>" + esc(travel_dest.label) + "</b> (" + esc(travel_dest.map) + (travel_dest.x != null ? " " + travel_dest.x + "," + travel_dest.y : "") + ") · " + esc(travel_dest.why) : "steht auf " + esc(character.map) + " " + Math.round(character.x) + "," + Math.round(character.y) + (current_spot ? " · " + esc(current_spot) + ": " + esc(travel_why(current_spot)) : "")) + "</div>"
       + "<div class='lp_big'>" + fmt(cur_xp_h) + " XP/h &nbsp;·&nbsp; " + fmt(cur_gold_h) + " G/h</div>"
       + "<div class='lp_k'>Session " + fmt(sess.xp / sh) + " XP/h · " + fmt(sess.gold / sh) + " G/h · nächstes Level in " + (rate > 0 ? fmt_time((G.levels[character.level] - character.xp) / rate * 3600000) : "-") + "</div></div>";
     h += "<div class='lp_row'><span class='lp_mode'>Modus: " + (manual_spot ? "fest (" + esc(manual_spot) + ")" : auto_on ? "automatisch" : "<span style='color:#ffb74d'>nur Jagden" + (current_spot ? "" : " – wartet bei Daisy") + "</span>") + "</span><button data-act='auto'" + (manual_spot || !auto_on ? "" : " class='on'") + " title='an: Automatik wählt den Spot (Lückenfüller) · aus: nur Jagden, sonst warten bei Daisy'>Auto</button><button data-act='bycatch'" + (bycatch ? " class='on'" : "") + " title='andere sichere Monster in der Nähe mit angreifen'>Beifang</button><button data-act='focus'" + (focus_mode ? " class='on'" : "") + " title='nur farmen/hunten: kein Kuss, Ponty, Markt, Kuchen, keine Ausrüstungsautomatik'>Fokus</button></div>";
