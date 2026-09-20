@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v314";
+var BOT_VERSION = "v315";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -364,6 +364,7 @@ function is_valid_target(m) {
     if (!m || m.type != "monster" || m.dead) return false;
     if (m.target && TEAM_NAMES.indexOf(m.target) >= 0) return true; // greift ein Teammitglied an
     if (priority_mon(m.mtype)) return true; // seltener Spawn (Phoenix): immer gültig
+    if (character.map == "goobrawl" && (m.mtype == "goo" || m.mtype == "rgoo" || m.mtype == "bgoo")) return true; // Goo-Prügelei: alle Goos gültig, auch gebuffte
     if (m.mtype == pick_farm_monster()) return m.target == character.name || !too_strong(m); // Angreifer wehren wir ab, sonst nur ungelevelte/sichere Exemplare
     if (m.max_hp > character.max_hp * MAX_TARGET_HP_FACTOR) return false;
     if (bycatch && is_safe_monster(m.mtype) && !hidden_mons[m.mtype] && (!m.target || m.target == character.name)) return true;
@@ -672,6 +673,7 @@ function event_status() { try { var st = (typeof server != "undefined" && server
 function event_boss() { try { for (var id in parent.entities) { var m = parent.entities[id]; if (m && m.type == "monster" && m.mtype == "crabxx" && !m.dead) return m; } } catch (e) {} return null; }
 function event_tick() {
     if (Date.now() - last_event_check < 10000) return; last_event_check = Date.now();
+    if (event_mode == "goobrawl") return; // Goo-Prügelei hat ihre eigene Steuerung (goo_tick)
     var st = event_status();
     if (!event_mode) {
         if (!event_on || !st || paused || busy || upgrading || server_trip || focus_mode || arb_job || merch_test) return;
@@ -696,6 +698,39 @@ function event_tick() {
 function event_join() {
     try { var r = join("crabxx"); if (r && typeof r.then == "function") r.then(function () { game_log("Event: angekommen"); }, function (e) { game_log("Event: Sprung fehlgeschlagen: " + JSON.stringify(e).slice(0, 120)); }); } catch (e) { game_log("Event: join-Fehler " + err_txt(e)); }
     ["priest", "ranger"].forEach(function (k) { if (team_on[k] && team_running(TEAM[k])) team_send(TEAM[k], { t: "join", event: "crabxx" }); });
+}
+// ---------- Goo-Prügelei (Server-Event goobrawl): Team springt hin, kloppt Goos, fokussiert Rainbow Goo, kommt danach zurück ----------
+var goo_on = true; try { goo_on = localStorage.getItem("lp_goo_on") != "0"; } catch (e) {}
+var last_goo_check = 0, goo_join_t = 0, goo_rgoo_logged = 0;
+function goo_status() { try { var st = (typeof server != "undefined" && server && server.status) || parent.S || {}; var e = st.goobrawl; return e && (e.live !== false) ? e : null; } catch (e) { return null; } }
+function goo_tick() {
+    if (Date.now() - last_goo_check < 10000) return; last_goo_check = Date.now();
+    var st = goo_status();
+    if (event_mode != "goobrawl") {
+        if (!goo_on || !st || event_mode || paused || busy || upgrading || server_trip || focus_mode || arb_job || merch_test || kissing || handing || character.rip) return;
+        event_prev = { manual_spot: manual_spot, user_manual: user_manual }; event_mode = "goobrawl"; event_since = Date.now();
+        manual_spot = "goo"; user_manual = null; current_spot = "goo"; need_repick = true; meas = null; if (hunt_spot) hunt_spot = null;
+        game_log("Goo-Prügelei aktiv – Mage, Priest und Ranger springen hin (Fun Tokens; Rainbow Goo wird fokussiert)"); last_panel = 0;
+        goo_join(); return;
+    }
+    if (!st) { goo_leave("Event vorbei"); return; }
+    if (!goo_on) { goo_leave("abgeschaltet"); return; }
+    if (character.map != "goobrawl" && !busy && !fleeing && Date.now() - goo_join_t > 30000) goo_join();
+    try { var rg = null; for (var id in parent.entities) { var m = parent.entities[id]; if (m && m.type == "monster" && m.mtype == "rgoo" && !m.dead) { rg = m; break; } } if (rg && Date.now() - goo_rgoo_logged > 60000) { goo_rgoo_logged = Date.now(); game_log("Rainbow Goo in Sicht (" + Math.round(rg.hp / rg.max_hp * 100) + " % HP) – Team fokussiert"); } } catch (e) {}
+}
+function goo_join() {
+    goo_join_t = Date.now();
+    try { var r = join("goobrawl"); if (r && typeof r.then == "function") r.then(function () { game_log("Goo-Prügelei: angekommen"); }, function (e) { game_log("Goo-Prügelei: Sprung fehlgeschlagen: " + JSON.stringify(e).slice(0, 120)); }); } catch (e) { game_log("Goo-Prügelei: join-Fehler " + err_txt(e)); }
+    ["priest", "ranger"].forEach(function (k) { if (team_on[k] && team_running(TEAM[k])) team_send(TEAM[k], { t: "join", event: "goobrawl" }); });
+}
+function goo_leave(why) {
+    game_log("Goo-Prügelei: " + why + " – zurück zum normalen Betrieb");
+    if (event_prev) { manual_spot = event_prev.manual_spot; user_manual = event_prev.user_manual; } event_prev = null; event_mode = null;
+    current_spot = null; need_repick = true; meas = null; last_hunt_check = 0; last_panel = 0;
+    ["priest", "ranger"].forEach(function (k) { if (team_on[k] && team_running(TEAM[k])) team_send(TEAM[k], { t: "town" }); });
+    stop("smart"); change_target(null);
+    if (character.map == "goobrawl") { busy = true; (async function () { try { await town_teleport(); } catch (e) { try { await smart_move("town"); } catch (e2) {} } busy = false; if (!paused) go_to_farm_spot(); })(); }
+    else if (!paused) go_to_farm_spot();
 }
 function event_leave(why) {
     game_log("Event: " + why + " – zurück zum normalen Betrieb" + (event_boss_hits ? " (" + event_boss_hits + " Treffer auf Giga Crab)" : ""));
@@ -1493,6 +1528,7 @@ function init_panel() {
         else if (act == "pauseafter") { pause_after = !pause_after; try { localStorage.setItem("lp_pause_after", pause_after ? "1" : "0"); } catch (x) {} game_log("Nach manueller Aktion: " + (pause_after ? "pausieren" : "weiterfarmen")); last_panel = 0; }
         else if (act == "unblock") { var nb = 0; Object.keys(blocked_spots).forEach(function (k) { if (blocked_spots[k] !== true) { delete blocked_spots[k]; nb++; } }); nb += Object.keys(hunt_bad).length; hunt_bad = {}; try { localStorage.setItem("lp_hunt_bad", "{}"); } catch (x) {} flee_log = {}; hunt_cooldown_until = 0; need_repick = true; game_log("Sperren aufgehoben (" + nb + ")"); }
         else if (act == "cavalry") call_cavalry("manuell");
+        else if (act == "gootoggle") { goo_on = !goo_on; try { localStorage.setItem("lp_goo_on", goo_on ? "1" : "0"); } catch (x) {} game_log("Goo-Prügelei " + (goo_on ? "an" : "aus")); if (!goo_on && event_mode == "goobrawl") goo_leave("abgeschaltet"); }
         else if (act == "cavauto") { cav_on = !cav_on; try { localStorage.setItem("lp_cav_on", cav_on ? "1" : "0"); } catch (x) {} game_log("Cavalry-Automatik " + (cav_on ? "an" : "aus")); }
         else if (act == "waitteam") { wait_team_on = !wait_team_on; try { localStorage.setItem("lp_wait_team", wait_team_on ? "1" : "0"); } catch (x) {} game_log("Auf Team warten " + (wait_team_on ? "an (ab " + Math.round(wait_team_danger * 100) + " % Gefahr)" : "aus")); }
 
@@ -1916,7 +1952,7 @@ function update_panel() {
       + "<div class='lp_k'>Session " + fmt(sess.xp / sh) + " XP/h · " + fmt(sess.gold_farm / sh) + " G/h Beute <span title='inkl. Übergaben von Händler/Priest/Ranger und Verkäufen'>(gesamt " + fmt(sess.gold / sh) + ")</span> · nächstes Level in " + (rate > 0 ? fmt_time((G.levels[character.level] - character.xp) / rate * 3600000) : "-") + "</div></div>";
     h += "<div class='lp_row'><span class='lp_mode'>Modus: " + (manual_spot ? "fest (" + esc(manual_spot) + ")" : auto_on ? "automatisch" : "<span style='color:#ffb74d'>nur Jagden" + (current_spot ? "" : " – wartet bei Daisy") + "</span>") + "</span><button data-act='auto'" + (manual_spot || !auto_on ? "" : " class='on'") + " title='an: Automatik wählt den Spot (Lückenfüller) · aus: nur Jagden, sonst warten bei Daisy'>Auto</button><button data-act='bycatch'" + (bycatch ? " class='on'" : "") + " title='andere sichere Monster in der Nähe mit angreifen'>Beifang</button><button data-act='focus'" + (focus_mode ? " class='on'" : "") + " title='nur farmen/hunten: kein Kuss, Ponty, Markt, Kuchen, keine Ausrüstungsautomatik'>Fokus</button></div>";
     var cav_left = Math.max(0, Math.max(cav_next, cav_last + cav_cooldown()) - Date.now());
-    h += "<div class='lp_row'><span class='lp_k'>Aktionen</span><button data-act='copylog' title='Bot-Log in die Zwischenablage'>Log kopieren</button><button data-act='pauseafter'" + (pause_after ? " class='on'" : "") + " title='Nach Buttons/Tasten pausieren statt weiterfarmen'>Danach: " + (pause_after ? "Pause" : "Farmen") + "</button><button data-act='unblock' title='Alle Spot-/Jagd-Sperren (Tod, Rückzüge) aufheben'>Sperren aufheben</button><button data-act='cavalry' title='Tracktrix: Lv-100-Trupp rufen, räumt bis zu 24 Monster im Umkreis (90 s) – wer bereit ist: Magier, sonst Priest/Ranger mit eigenem Tracktrix'" + (any_cav_ready() ? " style='color:#C6AA62'" : "") + ">Cavalry " + (cav_ready() ? "bereit" : team_cav_ready() ? "bereit (" + TEAM_LABEL[team_cav_ready()] + ")" : "(" + Math.ceil(cav_left / 60000) + " min" + (function () { var m = null; ["priest", "ranger"].forEach(function (k) { var st = team_state[TEAM[k]]; if (team_on[k] && st && st.cav && st.cav.has) { var l = Math.ceil(Math.max(0, st.cav.next - Date.now()) / 60000); if (m == null || l < m) m = l; } }); return m != null ? ", Team " + m + " min" : ""; })() + ")") + "</button><button data-act='cavauto'" + (cav_on ? " class='on'" : "") + " title='Cavalry automatisch rufen, wenn am Spot nur gelevelte Exemplare stehen'>Cav-Auto</button></div>";
+    h += "<div class='lp_row'><span class='lp_k'>Aktionen</span><button data-act='copylog' title='Bot-Log in die Zwischenablage'>Log kopieren</button><button data-act='pauseafter'" + (pause_after ? " class='on'" : "") + " title='Nach Buttons/Tasten pausieren statt weiterfarmen'>Danach: " + (pause_after ? "Pause" : "Farmen") + "</button><button data-act='unblock' title='Alle Spot-/Jagd-Sperren (Tod, Rückzüge) aufheben'>Sperren aufheben</button><button data-act='cavalry' title='Tracktrix: Lv-100-Trupp rufen, räumt bis zu 24 Monster im Umkreis (90 s) – wer bereit ist: Magier, sonst Priest/Ranger mit eigenem Tracktrix'" + (any_cav_ready() ? " style='color:#C6AA62'" : "") + ">Cavalry " + (cav_ready() ? "bereit" : team_cav_ready() ? "bereit (" + TEAM_LABEL[team_cav_ready()] + ")" : "(" + Math.ceil(cav_left / 60000) + " min" + (function () { var m = null; ["priest", "ranger"].forEach(function (k) { var st = team_state[TEAM[k]]; if (team_on[k] && st && st.cav && st.cav.has) { var l = Math.ceil(Math.max(0, st.cav.next - Date.now()) / 60000); if (m == null || l < m) m = l; } }); return m != null ? ", Team " + m + " min" : ""; })() + ")") + "</button><button data-act='cavauto'" + (cav_on ? " class='on'" : "") + " title='Cavalry automatisch rufen, wenn am Spot nur gelevelte Exemplare stehen'>Cav-Auto</button><button data-act='gootoggle'" + (goo_on ? " class='on'" : "") + " title='Goo-Prügelei: bei aktivem Event springen Mage, Priest und Ranger hin (Fun Tokens, Rainbow Goo 48M XP) und kommen danach zurück'>Goo" + (event_mode == "goobrawl" ? " ●" : "") + "</button></div>";
     h += event_html();
     h += "<div class='lp_sec'><div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Hunt: <span style='color:#e6e6e6'>" + esc(mh_txt()) + "</span> · " + tokens() + " Tokens</span><button data-act='hunt'" + (hunt_on ? " class='on'" : "") + " title='Monster Hunt automatisch (Rundlauf Magier → Priest → Ranger)'>Hunt</button>" + (mh_quest() ? "<button data-act='huntabandon'>Abbrechen</button>" : "") + "</div>"
       + hunts_grid_html() + "</div>";
@@ -2208,6 +2244,7 @@ async function merchant_pickup(reason) { // Händler rufen, Items übergeben, Tr
 }
 var tidy_force = false, give_done = {}; // Button: kompletter Durchgang unabhängig vom Füllstand
 async function tidy_inventory() {
+    if (event_mode == "goobrawl" && !tidy_force) return; // vom Event-Ort keine Stadtgänge
     var min_free = focus_mode ? FOCUS_MIN_FREE : INV_MIN_FREE;
     if (busy || upgrading || paused || (!tidy_force && (character.esize >= min_free || Date.now() < tidy_next))) return;
     if (!tidy_force && merchant_available()) { // Stufe 2: Händler holt ab, Magier bleibt am Spot
@@ -2509,7 +2546,7 @@ function kiss_round_open() {
     return true;
 }
 async function kiss_routine() {
-    if (SOLO || kissing || upgrading || fleeing || busy || marketing || server_trip || !kiss_round_open()) return; // nicht während Kauf/Routine/Serverreise
+    if (SOLO || kissing || upgrading || fleeing || busy || marketing || server_trip || event_mode == "goobrawl" || !kiss_round_open()) return; // nicht während Kauf/Routine/Serverreise
     var a = anniv(); var round = a.round, name = a.target;
     kissing = true; busy = true;
     game_log("Kuss-Runde " + round + ": laufe zu " + name + " (" + a.map + " " + a.x + "," + a.y + ")");
@@ -2752,7 +2789,7 @@ function pick_pot_tier(list) { // list ist "beste zuerst"
     return list[list.length - 1];
 }
 function check_potions() {
-    if (busy) return;
+    if (busy || event_mode == "goobrawl") return;
     if (focus_mode) { if (pots_total(POTS_HP) >= FOCUS_POT_MIN && pots_total(POTS_MP) >= FOCUS_POT_MIN) return; } // Fokus: Nachkauf normalerweise beim Inventar-Stadtgang, hier nur der Notfall
     else {
         var team_low = team_pots_need().filter(function (t) { var tp = null; try { tp = get_player(t.name); } catch (e) {} return tp && tp.map == character.map && distance(character, tp) < 400; }); // Priest/Ranger unter 300 Tränken und neben mir: Händler bringt für sie mit
@@ -4970,7 +5007,7 @@ function start_main() {
     session_tick();
     if (Date.now() - last_panel > 2000) { last_panel = Date.now(); try { update_panel(); update_char_panel(); update_tchar_panels(); if (bank_panel && Date.now() - (bank_rendered || 0) > 15000) { bank_rendered = Date.now(); render_bank(); } } catch (e) {} }
     if (handing && Date.now() - last_pickup > 5 * 60000) { game_log("Abholung hängt seit 5 min – gebe frei"); handing = false; pickup_state = null; if (busy) busy = false; } // Wächter: eine Übergabe darf nie dauerhaft blockieren (sperrt sonst Handelsreisen und weitere Abholungen)
-    try { if (!SOLO) { merch_test_tick(); arb_tick(); merch_buy_tick(); merch_need_tick(); donate_tick(); event_tick(); } team_tick(); team_broadcast(); if (!SOLO) { team_read_logs(); team_inject(); } bank_snapshot(); if (!manual_lock && !paused && !SOLO) { priest_gear_tick(); energize_tick(); team_wish_handover_tick(); } } catch (e) {}
+    try { if (!SOLO) { merch_test_tick(); arb_tick(); merch_buy_tick(); merch_need_tick(); donate_tick(); event_tick(); goo_tick(); } team_tick(); team_broadcast(); if (!SOLO) { team_read_logs(); team_inject(); } bank_snapshot(); if (!manual_lock && !paused && !SOLO) { priest_gear_tick(); energize_tick(); team_wish_handover_tick(); } } catch (e) {}
     if (paused) return;
     measure_tick();
 

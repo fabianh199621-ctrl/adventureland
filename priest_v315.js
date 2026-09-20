@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Priester (F4llenPriest) – Stufe 1 =====
 // Folgt dem Magier, heilt ihn und sich, nimmt die Party-Einladung an, greift erst ab PRIEST_ATTACK_LEVEL mit an.
 // Meldungen gehen per Charakter-Nachricht an den Magier ("[Priest] …").
-var PRIEST_VERSION = "v314";
+var PRIEST_VERSION = "v315";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -227,7 +227,7 @@ async function hunt_town_step() { // in der Stadt: Jagd abgeben/holen, Tokens in
 function spot_target_near() { // freies, ungeleveltes Exemplar des aktuellen Team-Spots in der Nähe (nur ohne Team-Häkchen)
     if (!mage || !mage.spot || Date.now() - mage.t > 15000 || p_paused) return null; var sp = mage.spot, base = G.monsters[sp] || {}; if ((base.attack || 0) * 8 > character.max_hp) return null;
     var best = null, bd = 240;
-    for (var id in parent.entities) { var m = parent.entities[id]; if (!m || m.type != "monster" || m.dead || m.mtype != sp) continue; if (m.target && m.target != character.name) continue; if ((m.level || 1) > 1 || (base.hp && m.max_hp > base.hp * 1.3)) continue; var d = Math.hypot(character.x - m.x, character.y - m.y); if (d < bd) { bd = d; best = m; } }
+    for (var id in parent.entities) { var m = parent.entities[id]; if (!m || m.type != "monster" || m.dead || m.mtype != sp) continue; if (m.target && m.target != character.name) continue; if (character.map != "goobrawl" && ((m.level || 1) > 1 || (base.hp && m.max_hp > base.hp * 1.3))) continue; /* Goo-Prügelei: gebuffte Goos sind gewollt */ var d = Math.hypot(character.x - m.x, character.y - m.y); if (d < bd) { bd = d; best = m; } }
     return best;
 }
 function hunt_target_near() { // Jagdmonster in der Nähe, das noch niemand fremdes angreift
@@ -240,6 +240,7 @@ function on_cm(name, data) {
     if (data.t == "me") { mage = data; mage.t = Date.now(); if (typeof data.paused == "boolean") p_paused = data.paused; if (data.mg && data.mg.esc_max > 0) GOLD_MAX = data.mg.esc_max; }
     else if (data.t == "goldback") { goldback_req = Date.now(); }
     else if (data.t == "state") p_paused = !!data.paused;
+    else if (data.t == "town") { try { stop("smart"); moving = false; use_skill("town"); say("zurück in die Stadt (Event vorbei)"); } catch (e) {} }
     else if (data.t == "join") { try { var jr = join(data.event); if (jr && typeof jr.then == "function") jr.then(function () { say("Event " + data.event + ": angekommen"); }, function (e) { say("Event-Sprung fehlgeschlagen: " + (e && e.reason || JSON.stringify(e).slice(0, 80))); }); } catch (e) { say("Event-Sprung: " + (e && e.message || e)); } }
     else if (data.t == "tidy") { tidy_req = Date.now(); say("Aufräumen angefordert"); }
     else if (data.t == "cavalry") { if (have_item("tracker") < 0) { try { send_cm(MAGE, { t: "cavres", ok: false, reason: "kein Tracktrix" }); } catch (e) {} } else { cav_next = Date.now() + 3600000; try { localStorage.setItem("lp_cav_next_" + character.name, String(cav_next)); } catch (e) {} try { parent.socket.emit("interaction", { type: "cavalry" }); say("Cavalry gerufen (" + (data.why || "Magier") + ")"); } catch (e) {} } }

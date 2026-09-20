@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Ranger (F4llenRanger) =====
 // Folgt dem Magier, greift dessen Ziel an (Supershot, Hunter's Mark, 3-/5-Shot), versorgt sich selbst mit NPC-Ausrüstung und Tränken.
 // Meldungen gehen per Charakter-Nachricht an den Magier ("[Ranger] …").
-var RANGER_VERSION = "v314";
+var RANGER_VERSION = "v315";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -227,7 +227,7 @@ async function hunt_town_step() { // in der Stadt: Jagd abgeben/holen, Tokens in
 function spot_target_near() { // freies, ungeleveltes Exemplar des aktuellen Team-Spots in der Nähe (nur ohne Team-Häkchen)
     if (!mage || !mage.spot || Date.now() - mage.t > 15000 || p_paused) return null; var sp = mage.spot, base = G.monsters[sp] || {}; if ((base.attack || 0) * 8 > character.max_hp) return null;
     var best = null, bd = 240;
-    for (var id in parent.entities) { var m = parent.entities[id]; if (!m || m.type != "monster" || m.dead || m.mtype != sp) continue; if (m.target && m.target != character.name) continue; if ((m.level || 1) > 1 || (base.hp && m.max_hp > base.hp * 1.3)) continue; var d = Math.hypot(character.x - m.x, character.y - m.y); if (d < bd) { bd = d; best = m; } }
+    for (var id in parent.entities) { var m = parent.entities[id]; if (!m || m.type != "monster" || m.dead || m.mtype != sp) continue; if (m.target && m.target != character.name) continue; if (character.map != "goobrawl" && ((m.level || 1) > 1 || (base.hp && m.max_hp > base.hp * 1.3))) continue; /* Goo-Prügelei: gebuffte Goos sind gewollt */ var d = Math.hypot(character.x - m.x, character.y - m.y); if (d < bd) { bd = d; best = m; } }
     return best;
 }
 function hunt_target_near() { // Jagdmonster in der Nähe, das noch niemand fremdes angreift
@@ -245,6 +245,7 @@ function on_cm(name, data) {
     else if (data.t == "givemage") { give_req = Date.now(); say("Übergabe an den Magier angefordert"); }
     else if (data.t == "kiss") { kiss_req = data; say("Kuss-Runde " + data.round + ": " + data.name + " (" + data.map + ")"); }
     else if (data.t == "gear") { gear_incoming.push(data); if (gear_incoming.length == 1) setTimeout(equip_incoming, 800); }
+    else if (data.t == "town") { try { stop("smart"); moving = false; use_skill("town"); say("zurück in die Stadt (Event vorbei)"); } catch (e) {} }
     else if (data.t == "join") { try { var jr = join(data.event); if (jr && typeof jr.then == "function") jr.then(function () { say("Event " + data.event + ": angekommen"); }, function (e) { say("Event-Sprung fehlgeschlagen: " + (e && e.reason || JSON.stringify(e).slice(0, 80))); }); } catch (e) { say("Event-Sprung: " + (e && e.message || e)); } }
 }
 function on_party_invite(name) { if (name == MAGE) { try { accept_party_invite(name); say_once("party", "Party mit " + MAGE + " angenommen", 3600000); } catch (e) {} } }
