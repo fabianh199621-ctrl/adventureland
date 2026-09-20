@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v294";
+var BOT_VERSION = "v295";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -170,7 +170,7 @@ function meet_escort() { // Begleiter hängt auf derselben Karte länger fest (k
     smart_move({ x: p.x + 40, y: p.y }).catch(function () {}).then(function () { busy = false; });
 }
 // Einstellungen (⚙): Darstellung + Verhalten, gespeichert unter lp_settings
-var SET = { alpha: 1, font: 12, accent: "green", list_right: true, wait_behind: 500, rally: 350, hold_flee: 60, hp_pot: 40, mp_pot: 50, xp_weight: 50, team_hunt_first: true, hunt_town_only: false, log_pots: true };
+var SET = { alpha: 1, font: 12, accent: "green", list_right: true, wait_behind: 500, rally: 350, hold_flee: 60, team_grace: 10, hp_pot: 40, mp_pot: 50, xp_weight: 50, team_hunt_first: true, hunt_town_only: false, log_pots: true };
 try { var so = JSON.parse(localStorage.getItem("lp_settings") || "null"); if (so) for (var sk in so) if (sk in SET) SET[sk] = so[sk]; } catch (e) {}
 function save_settings() { try { localStorage.setItem("lp_settings", JSON.stringify(SET)); } catch (e) {} apply_settings(); }
 var ACCENTS = { green: ["#2e7d32", "#4caf50"], blue: ["#1e6fb8", "#3d8bdc"], orange: ["#b8641e", "#e08a3c"], purple: ["#7b3fb8", "#9d5fd6"], red: ["#b83f4a", "#d65f6a"] };
@@ -1191,8 +1191,10 @@ function go_to_farm_spot() {
             blocked_spots[mon] = true; need_repick = true; meas = null;
             game_log("Spot " + mon + " nicht erreichbar – Automatik wählt neu");
         })
-        .then(function () { busy = false; spot_travel = false; });
+        .then(function () { busy = false; spot_travel = false; spot_arrived = Date.now(); });
 }
+var spot_arrived = 0; // Ankunft am Spot: danach Schonfrist (SET.team_grace s), in der keine Team-Abfrage läuft – Priest/Ranger bekommen Zeit, nachzukommen
+function team_grace() { return spot_arrived && Date.now() - spot_arrived < (SET.team_grace || 0) * 1000; }
 
 // ---------- Heilen / Tränke (beste vorhandene Stufe) ----------
 function best_pot(list) { for (var i = 0; i < list.length; i++) { var idx = locate_item(list[i]); if (idx >= 0) return { idx: idx, name: list[i], gives: pot_gives(list[i]) }; } return null; }
@@ -1761,6 +1763,7 @@ function render_settings(sp) {
     else if (set_tab == "fight") h += "<h4>Auf Team warten</h4><label>Anhalten, wenn Priest/Ranger weiter zurück als <input type='number' data-setk='wait_behind' min='200' max='1500' step='50' value='" + SET.wait_behind + "'> px</label>"
         + "<label>Sammelpunkt vor Team-Spots <input type='number' data-setk='rally' min='150' max='800' step='50' value='" + SET.rally + "'> px</label>"
         + "<label>Rückzug beim Warten unter <input type='number' data-setk='hold_flee' min='20' max='90' step='5' value='" + SET.hold_flee + "'> % HP</label>"
+        + "<label title='nach Ankunft am Spot so lange keine Team-Abfrage (kein Warten, kein Sammelpunkt, kein Rückzug) – das Team bekommt Zeit nachzukommen'>Schonfrist am Spot <input type='number' data-setk='team_grace' min='0' max='60' step='5' value='" + SET.team_grace + "'> s</label>"
         + "<h4>Tränke</h4><label>Heiltrank ab <input type='number' data-setk='hp_pot' min='20' max='80' step='5' value='" + SET.hp_pot + "'> % HP</label>"
         + "<label>Manatrank ab <input type='number' data-setk='mp_pot' min='20' max='90' step='5' value='" + SET.mp_pot + "'> % MP</label>"
         + "<h4>Automatik</h4><label>Gold <input type='range' data-setk='xp_weight' min='0' max='100' step='10' value='" + SET.xp_weight + "'> XP <span style='color:#e6e6e6'>" + SET.xp_weight + " % XP</span></label>";
@@ -4828,8 +4831,8 @@ function start_main() {
     var farm = pick_farm_monster();
     var target = get_targeted_monster();
     if (target && target.id != last_target_id && !priority_mon(target.mtype)) { change_target(null); target = null; } // angeklicktes/fremdes Ziel ignorieren – der Bot verfolgt nur Ziele, die er selbst gesetzt hat (Team folgt sonst deinem Klick)
-    var beh = (wait_team_on && !SOLO && !event_mode && escorts().length) ? escort_behind(strict_mon(farm) ? WAIT_NEAR : WAIT_BEHIND) : null;
-    var hold = spot_needs_team(farm) && !!beh; // Team hängt zurück: kein neues Ziel, nur Verteidigung
+    var beh = (wait_team_on && !SOLO && !event_mode && escorts().length && !team_grace()) ? escort_behind(strict_mon(farm) ? WAIT_NEAR : WAIT_BEHIND) : null;
+    var hold = spot_needs_team(farm) && !!beh; // Team hängt zurück: kein neues Ziel, nur Verteidigung (in der Schonfrist nach Ankunft keine Abfrage)
 
     if (target && !is_valid_target(target)) {
         log_ignored(target, "zu stark");
