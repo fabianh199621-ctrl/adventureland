@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v281";
+var BOT_VERSION = "v282";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -2110,7 +2110,7 @@ async function merchant_pickup(reason) { // Händler rufen, Items übergeben, Tr
         var t0 = Date.now(), m = null;
         while (Date.now() - t0 < 4 * 60000 && !character.rip) { // warten, bis er neben uns steht (weiter kämpfen tut der Magier in der Zeit nicht – er steht)
             m = get_player(TEAM.merch); if (m && m.map == character.map && distance(character, m) < 300 && pickup_state.ready) break;
-            if (paused) throw "PAUSE";
+            if (!bot_running || aborted()) throw "PAUSE"; // P unterbricht die Übergabe nicht mehr – nur Bot aus
             await sleep(500);
         }
         if (!(m && m.map == character.map && distance(character, m) < 300)) { game_log("Händler nicht angekommen – mache den Stadtgang selbst"); team_send(TEAM.merch, { t: "pickup_cancel" }); return false; }
@@ -4202,7 +4202,8 @@ function merch_buy_tick() {
     if (!merch_buy) return; var j = merch_buy, el = Date.now() - j.t;
     if (j.stage == "direct") { if (!team_running(TEAM.merch)) { if (el > 5 * 60000) mb_fail("Händler läuft nicht"); return; } team_send(TEAM.merch, { t: "buy", buy: Object.assign({}, j.o, { id: j.id, q: j.q, mode: "here" }) }); j.stage = "buying"; j.t = Date.now(); mb_save(); return; }
     if (j.stage == "call" || j.stage == "fetch") {
-        if (busy || handing || paused || upgrading || fleeing || kissing || exchanging || character.rip) return;
+        if (busy || handing || upgrading || fleeing || kissing || exchanging || character.rip) return;
+        if (paused && !MB_SAFE_MAPS[character.map]) { if (el > 30 * 60000) mb_fail("Magier pausiert auf unsicherer Karte (" + character.map + ") – Händler kommt da nicht hin"); return; } // bei Pause nur, wenn der Händler sicher herkommen kann
         if (!merchant_available()) { if (el > 8 * 60000) mb_fail("Händler nicht verfügbar"); return; }
         var was = j.stage; j.stage = was == "call" ? "calling" : "fetching"; j.t = Date.now(); mb_save();
         merchant_pickup(was == "call" ? "Einkauf" : "Einkauf abholen").then(function (ok) {

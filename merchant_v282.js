@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Händler (F4llenMerch) – Stufe 1 =====
 // Läuft unsichtbar neben dem Magier. Aufgaben: Stand kaufen und öffnen, Loot abholen/verkaufen/einlagern,
 // Startgold vom Magier holen. mluck ist abgeschaltet (braucht Lv 40, Händler levelt praktisch nicht) – USE_MLUCK/LEVEL_MODE. Meldungen gehen per Charakter-Nachricht an den Magier und erscheinen dort als "[Merch] …".
-var MERCH_VERSION = "v281";
+var MERCH_VERSION = "v282";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -497,7 +497,7 @@ async function loop() {
         try {
             if (arb_idle) { if (character.rip) { await sleep(15000); respawn(); } await sleep(3000); continue; } // Reise fertig: warten, bis der Magier uns zuhause neu startet
             if (character.rip) { stand_off(); await sleep(15000); respawn(); await sleep(5000); continue; }
-            if (m_paused) { status("Pause"); if (!stand_open() && locate_item(STAND_ITEM) >= 0 && dist_to(home_spot()) < 80) stand_on(); await sleep(3000); continue; } // Pause: Stand bleibt offen (Wertsachen bleiben ausgestellt)
+            // Pause des Magiers (P) betrifft nur dessen Farmen – der Händler arbeitet normal weiter (Stand, Aufträge, Aufräumen, Einkäufe, Reisen)
             if (locate_item(STAND_ITEM) < 0) { status("kein Stand"); await do_buy_stand(); if (locate_item(STAND_ITEM) < 0 && mage && character.gold < (G.items[STAND_ITEM].g || 0) && Date.now() - last_gold_ask > 120000) { await do_mluck(); } await sleep(5000); continue; }
             if (pickup) { await do_pickup(); continue; }
             if (tidy_req) { await do_tidy(); continue; }
