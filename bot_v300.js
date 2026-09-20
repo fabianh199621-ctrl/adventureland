@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v299";
+var BOT_VERSION = "v300";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -4817,6 +4817,7 @@ function start_main() {
     rip_counted = false;
     session_tick();
     if (Date.now() - last_panel > 2000) { last_panel = Date.now(); try { update_panel(); update_char_panel(); update_tchar_panels(); } catch (e) {} }
+    if (handing && Date.now() - last_pickup > 5 * 60000) { game_log("Abholung hängt seit 5 min – gebe frei"); handing = false; pickup_state = null; if (busy) busy = false; } // Wächter: eine Übergabe darf nie dauerhaft blockieren (sperrt sonst Handelsreisen und weitere Abholungen)
     try { if (!SOLO) { merch_test_tick(); arb_tick(); merch_buy_tick(); donate_tick(); event_tick(); } team_tick(); team_broadcast(); if (!SOLO) { team_read_logs(); team_inject(); } bank_snapshot(); if (!manual_lock && !paused && !SOLO) { priest_gear_tick(); energize_tick(); team_wish_handover_tick(); } } catch (e) {}
     if (paused) return;
     measure_tick();
