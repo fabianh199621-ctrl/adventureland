@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v292";
+var BOT_VERSION = "v293";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -4842,8 +4842,9 @@ function start_main() {
     if (!target && hold) { // Team hängt zurück: nur Angreifer auf mich abwehren, sonst stehen bleiben
         for (var hid in parent.entities) { var he = parent.entities[hid]; if (is_valid_target(he) && he.target == character.name) { target = he; break; } }
         if (!target) { set_message(wait_txt()); wait_log(wait_txt() + " – kämpfe nicht allein bei " + farm); if (!rally_back(farm)) meet_escort(); return; }
-        if (character.hp < character.max_hp * SET.hold_flee / 100 || strict_mon(farm)) { game_log("Ohne Team von " + target.mtype + " angegriffen (HP " + Math.round(character.hp / character.max_hp * 100) + " %" + (strict_mon(farm) ? ", Team-Pflicht" : "") + ") – Rückzug in die Stadt statt allein zu kämpfen"); fleeing = true; busy = true; (async function () { try { stop("smart"); change_target(null); await travel_place("town"); while (character.hp < character.max_hp * 0.9 && !character.rip) await sleep(1000); } catch (e) {} fleeing = false; busy = false; })(); return; }
-        wait_log("verteidige mich gegen " + target.mtype + " (Team fehlt noch)"); change_target(target);
+        var team_far = !!escort_behind(WAIT_BEHIND + 200); // Team-Pflicht: nur fliehen, wenn wirklich niemand in der Nähe ist (andere Karte / > 700 px) – sonst stehen bleiben und verteidigen, das Team ist gleich da
+        if (character.hp < character.max_hp * SET.hold_flee / 100 || (strict_mon(farm) && team_far)) { game_log("Ohne Team von " + target.mtype + " angegriffen (HP " + Math.round(character.hp / character.max_hp * 100) + " %" + (strict_mon(farm) ? ", Team-Pflicht, Team weit weg" : "") + ") – Rückzug in die Stadt statt allein zu kämpfen"); fleeing = true; busy = true; (async function () { try { stop("smart"); change_target(null); await travel_place("town"); while (character.hp < character.max_hp * 0.9 && !character.rip) await sleep(1000); } catch (e) {} fleeing = false; busy = false; })(); return; }
+        wait_log("verteidige mich gegen " + target.mtype + " (Team " + (escort_behind(WAIT_NEAR) ? "kommt gerade – bleibe stehen" : "fehlt noch") + ")"); change_target(target);
     }
     if (!target) {
         var aggro = attackers_on_me();

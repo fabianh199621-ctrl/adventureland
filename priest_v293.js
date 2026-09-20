@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Priester (F4llenPriest) – Stufe 1 =====
 // Folgt dem Magier, heilt ihn und sich, nimmt die Party-Einladung an, greift erst ab PRIEST_ATTACK_LEVEL mit an.
 // Meldungen gehen per Charakter-Nachricht an den Magier ("[Priest] …").
-var PRIEST_VERSION = "v292";
+var PRIEST_VERSION = "v293";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -259,8 +259,8 @@ async function follow() { // hinter dem Magier bleiben, Karte wechseln, wenn nö
     var t = mage_entity();
     if (t && character.map == t.map) {
         var d = dist(character, t);
-        if (d > FOLLOW_MAX) { if (!moving) { moving = true; try { await smart_move({ map: t.map, x: t.x - (t.x - character.x) * FOLLOW_DIST / d, y: t.y - (t.y - character.y) * FOLLOW_DIST / d }); } catch (e) {} moving = false; } }
-        else if (d > FOLLOW_DIST && !is_moving(character)) { try { move(character.x + (t.x - character.x) * 0.5, character.y + (t.y - character.y) * 0.5); } catch (e) {} }
+        if (d > FOLLOW_MAX) { if (!moving) { moving = true; var fx = t.x - (t.x - character.x) * FOLLOW_DIST / d, fy = t.y - (t.y - character.y) * FOLLOW_DIST / d, okf = false; try { await smart_move({ map: t.map, x: fx, y: fy }); okf = true; } catch (e) {} if (!okf) { try { await smart_move({ map: t.map, x: t.x, y: t.y }); } catch (e2) {} } moving = false; } } // Zielpunkt vor dem Magier nicht erreichbar (Wand/Wasser): direkt zu seiner Position
+        else if (d > FOLLOW_DIST && !is_moving(character)) { var mx = character.x + (t.x - character.x) * 0.5, my = character.y + (t.y - character.y) * 0.5, straight = true; try { straight = can_move_to(mx, my); } catch (e) {} if (straight) { try { move(mx, my); } catch (e) {} } else if (!moving) { moving = true; try { await smart_move({ map: t.map, x: t.x, y: t.y }); } catch (e) {} moving = false; } } // letzte Meter: gerade Linie blockiert → Wegfindung statt Stehenbleiben
         return;
     }
     if (mage && Date.now() - mage.t < 30000 && !moving && Date.now() - last_move > 8000) { // Magier nicht in Sicht: zu seiner gemeldeten Position
