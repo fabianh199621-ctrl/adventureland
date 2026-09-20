@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Händler (F4llenMerch) – Stufe 1 =====
 // Läuft unsichtbar neben dem Magier. Aufgaben: Stand kaufen und öffnen, Loot abholen/verkaufen/einlagern,
 // Startgold vom Magier holen. mluck ist abgeschaltet (braucht Lv 40, Händler levelt praktisch nicht) – USE_MLUCK/LEVEL_MODE. Meldungen gehen per Charakter-Nachricht an den Magier und erscheinen dort als "[Merch] …".
-var MERCH_VERSION = "v311";
+var MERCH_VERSION = "v312";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -401,6 +401,29 @@ async function fetch_from_bank(name, level, q) { // Item aus der Bank holen (Ban
 }
 var slots_logged = false;
 function log_trade_slots() { if (slots_logged) return; slots_logged = true; try { var ks = Object.keys(character.slots || {}).filter(function (k) { return k.indexOf("trade") == 0; }); var filled = ks.filter(function (k) { return character.slots[k]; }).map(function (k) { return k + ":" + character.slots[k].name + "@" + character.slots[k].price; }); say("Stand-Slots im Nebenfenster: " + ks.length + " Schlüssel, belegt: " + (filled.join(", ") || "keine")); } catch (e) { say("Stand-Slots: " + e); } }
+var last_npc_orders = 0;
+async function npc_orders_tick() { // Aufträge aus dem Bank-Fenster: Item aus der Bank holen und beim NPC verkaufen (Gold in meine Kasse)
+    if (Date.now() - last_npc_orders < 60000 || pickup || arb_idle || gather_busy) return false; last_npc_orders = Date.now();
+    var orders = {}; try { orders = JSON.parse(localStorage.getItem("lp_npc_orders_" + character.name) || "{}"); } catch (e) { orders = {}; }
+    var keys = Object.keys(orders); if (!keys.length) return false;
+    var key = keys[0], o = orders[key]; if (!o || !o.name) { delete orders[key]; localStorage.setItem("lp_npc_orders_" + character.name, JSON.stringify(orders)); return false; }
+    var q = Math.max(1, o.q || 1), got = false;
+    try {
+        var ix0 = have_item_lv(o.name, o.level || 0); if (ix0 < 0 || (character.items[ix0].q || 1) < q) got = await fetch_from_bank(o.name, o.level || 0, q); else got = true;
+        var ix = have_item_lv(o.name, o.level || 0);
+        if (ix < 0) { say("NPC-Verkauf " + o.name + ": nicht gefunden – Auftrag verworfen"); }
+        else {
+            status("verkauft"); await smart_move("potions"); var g0 = character.gold, qq = Math.min(q, character.items[ix].q || 1);
+            try { sell_item(ix, qq); } catch (e) {} await sleep(800);
+            var earned = character.gold - g0;
+            say("NPC-Verkauf: " + qq + "× " + o.name + (o.level ? "+" + o.level : "") + " für " + earned + " Gold (Kasse " + character.gold + ")");
+            try { send_cm(MAGE, { t: "npcsold", key: key, name: o.name, level: o.level || 0, q: qq, gold: earned }); } catch (e) {}
+        }
+    } catch (e) { say("NPC-Verkauf " + o.name + ": " + (e && e.message || e)); }
+    delete orders[key]; try { localStorage.setItem("lp_npc_orders_" + character.name, JSON.stringify(orders)); } catch (e) {}
+    await process_inventory();
+    return true;
+}
 async function orders_tick() {
     log_trade_slots();
     if (Date.now() - last_orders_check < 60000 || pickup || arb_idle || gather_busy) return false; last_orders_check = Date.now();
@@ -532,6 +555,7 @@ async function loop() {
             if (USE_MLUCK && character.level >= MLUCK_LEVEL && mluck_needed() && Date.now() - last_mluck_try > 5 * 60000 && !mage.paused) { status("mluck"); await do_mluck(); continue; }
             if (character.gold < GOLD_MIN && Date.now() - last_gold_ask > 10 * 60000 && mage && Date.now() - mage.t < 30000) { status("Gold holen"); await do_mluck(); continue; }
             if (goldback_req || (character.gold > GOLD_AUTO_BACK && Date.now() - last_goldback > 10 * 60000 && mage && Date.now() - mage.t < 30000)) { await do_goldback(); continue; }
+            if (await npc_orders_tick()) continue;
             if (await orders_tick()) continue;
             if (await gather_tick()) continue;
             status(stand_open() ? "Stand" : "unterwegs");

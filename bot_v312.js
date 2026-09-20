@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v311";
+var BOT_VERSION = "v312";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -478,6 +478,7 @@ function on_cm(name, data) { // Nachrichten der eigenen Charaktere
         else if (data.t == "msold") { if (merch_buy && data.id == merch_buy.id) { if (data.ok) mb_done(data.q + "× " + merch_buy.o.name + " verkauft für " + fmt(data.earned) + " – Erlös in der Händlerkasse"); else mb_fail(data.why || "Verkauf nicht gelungen – Item bleibt beim Händler"); } }
         else if (data.t == "bought") { if (merch_buy && data.id == merch_buy.id) { if (data.ok && merch_buy.for_merch) { delete merch_needs[merch_buy.o.name]; merch_needs_save(); mb_done(merch_buy.o.name + " gekauft – bleibt beim Händler"); } else if (data.ok) { merch_buy.stage = "deliver"; merch_buy.t = Date.now(); mb_save(); } else mb_fail(data.why || "Kauf nicht gelungen"); } }
         else if (data.t == "delivered_item") { if (merch_buy && data.id == merch_buy.id) { if (data.q > 0) mb_done(data.name + (data.q > 1 ? " ×" + data.q : "") + " erhalten" + (data.gold ? ", " + fmt(data.gold) + " Gold zurück" : "")); else if (data.ok) { merch_buy.stage = "fetch"; merch_buy.t = Date.now(); mb_save(); game_log("Einkauf: Händler hat mich nicht erreicht – rufe ihn zum Abholen"); } } }
+        else if (data.t == "npcsold") { delete npc_orders[data.key]; npc_orders_save(); game_log("[" + who + "] NPC-Verkauf: " + data.q + "× " + data.name + (data.level ? "+" + data.level : "") + " für " + fmt(data.gold) + " Gold (liegt in der Händlerkasse)"); if (bank_panel) render_bank(); }
         else if (data.t == "delivered") { if (pickup_state) pickup_state.done = true; if (merch_buy && merch_buy.stage == "fetching" && data.items) merch_buy.got = data.items; if (data.pots) game_log("[Merch] Tränke erhalten: " + data.pots); if (data.gold) game_log("[Merch] " + fmt(data.gold) + " Gold Verkaufserlös erhalten"); }
         else if (data.t == "hello") { team_ver[name] = data.v || null; game_log("[" + who + "] verbunden (" + (data.v || "?") + (data.sv ? ", Server " + pretty_server(data.sv) : "") + ")"); if (merch_test && name == TEAM.merch) merch_test_result(data.sv); team_send(name, { t: "state", paused: paused || !bot_running, spot: current_spot }); team_broadcast(); }
         else if (data.t == "need") { var np = get_player(name); var ni = locate_item(data.item); if (np && ni >= 0 && distance(character, np) < 400) { var nq = Math.min(data.q || 1, character.items[ni].q || 1); try { send_item(name, ni, nq); game_log("[" + who + "] " + nq + "x " + data.item + " übergeben"); } catch (e) {} } else if (ni < 0) { merch_needs[data.item] = Date.now(); merch_need_q[data.item] = data.q || 1; merch_needs_save(); last_need_buy = 0; game_log("[" + who + "] braucht " + data.item + " – wird beim nächsten Fund/Abholung mitgegeben" + (merch_need_offer(data.item) ? ", oder er kauft es selbst auf dem Markt" : "")); } }
@@ -1400,7 +1401,7 @@ function init_panel() {
     doc.head.appendChild(st);
 
     var div = doc.createElement("div"); div.id = "lp_panel";
-    div.innerHTML = "<div id='lp_head'><b>LogicPlan " + BOT_VERSION + "</b><span class='lp_state' id='lp_state'>läuft</span><button data-act='chartoggle' title='Charakter & Inventar'>Char</button><button data-act='wikitoggle' title='Items, Monster, NPCs nachschlagen'>Wiki</button><button data-act='mkttoggle' title='Alle Händlerangebote aller Server'>Markt</button><button id='lp_toggle' title='Monsterliste ein-/ausblenden'>▾</button><button id='lp_mini' title='Fenster verkleinern/vergrößern'>▭</button><button id='lp_gear' title='Einstellungen'>⚙</button><div id='lp_set'></div></div><div id='lp_body'></div>";
+    div.innerHTML = "<div id='lp_head'><b>LogicPlan " + BOT_VERSION + "</b><span class='lp_state' id='lp_state'>läuft</span><button data-act='chartoggle' title='Charakter & Inventar'>Char</button><button data-act='wikitoggle' title='Items, Monster, NPCs nachschlagen'>Wiki</button><button data-act='mkttoggle' title='Alle Händlerangebote aller Server'>Markt</button><button data-act='banktoggle' title='Bankinhalt mit NPC- und Marktwert – ausstellen oder beim NPC verkaufen'>Bank</button><button id='lp_toggle' title='Monsterliste ein-/ausblenden'>▾</button><button id='lp_mini' title='Fenster verkleinern/vergrößern'>▭</button><button id='lp_gear' title='Einstellungen'>⚙</button><div id='lp_set'></div></div><div id='lp_body'></div>";
     doc.body.appendChild(div);
     try { var p = JSON.parse(localStorage.getItem("lp_panel_pos") || "null"); if (p) clamp_pos(div, p.x, p.y); } catch (e) {}
 
@@ -1414,7 +1415,7 @@ function init_panel() {
     try { div.__arb = localStorage.getItem("lp_panel_arb") == "1"; } catch (e) { div.__arb = false; }
     div.__sec = { haendler: false, zielbau: false, wartung: false }; try { var so2 = JSON.parse(localStorage.getItem("lp_sec") || "null"); if (so2) for (var sk3 in so2) div.__sec[sk3] = !!so2[sk3]; } catch (e) {}
     try { apply_settings(); } catch (e) {}
-    var inside = function (e) { var c = parent.document.getElementById("lp_char"), w = parent.document.getElementById("lp_wiki"), l = parent.document.getElementById("lp_list"), mk = parent.document.getElementById("lp_mkt"), tc = e.target && e.target.closest ? e.target.closest(".lp_tchar") : null; return e.target && (div.contains(e.target) || (c && c.contains(e.target)) || (w && w.contains(e.target)) || (l && l.contains(e.target)) || (mk && mk.contains(e.target)) || !!tc); };
+    var inside = function (e) { var c = parent.document.getElementById("lp_char"), w = parent.document.getElementById("lp_wiki"), l = parent.document.getElementById("lp_list"), mk = parent.document.getElementById("lp_mkt"), bk = parent.document.getElementById("lp_bank"), tc = e.target && e.target.closest ? e.target.closest(".lp_tchar") : null; return e.target && (div.contains(e.target) || (c && c.contains(e.target)) || (w && w.contains(e.target)) || (l && l.contains(e.target)) || (mk && mk.contains(e.target)) || (bk && bk.contains(e.target)) || !!tc); };
     var onDown = function (e) {
         if (!inside(e)) return;
         var sp0 = div.querySelector("#lp_set"); if (sp0 && sp0.contains(e.target)) { if (e.target.tagName != "INPUT") e.stopPropagation(); else e.stopPropagation(); return; } // Einstellungen: kein Ziehen
@@ -1424,8 +1425,9 @@ function init_panel() {
         else if (ch && ch.contains(e.target)) { drag = { el: c, key: "lp_char_pos", dx: e.clientX - c.offsetLeft, dy: e.clientY - c.offsetTop }; e.preventDefault(); }
         else { var w = parent.document.getElementById("lp_wiki"), wh = w && w.querySelector("#lp_wiki_head"); if (wh && wh.contains(e.target)) { drag = { el: w, key: "lp_wiki_pos", dx: e.clientX - w.offsetLeft, dy: e.clientY - w.offsetTop }; e.preventDefault(); }
                else { var l = parent.document.getElementById("lp_list"), lh = l && l.querySelector("#lp_list_head"); if (lh && lh.contains(e.target)) { drag = { el: l, key: "lp_list_pos", dx: e.clientX - l.offsetLeft, dy: e.clientY - l.offsetTop }; e.preventDefault(); }
+                      else { var bkw = parent.document.getElementById("lp_bank"), bkh = bkw && bkw.querySelector("#lp_bank_head"); if (bkh && bkh.contains(e.target)) { drag = { el: bkw, key: "lp_bank_pos", dx: e.clientX - bkw.offsetLeft, dy: e.clientY - bkw.offsetTop }; e.preventDefault(); }
                       else { var mk = parent.document.getElementById("lp_mkt"), mkh = mk && mk.querySelector("#lp_mkt_head"); if (mkh && mkh.contains(e.target)) { drag = { el: mk, key: "lp_mkt_pos", dx: e.clientX - mk.offsetLeft, dy: e.clientY - mk.offsetTop }; e.preventDefault(); }
-                             else { var tch = e.target.closest ? e.target.closest(".lp_tchar_head") : null, tcw = tch && tch.parentNode; if (tcw) { drag = { el: tcw, key: "lp_tchar_pos_" + tcw.getAttribute("data-tchar"), dx: e.clientX - tcw.offsetLeft, dy: e.clientY - tcw.offsetTop }; e.preventDefault(); } } } } }
+                             else { var tch = e.target.closest ? e.target.closest(".lp_tchar_head") : null, tcw = tch && tch.parentNode; if (tcw) { drag = { el: tcw, key: "lp_tchar_pos_" + tcw.getAttribute("data-tchar"), dx: e.clientX - tcw.offsetLeft, dy: e.clientY - tcw.offsetTop }; e.preventDefault(); } } } } } }
         if (e.target.tagName == "INPUT" || e.target.tagName == "SELECT") { e.stopPropagation(); return; }
         e.stopPropagation();
     };
@@ -1444,7 +1446,9 @@ function init_panel() {
         if (b.tagName == "TH" && b.getAttribute("data-sort")) { set_sort(b.getAttribute("data-sort")); return; }
         if (b.tagName == "INPUT" && b.getAttribute("data-mq")) return; // Mengenfeld im Markt: nur tippen
         var mkel = b.closest ? b.closest("[data-mf],[data-msort],[data-mcsort],[data-act='mbuy'],[data-act='msell'],[data-act='mgoto'],[data-act='mtrip'],[data-act='marb'],[data-act='mview'],[data-act='mmore'],[data-mg]") : null;
-        if (b.tagName == "INPUT" && (b.getAttribute("data-sp") || b.getAttribute("data-sq"))) return;
+        if (b.tagName == "INPUT" && (b.getAttribute("data-sp") || b.getAttribute("data-sq") || b.getAttribute("data-bq") || b.getAttribute("data-bp") || b.id == "lp_bank_q")) return;
+        var bkel = b.closest ? b.closest("[data-bsort],[data-bf],[data-act='bstand'],[data-act='bnpc'],[data-act='bnpcdel'],[data-act='banktoggle'],[data-act='bankrefresh']") : null;
+        if (bkel) { var bkr = false; try { bkr = bank_click(bkel); } catch (bke) { game_log("Bank-Fenster: " + err_txt(bke) + (bke && bke.stack ? " @ " + String(bke.stack).split("\n")[1] : "")); bkr = true; } if (bkr) return; }
         if (mkel) { var mkr = false; try { mkr = market_click(mkel); } catch (mke) { game_log("Markt-Fehler: " + err_txt(mke) + (mke && mke.stack ? " @ " + String(mke.stack).split("\n")[1] : "")); mkr = true; } if (mkr) return; }
         if (b.tagName != "BUTTON") return;
         if (b.id == "lp_list_close") { div.__collapsed = true; try { localStorage.setItem("lp_panel_collapsed", "1"); } catch (x) {} last_panel = 0; return; }
@@ -1555,7 +1559,7 @@ function init_panel() {
         else if (wl) { var c = wish_cfg[wl] || { item: wish_item(wl) }; c.level = parseInt(t.value); wish_cfg[wl] = c; save_wish_cfg(); game_log("Zielbau " + wl + ": " + c.item + " +" + c.level); }
     };
     win.addEventListener("change", onChange, true);
-    var onInput = function (e) { var t = e.target; if (t && t.id == "lp_wiki_q") { wiki.q = t.value; wiki.page = null; render_wiki(); } else if (t && t.id == "lp_mkt_q") { mkt.q = t.value; mkt_show = 0; render_market(); } };
+    var onInput = function (e) { var t = e.target; if (t && t.id == "lp_wiki_q") { wiki.q = t.value; wiki.page = null; render_wiki(); } else if (t && t.id == "lp_mkt_q") { mkt.q = t.value; mkt_show = 0; render_market(); } else if (t && t.id == "lp_bank_q") { bank_ui.q = t.value; bank_render_rows(); } };
     var onKeyCap = function (e) { var t = e.target; if (t && (t.id == "lp_wiki_q" || (t.tagName == "INPUT" && inside(e)))) { e.stopPropagation(); if (e.key == "Escape") t.blur(); if (e.key == "Enter" && (t.getAttribute("data-wmax") || t.getAttribute("data-mgk") || t.getAttribute("data-huntmax") || t.getAttribute("data-huntttk") || t.getAttribute("data-arbmin") || t.getAttribute("data-twmax") || t.getAttribute("data-fixprice")) && e.type == "keydown") { try { t.dispatchEvent(new Event("change", { bubbles: true })); } catch (x) {} } } }; // Tasten im Suchfeld nicht ans Spiel/Bot weitergeben
     win.addEventListener("input", onInput, true);
     ["keydown", "keyup", "keypress"].forEach(function (t) { win.addEventListener(t, onKeyCap, true); });
@@ -3805,7 +3809,7 @@ function stand_orders_html() {
     if (keys.length) { h += "<table class='lp_t' style='font-size:11px'><tr><th style='text-align:left'>Auftrag</th><th>Menge</th><th>Preis</th><th style='text-align:left'>Stand</th><th></th></tr>";
         keys.forEach(function (k) { var o = stand_orders[k], nm = (G.items[o.name] || {}).name || o.name, st = ms && ms.orders && ms.orders[k]; h += "<tr><td>" + esc(nm) + (o.level ? " +" + o.level : "") + "</td><td>" + (o.q || 1) + "</td><td>" + fmt(o.price) + "</td><td style='text-align:left;color:#8ab4f8'>" + esc(st || "wartet auf Händler") + "</td><td><button data-act='standdel' data-key='" + esc(k) + "' title='Auftrag löschen – Händler nimmt es vom Stand, es kommt in die Bank'>✕</button></td></tr>"; });
         h += "</table>"; }
-    h += "<div class='lp_row'><span class='lp_k'>Aus der Bank anbieten:</span><button data-act='banklist'>" + (panel.__banklist ? "▾" : "▸") + " Bankinhalt</button>" + (character.bank ? "" : "<span class='lp_k' style='font-size:11px'>(Stand vom letzten Bankbesuch)</span>") + "</div>";
+    h += "<div class='lp_row'><span class='lp_k'>Aus der Bank anbieten:</span><button data-act='banktoggle' title='Bank-Fenster: Bankinhalt mit NPC-/Marktwert, ausstellen oder beim NPC verkaufen'>Bank-Fenster</button><button data-act='banklist' title='alte Kurzliste'>" + (panel.__banklist ? "▾" : "▸") + "</button>" + (character.bank ? "" : "<span class='lp_k' style='font-size:11px'>(Stand vom letzten Bankbesuch)</span>") + "</div>";
     if (panel.__banklist) {
         var items = bank_snapshot_items();
         if (!items.length) h += "<div class='lp_k'>Bank leer oder noch nicht gesehen</div>";
@@ -4011,16 +4015,23 @@ function market_note_scan(merchants) { // aus dem Rohscan: komplette Angebotslis
             if (sl.indexOf("trade") != 0) continue; var it = m.slots[sl]; if (!it || !it.price || !G.items[it.name]) continue;
             var o = { name: it.name, level: it.level || 0, price: it.price, q: it.q || 1, b: !!it.b, seller: m.name, server: m.server || "?", same: norm_server(m.server) == mine, map: m.map, x: m.x, y: m.y, tslot: sl, stat_type: it.stat_type || null, t: Date.now() };
             all.push(o);
-            if (!o.b) { var k = o.name + "+" + o.level; if (!(k in mins) || o.price < mins[k]) mins[k] = o.price; }
+            if (!o.b) { var k = o.name + "+" + o.level; if (!(k in mins) || o.price < mins[k]) mins[k] = o.price; var dk = today_key(); var dd = market_daily[k] || (market_daily[k] = {}); if (!(dk in dd) || o.price < dd[dk]) dd[dk] = o.price; }
         }
     });
     if (!all.length) return;
     market_all = all; market_scan_t = Date.now(); market_n_merch = merchants.length;
     try { parent.__lp_market_all = all; parent.__lp_market_t = market_scan_t; parent.__lp_market_n = market_n_merch; } catch (e) {}
     for (var k2 in mins) market_hist[k2] = (market_hist[k2] || []).concat(mins[k2]).slice(-8);
+    try { var cutoff = Date.now() - 8 * 86400000; for (var dk2 in market_daily) { for (var day2 in market_daily[dk2]) { if (new Date(day2).getTime() < cutoff) delete market_daily[dk2][day2]; } if (!Object.keys(market_daily[dk2]).length) delete market_daily[dk2]; } localStorage.setItem("lp_market_daily", JSON.stringify(market_daily)); } catch (e) {}
     var keys = Object.keys(market_hist); if (keys.length > 4000) keys.slice(0, keys.length - 4000).forEach(function (k3) { delete market_hist[k3]; });
     try { localStorage.setItem("lp_market_hist", JSON.stringify(market_hist)); } catch (e) {}
     render_market();
+}
+var market_daily = {}; try { market_daily = JSON.parse(localStorage.getItem("lp_market_daily") || "{}"); } catch (e) {} // Item+Lv -> { Tag: Tiefstpreis } (7 Tage)
+function market_avg_days(name, level, days) { // Median der Tages-Tiefstpreise der letzten N Tage (0 = keine Daten)
+    var dd = market_daily[name + "+" + (level || 0)]; if (!dd) return 0; var cutoff = Date.now() - (days || 3) * 86400000;
+    var v = Object.keys(dd).filter(function (d) { return new Date(d).getTime() >= cutoff; }).map(function (d) { return dd[d]; }).sort(function (a, b) { return a - b; });
+    return v.length ? v[Math.floor(v.length / 2)] : 0;
 }
 function market_avg(name, level) { var h = market_hist[name + "+" + (level || 0)]; if (!h || h.length < 3) return 0; var s = h.slice().sort(function (a, b) { return a - b; }); return s[Math.floor(s.length / 2)]; }
 var MKT_SLOT_LABEL = { weapon: "Waffe", helmet: "Helm", chest: "Rüstung", pants: "Hose", shoes: "Schuhe", gloves: "Handschuhe", cape: "Umhang", ring: "Schmuck", earring: "Schmuck", amulet: "Schmuck", belt: "Schmuck", orb: "Schmuck", shield: "Nebenhand", quiver: "Nebenhand", source: "Nebenhand", cscroll: "Schriftrollen", uscroll: "Schriftrollen", pscroll: "Schriftrollen", offering: "Schriftrollen", elixir: "Elixiere", pot: "Tränke" };
@@ -4084,6 +4095,91 @@ function toggle_market_panel() {
     var on = !(market_panel && market_panel.parentNode);
     if (on) { market_panel = init_market_panel(); render_market(); } else { market_panel.remove(); market_panel = null; }
     try { localStorage.setItem("lp_mkt_open", on ? "1" : "0"); } catch (e) {}
+}
+// ---------- Bank-Fenster: Bankinhalt mit NPC-/Marktwert, ausstellen oder beim NPC verkaufen ----------
+var bank_rendered = 0;
+var bank_panel = null, bank_ui = { sort: "ratio", dir: -1, q: "", f: "" }; try { var bu0 = JSON.parse(localStorage.getItem("lp_bank_ui") || "null"); if (bu0) { for (var bu1 in bu0) bank_ui[bu1] = bu0[bu1]; bank_ui.q = ""; } } catch (e) {}
+function bank_ui_save() { try { localStorage.setItem("lp_bank_ui", JSON.stringify(bank_ui)); } catch (e) {} }
+var npc_orders = {}; try { npc_orders = JSON.parse(localStorage.getItem("lp_npc_orders_" + TEAM.merch) || "{}"); } catch (e) {} // key -> {name, level, q, t}: Händler holt aus der Bank und verkauft beim NPC
+function npc_orders_save() { try { localStorage.setItem("lp_npc_orders_" + TEAM.merch, JSON.stringify(npc_orders)); } catch (e) {} }
+function bank_protect_reason(name) { if (NEVER_SELL.test(name)) return "geschützt (Token-Set / Attribut-Schmuck)"; if (is_team_wish(name)) return "Team-Wunsch (Priest/Ranger)"; if (on_wishlist(name)) return "dein Zielbau"; return ""; }
+function bank_rows() {
+    var q = (bank_ui.q || "").toLowerCase(), out = [];
+    bank_snapshot_items().forEach(function (e) {
+        var d = G.items[e.name] || {}, nm = d.name || e.name;
+        if (q && nm.toLowerCase().indexOf(q) < 0 && e.name.toLowerCase().indexOf(q) < 0) return;
+        var equip = !!(d.upgrade || d.compound || MKT_EQUIP_TYPES[d.type] || d.type == "weapon");
+        if (bank_ui.f == "equip" && !equip) return; if (bank_ui.f == "mat" && equip) return;
+        var npc = npc_sell_price(e.name, e.level), mk = null; (market_all || []).forEach(function (o) { if (o.b || o.name != e.name || (o.level || 0) != e.level) return; if (!mk || o.price < mk.price) mk = o; });
+        var avg = market_avg_days(e.name, e.level, 3), best = avg || (mk ? mk.price : 0);
+        out.push({ key: e.key, name: e.name, level: e.level, label: nm, q: e.q, n: e.n, stack: !!d.s, npc: npc, mk: mk, avg: avg, ratio: npc > 0 && best > 0 ? best / npc : (best > 0 ? 99 : 0), sug: stand_suggest_price(e.name, e.level), prot: bank_protect_reason(e.name), equip: equip });
+    });
+    var k = bank_ui.sort, dir = bank_ui.dir;
+    out.sort(function (a, b) { var va, vb; if (k == "name") return dir * a.label.localeCompare(b.label) || a.level - b.level; if (k == "n") { va = a.q; vb = b.q; } else if (k == "npc") { va = a.npc; vb = b.npc; } else if (k == "mk") { va = a.mk ? a.mk.price : -1; vb = b.mk ? b.mk.price : -1; } else if (k == "avg") { va = a.avg; vb = b.avg; } else { va = a.ratio; vb = b.ratio; } return dir * (va - vb) || a.label.localeCompare(b.label); });
+    return out;
+}
+function init_bank_panel() {
+    var doc = parent.document, old = doc.getElementById("lp_bank"); if (old) old.remove();
+    var st = doc.getElementById("lp_bank_style"); if (st) st.remove();
+    st = doc.createElement("style"); st.id = "lp_bank_style";
+    st.textContent = "#lp_bank{position:fixed;left:520px;top:200px;z-index:2147483000;pointer-events:auto;width:960px;background:rgba(20,22,28,var(--lp-alpha));color:#e6e6e6;font:var(--lp-fs)/1.4 'Segoe UI',Arial,sans-serif;border:1px solid #3a3f4b;border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.6);user-select:none;overflow:hidden}"
+      + "#lp_bank_head{display:flex;align-items:center;gap:8px;padding:6px 10px;background:rgba(36,41,54,var(--lp-alpha));cursor:move;border-bottom:1px solid #3a3f4b}#lp_bank_head b{font-size:13px}#lp_bank_head .lp_k{flex:1}"
+      + "#lp_bank button{font:11px 'Segoe UI',Arial;padding:1px 7px;cursor:pointer;background:#2f3440;color:#eee;border:1px solid #555;border-radius:3px}#lp_bank button.on{background:var(--lp-acc);border-color:var(--lp-acc2)}#lp_bank button:disabled{opacity:.35;cursor:default}"
+      + "#lp_bank_bar{display:flex;align-items:center;gap:6px;padding:5px 10px;border-bottom:1px solid #2a2f3a;flex-wrap:wrap}#lp_bank .lp_chip{background:#1f2430;border:1px solid #3a4152;border-radius:12px;padding:1px 9px;font-size:11px;cursor:pointer;color:#c9ced8}#lp_bank .lp_chip.on{background:var(--lp-acc);border-color:var(--lp-acc2);color:#fff}"
+      + "#lp_bank input{background:#1c2029;color:#eee;border:1px solid #555;border-radius:3px;padding:1px 4px;font:11px 'Segoe UI',Arial}#lp_bank_q{width:140px}"
+      + "#lp_bank_body{padding:4px 10px 8px;max-height:calc(100vh - 260px);overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain}#lp_bank table{width:100%;border-collapse:collapse}#lp_bank th,#lp_bank td{padding:3px 6px;text-align:right;border-bottom:1px solid #22262f;white-space:nowrap}#lp_bank th{color:#9aa3b2;font-weight:normal;font-size:11px;cursor:pointer;position:sticky;top:0;background:#14161c}#lp_bank th.sorted{color:#8ab4f8}#lp_bank td.l,#lp_bank th.l{text-align:left}"
+      + "#lp_bank tr.good td{background:rgba(30,60,30,.35)}#lp_bank tr.meh td{color:#8b93a0}#lp_bank_foot{padding:4px 10px;border-top:1px solid #2a2f3a;color:#9aa3b2;font-size:11px;display:flex;gap:14px;flex-wrap:wrap}";
+    doc.head.appendChild(st);
+    var div = doc.createElement("div"); div.id = "lp_bank";
+    div.innerHTML = "<div id='lp_bank_head'><b>Bank</b><span class='lp_k' id='lp_bank_info'></span><button data-act='bankrefresh' title='Bankstand neu einlesen (Magier muss dafür in die Bank – geht beim nächsten Bankgang automatisch)'>Stand: letzter Bankbesuch</button><button data-act='banktoggle' title='Fenster schließen'>✕</button></div><div id='lp_bank_bar'></div><div id='lp_bank_body'></div><div id='lp_bank_foot'><span><b style='color:#7ed67e'>grün</b> Markt deutlich über NPC → am Stand anbieten</span><span><b style='color:#8b93a0'>grau</b> Markt ≈ NPC → direkt NPC ist schneller</span><span>Ø 3 Tage = Median der Tages-Tiefstpreise aller Server (sammelt ab jetzt)</span></div>";
+    doc.body.appendChild(div);
+    try { var p = JSON.parse(localStorage.getItem("lp_bank_pos") || "null"); if (p) clamp_pos(div, p.x, p.y); else clamp_pos(div, Math.max(0, (parent.window.innerWidth || 1200) - 980), 140); } catch (e) {}
+    return div;
+}
+function toggle_bank_panel() {
+    var on = !(bank_panel && bank_panel.parentNode);
+    if (on) { bank_panel = init_bank_panel(); render_bank(); } else { bank_panel.remove(); bank_panel = null; }
+    try { localStorage.setItem("lp_bank_open", on ? "1" : "0"); } catch (e) {}
+}
+function bank_render_rows() { if (!bank_panel || !bank_panel.parentNode) return; var body = bank_panel.querySelector("#lp_bank_body"); if (body) body.innerHTML = bank_table_html(); }
+function render_bank() {
+    if (!bank_panel || !bank_panel.parentNode) return;
+    try { var ae = parent.document.activeElement; if (ae && (ae.id == "lp_bank_q" || (ae.getAttribute && (ae.getAttribute("data-bq") || ae.getAttribute("data-bp"))) && bank_panel.contains(ae))) return; } catch (e) {} // beim Tippen nicht neu zeichnen
+    var rows = bank_rows(), total = 0, free = 0; try { var bk = character.bank || bank_cache || {}; for (var pk in bk) if (pk.indexOf("items") == 0 && Array.isArray(bk[pk])) { total += bk[pk].length; bk[pk].forEach(function (x) { if (!x) free++; }); } } catch (e) {}
+    bank_panel.querySelector("#lp_bank_info").textContent = rows.length + " Posten · " + free + " von " + total + " Plätzen frei" + (Object.keys(npc_orders).length ? " · " + Object.keys(npc_orders).length + " NPC-Auftrag/-Aufträge offen" : "") + (Object.keys(stand_orders).length ? " · " + Object.keys(stand_orders).length + " Stand-Auftrag/-Aufträge" : "");
+    var chip = function (k, lab) { return "<span class='lp_chip" + (bank_ui.f == k ? " on" : "") + "' data-bf='" + k + "'>" + lab + "</span>"; };
+    bank_panel.querySelector("#lp_bank_bar").innerHTML = chip("", "Alle") + chip("equip", "Ausrüstung") + chip("mat", "Material/Sonstiges") + "<span style='flex:1'></span><input id='lp_bank_q' placeholder='Suche …' value='" + esc(bank_ui.q) + "'>";
+    bank_panel.querySelector("#lp_bank_body").innerHTML = bank_table_html();
+}
+function bank_table_html() {
+    var rows = bank_rows();
+    var th = function (k, lab, left, tip) { return "<th class='" + (left ? "l " : "") + (bank_ui.sort == k ? "sorted" : "") + "' data-bsort='" + k + "'" + (tip ? " title='" + tip + "'" : "") + ">" + lab + (bank_ui.sort == k ? (bank_ui.dir > 0 ? " ▲" : " ▼") : "") + "</th>"; };
+    var h = "<table><tr>" + th("name", "Item", true) + th("n", "in Bank") + "<th>Menge</th>" + th("npc", "NPC zahlt", false, "je Stück, mit gemessenem Verkaufsfaktor") + th("mk", "Markt jetzt", false, "günstigstes aktuelles Verkaufsangebot aller Server") + th("avg", "Ø 3 Tage", false, "Median der Tages-Tiefstpreise der letzten 3 Tage") + th("ratio", "Markt/NPC", false, "wie viel mehr der Markt gegenüber dem NPC bringt") + "<th>Preis (Mio)</th><th></th></tr>";
+    if (!rows.length) h += "<tr><td class='l' colspan='9' style='color:#9aa3b2'>" + (bank_snapshot_items().length ? "nichts passt zum Filter" : "kein Bankstand – beim nächsten Bankgang wird er eingelesen") + "</td></tr>";
+    rows.forEach(function (r) {
+        var cls = r.ratio >= 1.5 ? "good" : (r.ratio > 0 && r.ratio <= 1.1 ? "meh" : "");
+        var inStand = !!stand_orders[r.key], inNpc = !!npc_orders[r.key];
+        var qin = r.stack ? "<input data-bq='" + esc(r.key) + "' value='" + r.q + "' style='width:48px'>" : "1";
+        var pin = "<input data-bp='" + esc(r.key) + "' value='" + esc(fmt_mio(r.sug)) + "' title='Vorschlag " + fmt(r.sug) + "' style='width:56px'>";
+        var act = inStand ? "<span class='lp_k'>im Stand-Auftrag</span> <button data-act='standdel' data-key='" + esc(r.key) + "' title='Stand-Auftrag löschen'>✕</button>" : inNpc ? "<span class='lp_k'>NPC-Auftrag offen</span> <button data-act='bnpcdel' data-key='" + esc(r.key) + "' title='NPC-Auftrag löschen'>✕</button>"
+            : "<button data-act='bstand' data-key='" + esc(r.key) + "' data-name='" + esc(r.name) + "' data-lvl='" + r.level + "'" + (r.prot && r.prot.indexOf("geschützt") == 0 ? " disabled title='" + esc(r.prot) + "'" : " title='Händler holt es aus der Bank und stellt es zu diesem Preis aus'") + ">Ausstellen</button> <button data-act='bnpc' data-key='" + esc(r.key) + "' data-name='" + esc(r.name) + "' data-lvl='" + r.level + "'" + (r.prot ? " disabled title='" + esc(r.prot) + "'" : " title='Händler holt es aus der Bank und verkauft es beim NPC (Gold in die Händlerkasse)'") + ">NPC</button>";
+        h += "<tr class='" + cls + "' title='" + esc(r.name + (r.level ? "+" + r.level : "") + (r.mk ? " · Markt jetzt bei " + r.mk.seller + " (" + pretty_server(r.mk.server) + ")" : "") + (r.prot ? " · " + r.prot : "")) + "'><td class='l'>" + esc(r.label) + (r.level ? " <b>+" + r.level + "</b>" : "") + (r.prot ? " <span class='lp_k' style='font-size:10px'>🔒</span>" : "") + "</td><td>" + (r.stack ? r.q : r.n) + "</td><td>" + qin + "</td><td>" + fmt(Math.round(r.npc)) + "</td><td>" + (r.mk ? fmt(r.mk.price) : "–") + "</td><td>" + (r.avg ? fmt(r.avg) : "–") + "</td><td style='color:" + (r.ratio >= 1.5 ? "#7ed67e" : r.ratio > 0 && r.ratio <= 1.1 ? "#8b93a0" : "#e6e6e6") + "'>" + (r.ratio > 0 && r.ratio < 99 ? "×" + (Math.round(r.ratio * 10) / 10) : "–") + "</td><td>" + pin + "</td><td>" + act + "</td></tr>";
+    });
+    return h + "</table>";
+}
+function bank_click(b) { // Klicks im Bank-Fenster (true = verarbeitet)
+    var act = b.getAttribute("data-act");
+    if (act == "banktoggle") { toggle_bank_panel(); return true; }
+    if (act == "bankrefresh") { game_log("Bank-Fenster zeigt den Stand vom letzten Bankbesuch – „Bank aufräumen“ oder ein Bankgang liest neu ein"); return true; }
+    if (b.getAttribute("data-bsort")) { var k = b.getAttribute("data-bsort"); if (bank_ui.sort == k) bank_ui.dir = -bank_ui.dir; else { bank_ui.sort = k; bank_ui.dir = k == "name" ? 1 : -1; } bank_ui_save(); render_bank(); return true; }
+    if (b.getAttribute("data-bf") != null) { bank_ui.f = b.getAttribute("data-bf"); bank_ui_save(); render_bank(); return true; }
+    var key = b.getAttribute("data-key"), nm = b.getAttribute("data-name"), lv = parseInt(b.getAttribute("data-lvl")) || 0;
+    var qe = bank_panel && bank_panel.querySelector("input[data-bq='" + key + "']"), pe = bank_panel && bank_panel.querySelector("input[data-bp='" + key + "']");
+    var q = qe ? Math.max(1, parseInt(qe.value) || 1) : 1, price = pe ? parse_mio(pe.value) : 0;
+    if (act == "bstand") { if (!(price > 0)) { game_log("Bank: Preis fehlt"); return true; } stand_orders[key] = { name: nm, level: lv, q: q, price: price, fixed: price, since: Date.now(), t: Date.now() }; save_stand_orders(); game_log("Stand-Auftrag: " + nm + (lv ? "+" + lv : "") + (q > 1 ? " ×" + q : "") + " für " + fmt(price) + " – Händler holt es aus der Bank und stellt es aus"); last_panel = 0; render_bank(); return true; }
+    if (act == "bnpc") { if (bank_protect_reason(nm)) { game_log("Bank: " + nm + " ist " + bank_protect_reason(nm) + " – kein NPC-Verkauf"); return true; } npc_orders[key] = { name: nm, level: lv, q: q, t: Date.now() }; npc_orders_save(); game_log("NPC-Auftrag: " + q + "× " + nm + (lv ? "+" + lv : "") + " – Händler holt es aus der Bank und verkauft es beim NPC (~" + fmt(Math.round(npc_sell_price(nm, lv) * q)) + ")"); render_bank(); return true; }
+    if (act == "bnpcdel") { delete npc_orders[key]; npc_orders_save(); game_log("NPC-Auftrag gelöscht: " + key); render_bank(); return true; }
+    return false;
 }
 function mkt_basic_ok(o, q) { // Server-, Slot- und Suchfilter (ohne Chips)
     if (mkt.sv && (mkt.sv == "here" ? !o.same : norm_server(o.server) != mkt.sv)) return false;
@@ -4872,7 +4968,7 @@ function start_main() {
     if (character.rip) { if (!rip_counted) { rip_counted = true; day_count("deaths"); game_log("Gestorben (heute " + day.deaths + "x)"); try { game_log("Todes-Analyse: " + death_report()); } catch (e) {} try { var hq = mh_quest(); if (hq && hq.c > 0 && hunt_spot == hq.id) { game_log("Tod bei der Jagd auf " + hq.id + " – Jagd abgebrochen, Jagd-Häkchen für " + hq.id + " entfernt"); note_hunt_bad(hq.id); note_death(hq.id); set_hunt_allow(hq.id, false); hunt_reset(30 * 60000); hunt_cooldown_until = Date.now() + (hq.ms || 1800000); } else if (current_spot && !event_mode) { blocked_spots[current_spot] = Date.now() + LEVELED_BLOCK_MS; note_hunt_bad(current_spot); note_death(current_spot); if (hunt_allow[current_spot]) { set_hunt_allow(current_spot, false); } game_log("Tod bei " + current_spot + " – Jagd-Häkchen entfernt, Spot 30 min " + (manual_spot == current_spot ? "ausgesetzt, solange wählt die Automatik" : "gesperrt")); need_repick = true; meas = null; } } catch (e) {} } if (meas) finish_measure(true); respawn(); busy = false; fleeing = false; kissing = false; return; }
     rip_counted = false;
     session_tick();
-    if (Date.now() - last_panel > 2000) { last_panel = Date.now(); try { update_panel(); update_char_panel(); update_tchar_panels(); } catch (e) {} }
+    if (Date.now() - last_panel > 2000) { last_panel = Date.now(); try { update_panel(); update_char_panel(); update_tchar_panels(); if (bank_panel && Date.now() - (bank_rendered || 0) > 15000) { bank_rendered = Date.now(); render_bank(); } } catch (e) {} }
     if (handing && Date.now() - last_pickup > 5 * 60000) { game_log("Abholung hängt seit 5 min – gebe frei"); handing = false; pickup_state = null; if (busy) busy = false; } // Wächter: eine Übergabe darf nie dauerhaft blockieren (sperrt sonst Handelsreisen und weitere Abholungen)
     try { if (!SOLO) { merch_test_tick(); arb_tick(); merch_buy_tick(); merch_need_tick(); donate_tick(); event_tick(); } team_tick(); team_broadcast(); if (!SOLO) { team_read_logs(); team_inject(); } bank_snapshot(); if (!manual_lock && !paused && !SOLO) { priest_gear_tick(); energize_tick(); team_wish_handover_tick(); } } catch (e) {}
     if (paused) return;
@@ -4953,4 +5049,5 @@ rebuild_wishlist();
 setTimeout(function () { try { check_trip_on_start(); if (!server_trip) check_server_arrival(); } catch (e) {} }, 4000);
 try { if (localStorage.getItem("lp_wiki_open") == "1") { wiki_panel = init_wiki_panel(); render_wiki(); } } catch (e) {}
 try { if (localStorage.getItem("lp_mkt_open") == "1") { market_panel = init_market_panel(); render_market(); } } catch (e) {}
+try { if (localStorage.getItem("lp_bank_open") == "1") { bank_panel = init_bank_panel(); render_bank(); } } catch (e) {}
 start_main();
