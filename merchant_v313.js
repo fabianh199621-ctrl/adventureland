@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Händler (F4llenMerch) – Stufe 1 =====
 // Läuft unsichtbar neben dem Magier. Aufgaben: Stand kaufen und öffnen, Loot abholen/verkaufen/einlagern,
 // Startgold vom Magier holen. mluck ist abgeschaltet (braucht Lv 40, Händler levelt praktisch nicht) – USE_MLUCK/LEVEL_MODE. Meldungen gehen per Charakter-Nachricht an den Magier und erscheinen dort als "[Merch] …".
-var MERCH_VERSION = "v312";
+var MERCH_VERSION = "v313";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -293,12 +293,12 @@ async function process_inventory() { // in der Stadt: verkaufen, an den Stand, i
     for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (!it || it.name == STAND_ITEM || /^(hpot|mpot)/.test(it.name)) continue;
         if (it.name == "rod" || it.name == "pickaxe" || it.name == "staff" || it.name == "blade" || it.name == "anniversarygift" || /^slice_/.test(it.name) || order_for(it.name, it.level) || hold_items[item_key(it.name, it.level)]) continue; // Werkzeug, Zutaten, Event-Items, Auftrags-Items und Einkäufe für den Magier bleiben
         if (it.name == "spidersilk") { silk += it.q || 1; if (silk <= 2) continue; }
-        var a = manifest[item_key(it.name, it.level)] || (/^(bronzenugget|coat1|helmet1|pants1|gloves1|shoes1)$/.test(it.name) ? "sell" : "bank"); (a == "sell" ? sell : a == "stand" ? stand : bank).push(i); }
+        var a = manifest[item_key(it.name, it.level)] || (/^(bronzenugget|coat1|helmet1|pants1|gloves1|shoes1)$/.test(it.name) ? "sell" : "bank"); if (a == "keep") continue; (a == "sell" ? sell : a == "stand" ? stand : bank).push(i); }
     if (!sell.length && !stand.length && !bank.length) { manifest = {}; return; }
     try {
         if (sell.length) { status("verkauft"); await smart_move("potions"); var g0 = character.gold; for (var s1 = sell.length - 1; s1 >= 0; s1--) { var it1 = character.items[sell[s1]]; if (!it1) continue; try { sell_item(sell[s1], it1.q || 1); } catch (e) {} await sleep(300); } say("Beim NPC verkauft: " + sell.length + " Items (+" + (character.gold - g0) + " Gold)"); }
         if (stand.length) { status("Stand bestücken"); await go(home_spot(), 40); if (!stand_open()) stand_on(); await sleep(800); var n = 0; for (var s2 = 0; s2 < stand.length; s2++) { var it2 = character.items[stand[s2]]; if (!it2) continue; var slot = free_trade_slot(); if (!slot) { manifest[item_key(it2.name, it2.level)] = "bank"; bank.push(stand[s2]); continue; } var price = Math.round(npc_val(it2.name, it2.level) * STAND_MARKUP / 100) * 100; try { trade(stand[s2], slot, price, it2.q || 1); listed[slot] = { name: it2.name, level: it2.level || 0, t: Date.now(), price: price }; n++; await sleep(400); } catch (e) { say("Stand " + it2.name + ": " + (e && e.reason || e)); } } save_listed(); if (n) say("Am Stand eingestellt: " + n + " Items (Preis = NPC-Wert × " + STAND_MARKUP + ")"); }
-        var bank2 = []; for (var b = 0; b < character.items.length; b++) { var itb = character.items[b]; if (!itb || itb.name == STAND_ITEM || /^(hpot|mpot)/.test(itb.name)) continue; var ab = manifest[item_key(itb.name, itb.level)] || "bank"; if (ab == "bank" || (ab == "stand" && !is_listed_item(itb))) bank2.push(b); }
+        var bank2 = []; for (var b = 0; b < character.items.length; b++) { var itb = character.items[b]; if (!itb || itb.name == STAND_ITEM || /^(hpot|mpot)/.test(itb.name) || itb.name == "spidersilk" || itb.name == "pickaxe" || itb.name == "rod") continue; var ab = manifest[item_key(itb.name, itb.level)] || "bank"; if (ab == "keep") continue; if (ab == "bank" || (ab == "stand" && !is_listed_item(itb))) bank2.push(b); }
         if (bank2.length) { status("Bank"); stand_off(); var inb = await enter_bank(); var nb = 0, nf = 0, last_err = inb ? "" : "Bank nicht erreicht (Karte " + character.map + ")"; if (character.bank) for (var b2 = bank2.length - 1; b2 >= 0; b2--) { var e0 = character.esize; try { var pr = bank_store(bank2[b2]); if (pr && pr.then) pr.then(null, function (e) { last_err = String(e && e.reason || e); }); } catch (e) { last_err = String(e && e.reason || e); } await sleep(600); if (character.esize > e0) nb++; else nf++; } say("In die Bank gelegt: " + nb + " Items" + (nf ? ", " + nf + " nicht abgelegt (" + (last_err || "kein Fehler gemeldet") + ")" : "")); }
     } catch (e) { say("Verarbeitung: " + (e && e.message ? e.message : e)); }
     manifest = {};
@@ -334,14 +334,24 @@ function skill_cd(name) { try { if (typeof is_on_cooldown == "function") return 
 async function ensure_tool(tool) { // Werkzeug vorhanden? sonst Zutaten kaufen/anfordern und beim Handwerker bauen
     if (have_item(tool) != -1) return true;
     if (Date.now() - last_tool_try < 5 * 60000) return false; last_tool_try = Date.now();
-    var need = TOOL_RECIPES[tool], missing = need.filter(function (n) { return have_item(n) == -1; });
+    var need = TOOL_RECIPES[tool];
+    for (var ui = 0; ui < need.length; ui++) { if (have_item(need[ui]) == -2) { try { unequip("mainhand"); await sleep(600); } catch (e) {} } } // Zutat angelegt (z. B. Stab in der Hand) → ablegen, der Handwerker braucht sie im Inventar
+    if (have_item("spidersilk") == -1 && need.indexOf("spidersilk") >= 0) { try { await fetch_from_bank("spidersilk", 0, 1); } catch (e) {} } // Seide liegt evtl. in der Bank
+    var missing = need.filter(function (n) { return have_item(n) == -1; });
     // kaufbare Zutaten (Stab, Klinge) beim NPC holen
     for (var i = 0; i < missing.length; i++) { var n = missing[i]; var npc = npc_selling(n); if (!npc) continue; var pr = (G.items[n] || {}).g || 0; if (character.gold < pr + 20000) { say_once("toolgold", "Werkzeug " + tool + ": zu wenig Gold für " + n, 1800000); return false; } var pos = npc_pos(npc); if (!pos) continue; await go({ map: pos.map, x: pos.x, y: pos.y + 20 }, 60); try { buy(n, 1); await sleep(600); } catch (e) {} }
     missing = need.filter(function (n) { return have_item(n) == -1; });
     if (missing.length) { if (missing.indexOf("spidersilk") >= 0 && Date.now() - last_silk_ask > 10 * 60000) { last_silk_ask = Date.now(); try { send_cm(MAGE, { t: "need", item: "spidersilk", q: 1 }); } catch (e) {} /* je Werkzeug eine Seide */ say_once("silk", "Für " + tool + " fehlt Spinnenseide – beim Magier angefragt", 1800000); } else say_once("toolmiss", "Werkzeug " + tool + ": fehlt " + missing.join(", "), 1800000); return false; }
     var cp = npc_pos("craftsman"); if (!cp) return false;
     await go({ map: cp.map, x: cp.x, y: cp.y + 20 }, 60);
-    try { var cr = null; if (typeof auto_craft == "function") cr = await auto_craft(tool); else { var pos = {}, cri = []; need.forEach(function (n, k) { pos[n] = have_item(n); }); parent.cr_items = need.map(function (n) { return have_item(n); }).concat([null, null, null, null, null, null]).slice(0, 9); cr = await parent.craft(); } if (cr && (cr.failed || cr.reason)) say("Handwerker " + tool + ": " + (cr.reason || "fehlgeschlagen")); } catch (e) { say("Handwerker " + tool + ": " + (e && e.reason || e && e.message || JSON.stringify(e).slice(0, 80))); } // auto_craft sucht die Inventarplätze selbst; craft(name) war falsch (erwartet Slot-Nummern → "invalid")
+    var cr = null, crtxt = "";
+    try { if (typeof auto_craft == "function") cr = await auto_craft(tool); } catch (e) { cr = { failed: true, reason: e && e.reason || e && e.message || String(e) }; }
+    if (cr && (cr.failed || cr.reason)) crtxt = String(cr.reason || "fehlgeschlagen");
+    await sleep(1200);
+    if (have_item(tool) == -1) { // Rückfall: Zutaten-Slots selbst angeben (G.craft-Reihenfolge, Rest leer)
+        try { var slots = need.map(function (n) { return have_item(n); }); while (slots.length < 9) slots.push(null); parent.cr_items = slots; var cr2 = await parent.craft(); if (cr2 && (cr2.failed || cr2.reason)) crtxt += (crtxt ? " / " : "") + "manuell: " + String(cr2.reason || "fehlgeschlagen"); } catch (e2) { crtxt += (crtxt ? " / " : "") + "manuell: " + (e2 && e2.reason || e2 && e2.message || String(e2)); }
+    }
+    if (crtxt) say("Handwerker " + tool + ": " + crtxt + " (Zutaten-Slots: " + need.map(function (n) { return n + "=" + have_item(n); }).join(", ") + ")");
     await sleep(1500);
     if (have_item(tool) != -1) { say(tool + " beim Handwerker gebaut"); return true; }
     say("Werkzeug " + tool + " nicht gebaut (Zutaten da: " + need.map(function (n) { return n + (have_item(n) != -1 ? "✓" : "✗"); }).join(" ") + ")"); return false;

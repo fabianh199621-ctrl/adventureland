@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v312";
+var BOT_VERSION = "v313";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -2152,7 +2152,7 @@ function handover_plan() { // was der Händler mitnehmen soll: [{i, action}] –
     var out = [], eq = equipped_names(), dups = duplicate_indices();
     for (var i = 0; i < character.items.length; i++) {
         var it = character.items[i]; if (!it || it.name.indexOf("stand") == 0) continue;
-        if (merch_needs[it.name]) { out.push({ i: i, action: "bank", name: it.name, level: it.level || 0, q: it.q || 1 }); continue; } // vom Händler angefragt (behält, was er braucht)
+        if (merch_needs[it.name]) { out.push({ i: i, action: "keep", name: it.name, level: it.level || 0, q: it.q || 1 }); continue; } // vom Händler angefragt: er behält es im Inventar (nicht Bank)
         if (KEEP_ITEMS.test(it.name) || EVENT_ITEMS.test(it.name)) continue;
         var def = G.items[it.name]; if (!def) continue;
         var action = null;
