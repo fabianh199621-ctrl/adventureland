@@ -15,7 +15,7 @@ The bot is written in plain JavaScript for the in-game CODE editor. The UI, logs
 | `merchant_vNNN.js` | merchant | Trading, supplies, bank, mining/fishing. Runs in its own window started by the mage. |
 | `version.txt` | – | Current version (e.g. `v319`). The loader always fetches this first, so updating = pushing new files + bumping this line. |
 
-`bot.js`, `priest.js`, `ranger.js`, `merchant.js` are the working copies; the `_vNNN` files are the released versions.
+Only the current `_vNNN` release is kept in the repository; older versions are in the git history.
 
 ## Features
 
@@ -51,10 +51,10 @@ Goo Brawl, Giga Crab, Dragold, Grinch, Wabbit, Snowman, Love Goo, A/B Testing (P
 
 1. Fork or copy the repository so you can host your own files (the loader fetches from `raw.githubusercontent.com`).
 2. Change the character names:
-   - `bot.js` line ~377: `var TEAM = { merch: "...", priest: "...", ranger: "..." };`
-   - `priest.js`, `ranger.js`, `merchant.js` line 9: `var MAGE = "...";`
+   - `bot_vNNN.js` line ~377: `var TEAM = { merch: "...", priest: "...", ranger: "..." };`
+   - `priest_vNNN.js`, `ranger_vNNN.js`, `merchant_vNNN.js` line 9: `var MAGE = "...";`
    - The loader detects the role by class (`character.ctype`) or by the name containing `merch`, `priest` or `ranger`.
-3. Rename/copy the files to `bot_vNNN.js` etc. and put the same `vNNN` into `version.txt`.
+3. Keep the `_vNNN` file names in sync with `version.txt`.
 4. In `loader.js` set `BASE` to your repository's raw URL and `LP_CODE_SLOT` to the code slot number you save the loader in.
 5. In the game: open the CODE editor on the **mage**, paste `loader.js` into that slot, save, press **Run**. The mage starts priest, ranger and merchant itself with the same slot (all characters must be on the same account and have the loader in that slot).
 
