@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v291";
+var BOT_VERSION = "v292";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -714,7 +714,7 @@ function hunts_html() { // Rundlauf: Jagden aller Kämpfer mit Status
     var w = wait_txt();
     return "<span style='color:#9aa3b2'>Jagden: </span>" + items.join(" · ") + (w ? " <span style='color:#ffb74d'>· " + esc(w) + "</span>" : "");
 }
-var TEAM_POT_FULL = 800, TEAM_POT_MIN = 300;
+var TEAM_POT_FULL = 800, TEAM_POT_MIN = 300, MAGE_POT_FULL = 800, MAGE_POT_MIN = 300; // Tränke: Händler füllt Magier und Priest/Ranger auf 800 auf, sobald einer unter 300 fällt; selbst kaufen nur im Notfall
 function team_pots_need() { // Priest/Ranger unter 300 Tränken: der Händler bringt bei der Abholung auf 800 auf
     var out = []; if (SOLO) return out;
     ["priest", "ranger"].forEach(function (k) { if (!team_on[k]) return; var st = team_state[TEAM[k]]; if (!st || Date.now() - st.t > 120000 || st.hpots == null) return; var hp = Math.max(0, TEAM_POT_FULL - st.hpots), mp = Math.max(0, TEAM_POT_FULL - (st.mpots || 0)); if (st.hpots < TEAM_POT_MIN || (st.mpots || 0) < TEAM_POT_MIN) out.push({ name: TEAM[k], hp: hp, mp: mp }); });
@@ -2108,7 +2108,7 @@ async function merchant_pickup(reason) { // Händler rufen, Items übergeben, Tr
     handing = true; busy = true; last_pickup = Date.now();
     var ok = false;
     try {
-        var need_hp = Math.max(0, 150 - pots_total(POTS_HP)), need_mp = Math.max(0, 150 - pots_total(POTS_MP));
+        var need_hp = Math.max(0, MAGE_POT_FULL - pots_total(POTS_HP)), need_mp = Math.max(0, MAGE_POT_FULL - pots_total(POTS_MP));
         var plan = handover_plan();
         pickup_state = { t: Date.now(), ready: false, done: false };
         var mbj = merch_buy && (merch_buy.stage == "calling" || merch_buy.stage == "fetching") ? merch_buy : null;
@@ -2690,12 +2690,17 @@ function pick_pot_tier(list) { // list ist "beste zuerst"
 function check_potions() {
     if (busy) return;
     if (focus_mode) { if (pots_total(POTS_HP) >= FOCUS_POT_MIN && pots_total(POTS_MP) >= FOCUS_POT_MIN) return; } // Fokus: Nachkauf normalerweise beim Inventar-Stadtgang, hier nur der Notfall
-    else if (pots_total(POTS_HP) >= 30 && pots_total(POTS_MP) >= 30) return;
+    else {
+        var team_low = team_pots_need().filter(function (t) { var tp = null; try { tp = get_player(t.name); } catch (e) {} return tp && tp.map == character.map && distance(character, tp) < 400; }); // Priest/Ranger unter 300 Tränken und neben mir: Händler bringt für sie mit
+        var me_low = pots_total(POTS_HP) < MAGE_POT_MIN || pots_total(POTS_MP) < MAGE_POT_MIN;
+        if (!me_low && !team_low.length) return;
+        if (merchant_available() && !manual_lock && (pots_total(POTS_HP) >= 30 && pots_total(POTS_MP) >= 30 || !me_low)) { merchant_pickup(me_low ? "Tränke" : "Tränke für " + team_low.map(function (t) { return t.name; }).join("/")).then(function (ok) { if (!ok) { /* Fallback beim nächsten Tick: Händler ist 3 min gesperrt */ } }); return; } // Händler bringt Tränke (auf 800 auf); nur bei fast leeren Vorräten selbst laufen
+        if (pots_total(POTS_HP) >= 30 && pots_total(POTS_MP) >= 30) return; // Notfall-Selbstkauf erst unter 30
+    }
     var hp_t = pick_pot_tier(POTS_HP), mp_t = pick_pot_tier(POTS_MP);
     var price = G.items[hp_t].g + G.items[mp_t].g;
-    var amount = Math.min(150, Math.floor((spendable() * 0.7) / price));
+    var amount = Math.min(MAGE_POT_FULL - Math.min(pots_total(POTS_HP), pots_total(POTS_MP)), Math.floor((spendable() * 0.7) / price));
     if (amount < 20) return;
-    if (merchant_available() && pots_total(POTS_HP) >= 10 && pots_total(POTS_MP) >= 10 && !manual_lock) { merchant_pickup("Tränke").then(function (ok) { if (!ok) { /* Fallback beim nächsten Tick: Händler ist 3 min gesperrt */ } }); return; } // Händler bringt Tränke; nur bei fast leeren Vorräten selbst laufen
 
     busy = true; set_message("Tränke kaufen");
     travel_place("potions").then(function () {

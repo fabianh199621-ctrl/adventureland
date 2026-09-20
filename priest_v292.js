@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Priester (F4llenPriest) – Stufe 1 =====
 // Folgt dem Magier, heilt ihn und sich, nimmt die Party-Einladung an, greift erst ab PRIEST_ATTACK_LEVEL mit an.
 // Meldungen gehen per Charakter-Nachricht an den Magier ("[Priest] …").
-var PRIEST_VERSION = "v291";
+var PRIEST_VERSION = "v292";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -12,7 +12,7 @@ var PRIEST_ATTACK_LEVEL = 20;      // vorher nur folgen und heilen
 var FOLLOW_DIST = 120, FOLLOW_MAX = 220;
 var HEAL_MAGE_BELOW = 0.9, HEAL_SELF_BELOW = 0.6, FLEE_BELOW = 0.35, help_until = 0;
 var path_fail = 0, mage = null, p_paused = false, last_log = {}, last_status = 0, last_move = 0, last_pots_ask = 0, moving = false;
-var GEAR_SLOTS = ["helmet", "chest", "pants", "shoes", "gloves", "mainhand"], POT_MIN = 100, POT_BUY = 800, GOLD_WANT = 250000, GOLD_MIN = 20000;
+var GEAR_SLOTS = ["helmet", "chest", "pants", "shoes", "gloves", "mainhand"], POT_MIN = 30, POT_BUY = 800, GOLD_WANT = 250000, GOLD_MIN = 20000; // POT_MIN 30 = nur Notfall-Selbstkauf; normal bringt der Händler die Tränke (auf 800), sobald unter 300
 var shopping = false, last_shop = 0, last_gold_ask = 0;
 function have_item(n) { for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && it.name == n) return i; } return -1; }
 function pot_count(kind) { var n = 0; for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && it.name.indexOf(kind) == 0) n += it.q || 1; } return n; }
