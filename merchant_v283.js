@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Händler (F4llenMerch) – Stufe 1 =====
 // Läuft unsichtbar neben dem Magier. Aufgaben: Stand kaufen und öffnen, Loot abholen/verkaufen/einlagern,
 // Startgold vom Magier holen. mluck ist abgeschaltet (braucht Lv 40, Händler levelt praktisch nicht) – USE_MLUCK/LEVEL_MODE. Meldungen gehen per Charakter-Nachricht an den Magier und erscheinen dort als "[Merch] …".
-var MERCH_VERSION = "v282";
+var MERCH_VERSION = "v283";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -208,7 +208,15 @@ async function do_pickup() { // zum Magier, Items entgegennehmen, Tränke/Gold �
         // Tränke für Priest/Ranger (hpot0/mpot0) übergeben, wenn sie neben dem Magier stehen
         var tp = req.team_pots || []; for (var ti = 0; ti < tp.length; ti++) { var tn = tp[ti]; var tpl = null; var tw = Date.now(); while (Date.now() - tw < 60000) { try { tpl = get_player(tn.name); } catch (e) { tpl = null; } if (tpl && tpl.map == character.map && Math.hypot(character.x - tpl.x, character.y - tpl.y) <= 300) break; if (tpl && tpl.map == character.map && Math.hypot(character.x - tpl.x, character.y - tpl.y) <= 600) { try { move(character.x + (tpl.x - character.x) * 0.5, character.y + (tpl.y - character.y) * 0.5); } catch (e) {} } status("wartet auf " + tn.name); await sleep(2000); } if (!tpl || tpl.map != character.map || Math.hypot(character.x - tpl.x, character.y - tpl.y) > 300) { say("Tränke für " + tn.name + ": nicht in Reichweite – behalte sie für die nächste Abholung"); continue; } var gv = 0; for (var tj = 0; tj < character.items.length; tj++) { var tit = character.items[tj]; if (!tit) continue; var want = tit.name == "hpot0" ? tn.hp : tit.name == "mpot0" ? tn.mp : 0; if (want > 0) { var q = Math.min(want, tit.q || 1); try { send_item(tn.name, tj, q); gv += q; if (tit.name == "hpot0") tn.hp -= q; else tn.mp -= q; await sleep(300); } catch (e) {} } } if (gv) say(gv + " Tränke an " + tn.name + " übergeben"); }
         var gave_items = 0; for (var gi = character.items.length - 1; gi >= 0; gi--) { var git = character.items[gi]; if (git && (git.name == "anniversarygift" || /^slice_/.test(git.name))) { try { send_item(MAGE, gi, git.q || 1); gave_items += git.q || 1; await sleep(300); } catch (e) {} } }
-        if (req.fetch && req.fetch.length) { for (var fi = 0; fi < req.fetch.length; fi++) { var fe = req.fetch[fi]; for (var fj = character.items.length - 1; fj >= 0; fj--) { var fit = character.items[fj]; if (fit && fit.name == fe.name && (fit.level || 0) == (fe.level || 0)) { try { send_item(MAGE, fj, fit.q || 1); gave_items += fit.q || 1; await sleep(350); } catch (e) {} } } delete hold_items[item_key(fe.name, fe.level)]; } hold_save(); if (gave_items) say("Einkauf übergeben: " + gave_items + " Item(s)"); else say("Einkauf: nichts zum Übergeben im Inventar"); }
+        // Gekaufte Items für den Magier: alle, die noch bei mir liegen, bei jeder Abholung übergeben (nicht nur auf ausdrückliche Anforderung) – Verkaufsware (sellreq) bleibt
+        var fetch_keys = {}; (req.fetch || []).forEach(function (fe) { fetch_keys[item_key(fe.name, fe.level)] = true; });
+        var sellkey = req.sellreq ? item_key(req.sellreq.name, req.sellreq.level) : null;
+        for (var hk in hold_items) { if (hk != sellkey) fetch_keys[hk] = true; }
+        var fk = Object.keys(fetch_keys), gave_buy = 0;
+        if (fk.length) {
+            for (var fi = 0; fi < fk.length; fi++) { var hp2 = fk[fi].split("+"), fname = hp2[0], flv = parseInt(hp2[1] || "0", 10) || 0; for (var fj = character.items.length - 1; fj >= 0; fj--) { var fit = character.items[fj]; if (fit && fit.name == fname && (fit.level || 0) == flv) { try { send_item(MAGE, fj, fit.q || 1); gave_items += fit.q || 1; gave_buy += fit.q || 1; await sleep(350); } catch (e) {} } } delete hold_items[fk[fi]]; }
+            hold_save(); if (gave_buy) say("Einkauf übergeben: " + gave_buy + " Item(s)"); else if (req.fetch && req.fetch.length) say("Einkauf: nichts zum Übergeben im Inventar");
+        }
         var gave_gold = 0; if (req.buy) { say("Einkaufsgold erhalten – behalte es für den Kauf (" + character.gold + " Gold)"); }
         else if (character.gold > (req.fetch ? GOLD_KEEP + 1000 : GOLD_HANDBACK)) { gave_gold = character.gold - GOLD_KEEP; try { send_gold(MAGE, gave_gold); } catch (e) { gave_gold = 0; } }
         try { send_cm(MAGE, { t: "delivered", pots: gave_pots, gold: gave_gold, items: gave_items || 0 }); } catch (e) {}
