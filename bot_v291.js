@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v290";
+var BOT_VERSION = "v291";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -437,7 +437,7 @@ var cm_selftest = 0;
 function team_broadcast() { // alle 5 s: wo bin ich, was mache ich (für Händler und Priester)
     if (Date.now() - last_team_cast < 5000) return; last_team_cast = Date.now();
     if (SOLO) { if (Date.now() - solo_last_st > 30000) { solo_last_st = Date.now(); try { var hq0 = mh_quest(); send_cm(MAIN_NAME, { t: "st", level: character.level, state: character.rip ? "tot" : paused ? "Pause" : (hq0 && hq0.c > 0 ? "jagt " + hq0.id + " (" + hq0.c + ")" : "farmt " + (current_spot || "?")), gold: character.gold, tokens: tokens(), hp: character.hp, max_hp: character.max_hp, map: character.map, free: character.esize }); } catch (e) {} } return; }
-    try { window.localStorage.setItem("lp_mh_missing", JSON.stringify(mh_missing_for_me())); } catch (e) {} // für Jäger/Priest/Ranger: welche Set-Teile mir fehlen
+    try { window.localStorage.setItem("lp_mh_missing", "[]"); } catch (e) {} // kein automatischer Token-Kauf durch Priest/Ranger (Liste bewusst leer)
     var act = active_chars(), ml = character.s && character.s.mluck;
     var msg = { t: "me", free: character.esize, map: character.map, x: Math.round(character.x), y: Math.round(character.y), level: character.level, hp: character.hp, max_hp: character.max_hp, paused: paused || !bot_running, spot: current_spot, strict: strict_mon(current_spot), event: event_mode, mg: MG, hunt_go: (function () { try { var hs0 = hunt_slot_state(); return hs0.busy ? null : hs0.fetcher; } catch (e) { return null; } })(), hunt_holder: (function () { try { return hunt_slot_state().holder; } catch (e) { return null; } })(), tgt: (function () { if (!paused) return last_target_id; try { var mt = get_target(); return mt && mt.type == "monster" && !mt.dead ? mt.id : null; } catch (e) { return null; } })(), mluck: ml ? { f: ml.f, ms: ml.ms, strong: !!ml.strong } : null, in: character.in };
     for (var k in TEAM) { var nm = TEAM[k]; if (team_on[k] && act[nm]) { try { send_cm(nm, msg); } catch (e) {} } }
@@ -2655,7 +2655,7 @@ async function check_monsterhunt() {
                 else if (hunt_bad_tries >= 3) { hunt_cooldown_until = Date.now() + 10 * 60000; hunt_bad_tries = 0; game_log("3x unsichere Jagd – 10 min Pause"); }
             }
         } else if (!q2) { game_log("Keine Jagd erhalten (" + JSON.stringify(r || {}).slice(0, 80) + ") – nächster Versuch in 5 min"); hunt_cooldown_until = Date.now() + 5 * 60000; }
-        await spend_tokens();
+        // Tokens werden nicht mehr automatisch ausgegeben – Set-Teile/Tracker kaufst du selbst bei Daisy
         if (hunt_spot && !(mh_quest() && mh_quest().c > 0)) hunt_reset(0);
     } catch (e) { game_log("Monster-Hunt-Fehler: " + err_txt(e)); hunt_cooldown_until = Date.now() + 5 * 60000; }
     hunting = false; busy = false;
