@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Ranger (F4llenRanger) =====
 // Folgt dem Magier, greift dessen Ziel an (Supershot, Hunter's Mark, 3-/5-Shot), versorgt sich selbst mit NPC-Ausrüstung und Tränken.
 // Meldungen gehen per Charakter-Nachricht an den Magier ("[Ranger] …").
-var RANGER_VERSION = "v286";
+var RANGER_VERSION = "v287";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -29,6 +29,7 @@ function junk_items() { // Ausrüstung, die die Automatik nie anlegen würde: ni
     var out = [];
     for (var i = 0; i < character.items.length; i++) {
         var it = character.items[i]; if (!it) continue; var d = G.items[it.name]; if (!d || /^(hpot|mpot|mm)/.test(it.name)) continue; // mm* = Token-Set für den Magier
+        if ((d.g || 0) >= 50000 || (it.level || 0) >= 4 || it.stat_type) continue; // wertvolle Teile nie beim NPC verkaufen – gehen beim Aufräumen an den Magier (Bank/Stand)
         if (!(d.type && ALL_SLOTS_TYPES[d.type]) && !d.wtype) continue; // keine Ausrüstung
         var useful = false, fits_me = false;
         for (var slot in ALL_SLOTS) { if (!fits_any(d, slot)) continue; fits_me = true; var worn = character.slots[slot]; var ws = worn ? gear_score(G.items[worn.name], worn.level || 0, worn.stat_type) : 0; if (gear_score(d, it.level || 0, it.stat_type) > ws * 1.02) useful = true; }

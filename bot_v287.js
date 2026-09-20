@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v286";
+var BOT_VERSION = "v287";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -223,6 +223,14 @@ var BANK_MIN_FREE = 10;              // unter so vielen freien Bankplätzen -> B
 var NEVER_SELL = /^mm|^(dex|int|str|vit)(ring|earring|amulet|belt)$/; // Token-Set (mm*) und Attribut-Schmuck: nie verkaufen, nie als Duplikat werten
 var KEEP_MIN_LEVEL = 4;              // Ausrüstung ab diesem Level behalten
 var KEEP_MIN_VALUE = 50000;          // Items ab diesem Grundwert behalten
+var NPC_SELL_MAX = 50000;            // Ausrüstung ab diesem NPC-Wert nie beim NPC verkaufen – geht in die Bank und per Stand-Auftrag an den Händlerstand
+function stand_instead(it) { var d = G.items[it.name]; if (!d || !(d.upgrade || d.compound)) return false; return npc_value(it.name, it.level || 0) >= NPC_SELL_MAX; }
+function stand_auto_order(it) { // Stand-Auftrag für ein wertvolles Teil anlegen (Händler holt es aus der Bank, Preis knapp unter Markt)
+    var lv = it.level || 0, key = it.name + (lv ? "+" + lv : ""), o = stand_orders[key];
+    if (o) { o.q = (o.q || 1) + 1; o.t = Date.now(); } else stand_orders[key] = { name: it.name, level: lv, q: 1, price: stand_suggest_price(it.name, lv), since: Date.now(), t: Date.now(), auto: true };
+    save_stand_orders(); last_panel = 0;
+    game_log("Statt NPC-Verkauf: " + key + " (NPC " + fmt(npc_value(it.name, lv)) + ") → Stand-Auftrag für " + fmt(stand_orders[key].price) + " – geht in die Bank, Händler stellt es aus");
+}
 var KEEP_ITEMS = /^(hpot|mpot|elixirint|scroll|cscroll|intscroll|strscroll|dexscroll|vitscroll|tracker|seashell|monstertoken|slice_|sixcake)/;
 var POTS_HP = ["hpot1", "hpot0"], POTS_MP = ["mpot1", "mpot0"]; // beste zuerst
 var ELIXIRS = ["elixirint2", "elixirint1", "elixirint0"]; // beste zuerst, aktiv halten
@@ -1991,8 +1999,8 @@ function duplicate_indices() { // Inventar-Indizes überzähliger Kopien
     }
     return out;
 }
-async function sell_duplicates() { // im Laden stehen
-    var idx = duplicate_indices(); if (!idx.length) return 0;
+async function sell_duplicates(pre) { // im Laden stehen; pre = vorgefilterte Indizes (wertvolle Duplikate gehen an den Stand statt zum NPC)
+    var idx = pre || duplicate_indices().filter(function (di) { var dt = character.items[di]; if (dt && stand_instead(dt)) { stand_auto_order(dt); return false; } return true; }); if (!idx.length) return 0;
     var names = [];
     idx.sort(function (a, b) { return b - a; });
     for (var i = 0; i < idx.length; i++) { var it = character.items[idx[i]]; if (!it) continue; names.push(it.name + "+" + (it.level || 0)); await sell_measured(idx[i], 1); }
@@ -2147,14 +2155,14 @@ async function tidy_inventory() {
     try {
         // 1. verkaufen (im Fokus-Modus auf jeden Fall zum Händler: dort werden auch die Tränke aufgefüllt)
         var junk = [];
-        for (var i = 0; i < character.items.length; i++) { var jt = character.items[i]; if (jt && (is_junk(jt) || (!worth_keeping(jt) && !equipped_names()[jt.name]))) junk.push(i); }
-        var dups = duplicate_indices();
+        for (var i = 0; i < character.items.length; i++) { var jt = character.items[i]; if (jt && (is_junk(jt) || (!worth_keeping(jt) && !equipped_names()[jt.name]))) { if (stand_instead(jt)) stand_auto_order(jt); else junk.push(i); } }
+        var dups = duplicate_indices().filter(function (di) { var dt = character.items[di]; if (dt && stand_instead(dt)) { stand_auto_order(dt); return false; } return true; });
         if (junk.length || dups.length || focus_mode) {
             set_message("Verkaufen"); await travel_place("potions");
             var sold_names = [];
             for (var j = 0; j < junk.length; j++) { var it = character.items[junk[j]]; if (!it) continue; sold_names.push(it.name + ((it.level || 0) ? "+" + it.level : "") + ((it.q || 1) > 1 ? " ×" + it.q : "")); await sell_measured(junk[j], it.q || 1); }
             if (junk.length) game_log("Inventar: " + junk.length + " Schrott-Items verkauft: " + sold_names.join(", "));
-            await sell_duplicates();
+            await sell_duplicates(dups);
             if (focus_mode) { try { var hp_t = pick_pot_tier(POTS_HP), mp_t = pick_pot_tier(POTS_MP), pp = G.items[hp_t].g + G.items[mp_t].g, need = Math.max(0, 150 - Math.min(pots_total(POTS_HP), pots_total(POTS_MP))), amt = Math.min(need, Math.floor((spendable() * 0.7) / pp)); if (amt >= 10) { buy(hp_t, amt); buy(mp_t, amt); await sleep(500); game_log("Tränke aufgefüllt: " + amt + " " + hp_t + " / " + amt + " " + mp_t); } } catch (e) { game_log("Tränke: " + err_txt(e)); } }
         }
         // 2. Schmuck-Dreiergruppen compounden, wenn wir eh unterwegs sind (nicht im Fokus-Modus: Stadtgang kurz halten)
