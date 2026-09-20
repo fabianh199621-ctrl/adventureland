@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Händler (F4llenMerch) – Stufe 1 =====
 // Läuft unsichtbar neben dem Magier. Aufgaben: Stand kaufen und öffnen, Loot abholen/verkaufen/einlagern,
 // Startgold vom Magier holen. mluck ist abgeschaltet (braucht Lv 40, Händler levelt praktisch nicht) – USE_MLUCK/LEVEL_MODE. Meldungen gehen per Charakter-Nachricht an den Magier und erscheinen dort als "[Merch] …".
-var MERCH_VERSION = "v305";
+var MERCH_VERSION = "v306";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -21,7 +21,7 @@ function say(msg) { try { send_cm(MAGE, { t: "log", msg: msg }); } catch (e) {} 
 function say_once(key, msg, every) { if (last_log[key] && Date.now() - last_log[key] < (every || 600000)) return; last_log[key] = Date.now(); say(msg); }
 function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 var last_state = null;
-function status(state) { if (state == last_state && Date.now() - last_status < 30000) return; last_state = state; last_status = Date.now(); try { send_cm(MAGE, { t: "st", level: character.level, state: character.rip ? "tot" : state, gold: character.gold, stand: !!character.stand, map: character.map, hp: character.hp, max_hp: character.max_hp, orders: order_state }); } catch (e) {} }
+function status(state) { if (state == last_state && Date.now() - last_status < 30000) return; last_state = state; last_status = Date.now(); try { send_cm(MAGE, { t: "st", level: character.level, state: character.rip ? "tot" : state, gold: character.gold, stand: !!character.stand, map: character.map, hp: character.hp, max_hp: character.max_hp, orders: order_state, gather: (function () { try { return gather_info(); } catch (e) { return null; } })() }); } catch (e) {} }
 // ---------- Stufe 2: Abholung, Verkauf am Stand/NPC, Bank ----------
 var pickup = null, manifest = {}, pickup_done = false, STAND_MARKUP = 1.8, STAND_MAX_AGE = 24 * 3600000, GOLD_KEEP = 150000, GOLD_HANDBACK = 300000;
 var listed = {}; try { listed = JSON.parse(localStorage.getItem("lp_listed_" + character.name) || "{}"); } catch (e) {}
@@ -322,6 +322,13 @@ async function check_stand_age() { // Ladenhüter nach 24 h vom Stand nehmen und
 var GATHER = true, FISH_SPOTS = [{ map: "main", x: -1368, y: -90 }, { map: "main", x: -1198, y: -288 }], MINE_SPOTS = [{ map: "tunnel", x: -280, y: -10 }, { map: "tunnel", x: -200, y: -50 }];
 var TOOL_RECIPES = { rod: ["staff", "spidersilk"], pickaxe: ["staff", "spidersilk", "blade"] };
 var last_gather_try = {}, gather_fail = {}, gather_busy = false, last_tool_try = 0, last_silk_ask = 0;
+var gather_stats = { mining: { n: 0, gold: 0, items: 0, last: 0 }, fishing: { n: 0, gold: 0, items: 0, last: 0 } }; try { var gs0 = JSON.parse(localStorage.getItem("lp_gather_" + character.name) || "null"); if (gs0) { for (var gk in gs0) gather_stats[gk] = gs0[gk]; } } catch (e) {}
+function gather_save() { try { localStorage.setItem("lp_gather_" + character.name, JSON.stringify(gather_stats)); } catch (e) {} }
+function gather_info() { // fürs Magier-Panel: Zähler, Werkzeuge, nächster Versuch
+    var out = { tools: { pickaxe: have_item("pickaxe") != -1, rod: have_item("rod") != -1 }, stats: gather_stats, next: {} };
+    ["mining", "fishing"].forEach(function (k) { var cd = false; try { cd = skill_cd(k); } catch (e) {} var wait = Math.max(0, 10 * 60000 - (Date.now() - (last_gather_try[k] || 0))); out.next[k] = cd ? "Cooldown" : wait > 0 ? Math.ceil(wait / 60000) + " min" : "bereit"; });
+    return out;
+}
 function have_item(n) { for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && it.name == n) return i; } for (var sl in character.slots) { var w = character.slots[sl]; if (w && w.name == n && sl.indexOf("trade") != 0) return -2; } return -1; }
 function skill_cd(name) { try { if (typeof is_on_cooldown == "function") return is_on_cooldown(name); } catch (e) {} try { var t = parent.next_skill && parent.next_skill[name]; return t && new Date(t).getTime() > Date.now(); } catch (e) {} return false; }
 async function ensure_tool(tool) { // Werkzeug vorhanden? sonst Zutaten kaufen/anfordern und beim Handwerker bauen
@@ -357,6 +364,7 @@ async function gather(kind) { // kind: "fishing" | "mining"
     }
     await sleep(1500);
     var gained = [], n1 = 0; character.items.forEach(function (x) { if (x) n1++; });
+    if (ok) { var gs = gather_stats[kind]; gs.n++; gs.gold += Math.max(0, character.gold - g0); gs.items += Math.max(0, n1 - n0); gs.last = Date.now(); gather_save(); }
     if (ok) say((kind == "fishing" ? "Geangelt" : "Abgebaut") + ": " + (character.gold - g0 > 0 ? "+" + (character.gold - g0) + " Gold" : "") + (n1 > n0 ? ", " + (n1 - n0) + " neue Items" : "") + ((character.gold - g0 <= 0 && n1 <= n0) ? "nichts gefangen" : ""));
     else say((kind == "fishing" ? "Angeln" : "Bergbau") + " nicht gelungen: " + (why || "unbekannt") + " (Position " + character.map + " " + Math.round(character.x) + "," + Math.round(character.y) + ")");
     // Werkzeug wieder ablegen (Händler braucht keine Waffe)
