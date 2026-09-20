@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v318";
+var BOT_VERSION = "v319";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -5099,6 +5099,16 @@ async function upgrade_routine_inner(manual) {
 }
 
 // ---------- Hauptschleife ----------
+var unreach_ids = {};
+function line_free(m) { try { return can_move_to(m.x, m.y); } catch (e) { return true; } }
+function approach_path(m) { // Ziel hinter Klippe/Wasser: per Wegfindung hin; klappt das nicht, Ziel 2 min meiden
+    if (busy) return; busy = true; var id = m.id, t0 = Date.now();
+    game_log("Ziel " + m.mtype + " nicht auf gerader Linie erreichbar (" + Math.round(distance(character, m)) + " px) – Wegfindung");
+    (async function () { var ok = false; try { await smart_move({ map: character.map, x: m.x, y: m.y }); ok = true; } catch (e) {}
+        busy = false; var e2 = parent.entities[id];
+        if (!ok || (e2 && !e2.dead && !is_in_range(e2) && !line_free(e2))) { unreach_ids[id] = Date.now() + 120000; game_log("Ziel " + m.mtype + " unerreichbar – 2 min gemieden"); change_target(null); }
+        if (Date.now() - t0 > 60000) last_gain = Date.now(); })();
+}
 function start_main() {
   if (main_timer) clearInterval(main_timer);
   main_timer = parent.__lp_main_timer = setInterval(function () {
@@ -5163,7 +5173,8 @@ function start_main() {
             if (aggro >= MAX_AGGRO && m.target != character.name) continue;
             if (too_strong(m)) { seen_farm = true; if (distance(character, m) < 300) log_ignored(m, "gelevelt/zu stark"); continue; }
             if (beh && !m.target && (strict_mon(m.mtype) || (m.level || 1) > 1 || mon_danger(G.monsters[m.mtype] || {}) > wait_team_danger)) { strong_wait = true; continue; } // starkes/gelevelte Exemplar: erst ziehen, wenn Priest/Ranger da sind
-            var d = distance(character, m); if (d < best_d) { best_d = d; target = m; }
+            if (unreach_ids[m.id] && unreach_ids[m.id] > Date.now()) continue; // vorhin nicht erreichbar (Klippe/Wasser)
+            var d = distance(character, m); if (!m.target && !line_free(m)) d += 600; /* hinter Klippe/Wasser: erreichbare Exemplare zuerst */ if (d < best_d) { best_d = d; target = m; }
         }
         if (!target && strong_wait) { set_message(wait_txt()); wait_log(wait_txt() + " – starke/gelevelte " + farm + " erst mit Team"); for (var sid3 in parent.entities) { var se3 = parent.entities[sid3]; if (is_valid_target(se3) && se3.target == character.name) { target = se3; break; } } if (!target) return; }
         all_leveled_check(farm, seen_farm, !!target); // nur gelevelte in Sicht -> nach 45 s ausweichen
@@ -5179,7 +5190,7 @@ function start_main() {
     }
 
     if (last_target_id != target.id) { last_target_id = target.id; if (Date.now() - last_team_cast > 1500) { last_team_cast = 0; team_broadcast(); } } // neues Ziel sofort ans Team (Fokus)
-    if (!is_in_range(target)) move(character.x + (target.x - character.x) / 2, character.y + (target.y - character.y) / 2);
+    if (!is_in_range(target)) { if (line_free(target)) move(character.x + (target.x - character.x) / 2, character.y + (target.y - character.y) / 2); else approach_path(target); } // gerade Linie blockiert (Klippe/Wasser): Wegfindung statt gegen die Kante laufen
     else if (can_attack(target)) {
         if (!try_cburst()) { status_message(); attack(target); }
     }
