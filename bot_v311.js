@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v310";
+var BOT_VERSION = "v311";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -2517,9 +2517,9 @@ async function kiss_routine() {
         var range = (G.skills.ikissyou && G.skills.ikissyou.range) || 50;
         var t_end = Math.min(a.expires || Date.now() + 240000, Date.now() + 240000);
         var ok = false, tries = 0, clean = 0;
-        var snap = function () { var o = { gift: quantity("anniversarygift"), slices: 0, buffs: Object.keys(character.s || {}).join(",") }; character.items.forEach(function (i) { if (i && /^slice_/.test(i.name)) o.slices += i.q || 1; }); return o; };
+        var snap = function () { var o = { gift: quantity("anniversarygift"), slices: 0, ab: {} }; character.items.forEach(function (i) { if (i && /^slice_/.test(i.name)) o.slices += i.q || 1; }); for (var bk in (character.s || {})) if (/^anniversary/.test(bk)) o.ab[bk] = (character.s[bk] && character.s[bk].ms) || 0; return o; };
         var before = snap();
-        var rewarded = function () { var n = snap(); return n.gift > before.gift || n.slices > before.slices || n.buffs != before.buffs; };
+        var rewarded = function () { var n = snap(); if (n.gift > before.gift || n.slices > before.slices) return true; for (var bk in n.ab) { if (!(bk in before.ab) || n.ab[bk] > before.ab[bk] + 60000) return true; } return false; }; // nur Event-Belohnung zählt: Geschenk, Slice oder neuer/verlängerter Anniversary-Buff – andere Buff-Änderungen (mluck, Jagd) nicht
         while (Date.now() < t_end && !paused) {
             a = anniv();
             if (!a || a.round != round) break;
@@ -2535,7 +2535,7 @@ async function kiss_routine() {
                 var failed = false;
                 try { await use_skill("ikissyou", ent); } catch (e) { failed = true; var rs = String(e && e.reason || e); if (/claimed/i.test(rs)) { ok = true; game_log("Kuss: Runde war schon belohnt"); break; } game_log("Kuss-Fehler: " + rs); }
                 await sleep(2000);
-                if (rewarded() || kiss_buff_active()) { ok = true; break; }
+                if (rewarded()) { ok = true; break; }
                 if (!failed && ++clean >= 2) { ok = true; break; } // zweimal ohne Fehler -> als erledigt werten
                 if (tries >= 5) break;
             } else await sleep(500);
