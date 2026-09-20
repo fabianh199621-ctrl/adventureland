@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Händler (F4llenMerch) – Stufe 1 =====
 // Läuft unsichtbar neben dem Magier. Aufgaben: Stand kaufen und öffnen, Loot abholen/verkaufen/einlagern,
 // Startgold vom Magier holen. mluck ist abgeschaltet (braucht Lv 40, Händler levelt praktisch nicht) – USE_MLUCK/LEVEL_MODE. Meldungen gehen per Charakter-Nachricht an den Magier und erscheinen dort als "[Merch] …".
-var MERCH_VERSION = "v313";
+var MERCH_VERSION = "v314";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -326,7 +326,7 @@ var gather_stats = { mining: { n: 0, gold: 0, items: 0, last: 0 }, fishing: { n:
 function gather_save() { try { localStorage.setItem("lp_gather_" + character.name, JSON.stringify(gather_stats)); } catch (e) {} }
 function gather_info() { // fürs Magier-Panel: Zähler, Werkzeuge, nächster Versuch
     var out = { tools: { pickaxe: have_item("pickaxe") != -1, rod: have_item("rod") != -1 }, stats: gather_stats, next: {} };
-    ["mining", "fishing"].forEach(function (k) { var cd = false; try { cd = skill_cd(k); } catch (e) {} var wait = Math.max(0, 10 * 60000 - (Date.now() - (last_gather_try[k] || 0))); out.next[k] = cd ? "Cooldown" : wait > 0 ? Math.ceil(wait / 60000) + " min" : "bereit"; });
+    ["mining", "fishing"].forEach(function (k) { var cd = false, rem = 0; try { cd = skill_cd(k); } catch (e) {} try { var ns = parent.next_skill && parent.next_skill[k]; if (ns) rem = new Date(ns).getTime() - Date.now(); } catch (e) {} var wait = Math.max(0, 10 * 60000 - (Date.now() - (last_gather_try[k] || 0))); var m = Math.max(rem, cd ? 60000 : 0, wait); out.next[k] = m > 0 ? (m >= 3600000 ? Math.floor(m / 3600000) + " h " + Math.ceil((m % 3600000) / 60000) + " min" : Math.ceil(m / 60000) + " min") : "bereit"; });
     return out;
 }
 function have_item(n) { for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && it.name == n) return i; } for (var sl in character.slots) { var w = character.slots[sl]; if (w && w.name == n && sl.indexOf("trade") != 0) return -2; } return -1; }
