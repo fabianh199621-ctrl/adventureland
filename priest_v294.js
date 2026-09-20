@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Priester (F4llenPriest) – Stufe 1 =====
 // Folgt dem Magier, heilt ihn und sich, nimmt die Party-Einladung an, greift erst ab PRIEST_ATTACK_LEVEL mit an.
 // Meldungen gehen per Charakter-Nachricht an den Magier ("[Priest] …").
-var PRIEST_VERSION = "v293";
+var PRIEST_VERSION = "v294";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -308,7 +308,7 @@ async function tick() {
     if (low >= 2 && can_use("partyheal") && character.mp > 400) { try { use_skill("partyheal"); } catch (e) {} }
     // Mitkämpfen ab bestimmtem Level: das Ziel des Magiers oder meinen Angreifer
     if (character.level >= PRIEST_ATTACK_LEVEL || att) {
-        var mtg = mage && mage.tgt ? parent.entities[mage.tgt] : null; if (mtg && mtg.dead) mtg = null; var tgt = null; if (mage && mage.strict) { tgt = mtg || att; } else { tgt = att || spot_target_near() || mtg; } // Team-Häkchen: nur Ziel des Magiers (Fokus); sonst eigenes freies Exemplar des Spots (schneller bei Massen-Jagden), Ziel des Magiers als Rückfall
+        var mtg = mage && mage.tgt ? parent.entities[mage.tgt] : null; if (mtg && mtg.dead) mtg = null; var tgt = null; if (mtg && mage.focus) { tgt = mtg; } else if (mage && mage.strict) { tgt = mtg || att; } else { tgt = att || spot_target_near() || mtg; } /* focus: seltener Spawn des Magiers geht vor */ // Team-Häkchen: nur Ziel des Magiers (Fokus); sonst eigenes freies Exemplar des Spots (schneller bei Massen-Jagden), Ziel des Magiers als Rückfall
         if (tgt && is_in_range(tgt) && can_attack(tgt)) { try { attack(tgt); } catch (e) {} status("kämpft"); return; }
     }
     status(t ? "bei dir" : "sucht dich");
