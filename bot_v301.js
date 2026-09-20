@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v300";
+var BOT_VERSION = "v301";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -3669,6 +3669,7 @@ function auto_gear_tick() { // regelmäßig Gold in Ausrüstung umsetzen (Waffe 
 }
 
 // ---------- Alle Händler auf allen Servern nach Wunschlisten-Items durchsuchen ----------
+var ARB_TRIP_GAP = 5 * 60000; // Mindestabstand zwischen zwei automatischen Handelsreisen
 var GLOBAL_SCAN_INTERVAL = 15 * 60000, last_global_scan = rt("last_global_scan", 0), global_finds = [], global_logged = {}, pending_buy = null, global_debug_done = false;
 var global_offers = []; try { global_offers = parent.__lp_global_offers || []; } catch (e) {}
 // ---------- Arbitrage (Schritt 1: nur messen und anzeigen) ----------
@@ -3785,7 +3786,7 @@ function arb_blocked() { // warum gerade keine Reise möglich ist (null = mögli
     if (merch_test) return "Servertest läuft";
     if (server_trip) return "Magier auf Serverreise";
     if (handing || pickup_state) return "Abholung läuft";
-    if (Date.now() - last_arb_trip < 15 * 60000) return "Pause bis " + Math.ceil((15 * 60000 - (Date.now() - last_arb_trip)) / 60000) + " min";
+    if (Date.now() - last_arb_trip < ARB_TRIP_GAP) return "Pause bis " + Math.ceil((ARB_TRIP_GAP - (Date.now() - last_arb_trip)) / 60000) + " min";
     return null;
 }
 function start_arb_trip(server_key) {
