@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v301";
+var BOT_VERSION = "v302";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -2093,9 +2093,12 @@ function energize_tick() { // Mana an den Ranger, wenn er leer läuft und wir ge
 }
 // ---------- Stufe 2: Händler holt Loot ab (statt Stadtgang des Magiers) ----------
 var handing = false, last_pickup = 0, pickup_state = null; // pickup_state: {t, ready, done}
+var arb_finished_t = 0; // Ende der letzten Handelsreise: danach braucht der Händler ~1–2 min, bis er zuhause neu gestartet ist
 function merchant_available() { // Händler läuft, meldet sich, lebt, ist nicht gerade selbst unterwegs mit einer Abholung
     if (!team_on.merch || !team_running(TEAM.merch) || arb_job) return false;
+    if (Date.now() - arb_finished_t < 120000) return false; // gerade von der Reise zurück / wird neu gestartet – Ruf würde verpuffen
     var st = team_state[TEAM.merch]; if (!st || Date.now() - st.t > 90000) return false;
+    if (st.t < arb_finished_t) return false; // noch keine Meldung seit der Reise
     if (st.state == "tot" || /Abholung|verkauft|Bank/.test(st.state || "")) return false;
     return Date.now() - last_pickup > 3 * 60000;
 }
@@ -2132,6 +2135,7 @@ async function merchant_pickup(reason) { // Händler rufen, Items übergeben, Tr
         while (Date.now() - t0 < 4 * 60000 && !character.rip) { // warten, bis er neben uns steht (weiter kämpfen tut der Magier in der Zeit nicht – er steht)
             m = get_player(TEAM.merch); if (m && m.map == character.map && distance(character, m) < 300 && pickup_state.ready) break;
             if (!bot_running || aborted()) throw "PAUSE"; // P unterbricht die Übergabe nicht mehr – nur Bot aus
+            if (arb_job || !team_running(TEAM.merch)) { game_log("Händler ist auf Reise/neu gestartet – Übergabe abgebrochen"); break; }
             await sleep(500);
         }
         if (!(m && m.map == character.map && distance(character, m) < 300)) { game_log("Händler nicht angekommen – mache den Stadtgang selbst"); team_send(TEAM.merch, { t: "pickup_cancel" }); return false; }
@@ -3830,7 +3834,7 @@ function arb_finish(res, why) {
     try { if (active_chars()[nm]) stop_character(nm); } catch (e) {}
     try { parent.__lp_team_restart_after = Date.now() + 20000; } catch (e) {}
     arb_offers = arb_offers.filter(function (o) { return norm_server(o.server) != norm_server(sv); }); try { parent.__lp_arb_offers = arb_offers; } catch (e) {}
-    arb_job = null; arb_save_job(); last_panel = 0;
+    arb_job = null; arb_finished_t = Date.now(); arb_save_job(); last_panel = 0;
 }
 function arb_trip_html() {
     var h = "";
