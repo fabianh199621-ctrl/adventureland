@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Händler (F4llenMerch) – Stufe 1 =====
 // Läuft unsichtbar neben dem Magier. Aufgaben: Stand kaufen und öffnen, Loot abholen/verkaufen/einlagern,
 // Startgold vom Magier holen. mluck ist abgeschaltet (braucht Lv 40, Händler levelt praktisch nicht) – USE_MLUCK/LEVEL_MODE. Meldungen gehen per Charakter-Nachricht an den Magier und erscheinen dort als "[Merch] …".
-var MERCH_VERSION = "v324";
+var MERCH_VERSION = "v326";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -91,7 +91,7 @@ async function do_tidy() { // auf Befehl des Magiers: billige Ausrüstung verkau
     tidy_req = 0; stand_off(); status("räumt auf");
     manifest = {}; var n_sell = 0, n_bank = 0;
     for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (!it || it.name == STAND_ITEM || /^(hpot|mpot)/.test(it.name)) continue;
-        if (it.name == "rod" || it.name == "pickaxe" || it.name == "staff" || it.name == "blade" || it.name == "tracker" || it.name == "computer" || order_for(it.name, it.level) || hold_items[item_key(it.name, it.level)]) continue;
+        if (it.name == "rod" || it.name == "pickaxe" || it.name == "staff" || it.name == "blade" || it.name == "tracker" || it.name == "computer" || mbuild_protected(it.name) || order_for(it.name, it.level) || hold_items[item_key(it.name, it.level)]) continue;
         var d = G.items[it.name] || {}, cheap = (d.type && GEAR_TYPES[d.type]) && !/^mm|^(dex|int|str|vit)(ring|earring|amulet|belt)$/.test(it.name) && (d.g || 0) < 10000 && (it.level || 0) <= 2;
         manifest[item_key(it.name, it.level)] = cheap ? "sell" : "bank"; if (cheap) n_sell++; else n_bank++; }
     say("Aufräumen: " + n_sell + " verkaufen, " + n_bank + " in die Bank");
@@ -295,7 +295,7 @@ async function process_inventory() { // in der Stadt: verkaufen, an den Stand, i
     var sell = [], stand = [], bank = [];
     var silk = 0;
     for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (!it || it.name == STAND_ITEM || /^(hpot|mpot)/.test(it.name)) continue;
-        if (it.name == "rod" || it.name == "pickaxe" || it.name == "staff" || it.name == "blade" || it.name == "anniversarygift" || /^slice_/.test(it.name) || order_for(it.name, it.level) || hold_items[item_key(it.name, it.level)]) continue; // Werkzeug, Zutaten, Event-Items, Auftrags-Items und Einkäufe für den Magier bleiben
+        if (it.name == "rod" || it.name == "pickaxe" || it.name == "staff" || it.name == "blade" || it.name == "anniversarygift" || /^slice_/.test(it.name) || mbuild_protected(it.name) || order_for(it.name, it.level) || hold_items[item_key(it.name, it.level)]) continue; // Werkzeug, Zutaten, Event-Items, Auftrags-Items und Einkäufe für den Magier bleiben
         if (it.name == "spidersilk") { silk += it.q || 1; if (silk <= 2) continue; }
         var a = manifest[item_key(it.name, it.level)] || (/^(bronzenugget|coat1|helmet1|pants1|gloves1|shoes1)$/.test(it.name) ? "sell" : "bank"); if (a == "keep") continue; (a == "sell" ? sell : a == "stand" ? stand : bank).push(i); }
     if (!sell.length && !stand.length && !bank.length) { manifest = {}; return; }
@@ -308,7 +308,7 @@ async function process_inventory() { // in der Stadt: verkaufen, an den Stand, i
     manifest = {};
 }
 function sell_item(i, q) { try { sell(i, q); } catch (e) { parent.socket.emit("sell", { num: i, quantity: q }); } }
-function free_trade_slot() { for (var n = 1; n <= 16; n++) { var sl = "trade" + n; if (!(sl in character.slots)) continue; if (!character.slots[sl]) return sl; } for (var n2 = 1; n2 <= 16; n2++) { if (!character.slots["trade" + n2]) return "trade" + n2; } return null; }
+function free_trade_slot() { for (var n = 1; n <= 16; n++) { var sl = "trade" + n; if (!(sl in character.slots)) continue; if (!character.slots[sl]) return sl; } if (trade_keys_local().length) return null; var lv = (stand_live && stand_live.slots) || {}; for (var n2 = 1; n2 <= 16; n2++) { var s2 = "trade" + n2; if (!lv[s2] && !listed[s2]) return s2; } return null; } // ohne sichtbare Slots: bekannte Belegung (Händlerliste + eigene Einträge) statt blind trade1
 function is_listed_item(it) { for (var sl in character.slots) { if (sl.indexOf("trade") == 0 && character.slots[sl] && character.slots[sl].name == it.name && (character.slots[sl].level || 0) == (it.level || 0)) return true; } return false; }
 var last_stand_check = 0;
 async function check_stand_age() { // Ladenhüter nach 24 h vom Stand nehmen und beim NPC verkaufen
@@ -406,6 +406,24 @@ function precious(it) { return !!it && (/^(scroll[2-9]|cscroll[2-9])$/.test(it.n
 function order_name(key, o) { return (o && o.name) || String(key).split("+")[0]; }
 function order_level(key, o) { if (o && o.level != null) return o.level; var m = String(key).match(/\+(\d+)$/); return m ? parseInt(m[1]) : 0; }
 function order_for(name, level) { for (var k in stand_orders) { var o = stand_orders[k]; if (o && order_name(k, o) == name && order_level(k, o) == (level || 0)) return o; } return null; }
+// Stand-Slots: im Nebenfenster fehlen die trade-Schlüssel in character.slots oft – dann den eigenen Stand über die Händlerliste des Servers lesen (was alle Spieler sehen)
+var stand_live = { t: 0, slots: null, found: false };
+function trade_keys_local() { return Object.keys(character.slots || {}).filter(function (k) { return k.indexOf("trade") == 0; }); }
+async function stand_slots(force) {
+    var ks = trade_keys_local(); if (ks.length) { var o = {}; ks.forEach(function (k) { o[k] = character.slots[k] || null; }); stand_live = { t: Date.now(), slots: o, found: true }; return o; }
+    if (!force && Date.now() - stand_live.t < 45000 && stand_live.slots) return stand_live.slots;
+    try {
+        var r = await fetch("https://adventure.land/api/pull_merchants", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json; charset=utf-8" }, body: "{}" });
+        var res = await r.json(), chars = [];
+        (function walk(x, d) { if (!x || d > 5) return; if (Array.isArray(x)) { x.forEach(function (y) { walk(y, d + 1); }); return; } if (typeof x != "object") return; if (x.name && x.slots) { chars.push(x); return; } for (var k in x) walk(x[k], d + 1); })(res, 0);
+        var me = null; chars.forEach(function (c) { if (c.name == character.name) me = c; });
+        var o2 = {}; if (me) for (var k2 in me.slots) if (k2.indexOf("trade") == 0 && me.slots[k2]) o2[k2] = me.slots[k2];
+        stand_live = { t: Date.now(), slots: o2, found: !!me }; return o2;
+    } catch (e) { return stand_live.slots || {}; }
+}
+function slot_of_in(slots, name, level) { for (var sl in slots) { var w = slots[sl]; if (w && w.name == name && (level == null || (w.level || 0) == level)) return sl; } return null; }
+function free_slot_in(slots) { for (var n = 1; n <= 16; n++) { var sl = "trade" + n; if (trade_keys_local().length && !(sl in character.slots)) continue; if (!slots[sl] && !listed[sl]) return sl; } return null; }
+var order_miss_t = {};
 function listed_slot_of(name, level) { for (var sl in character.slots) { var w = character.slots[sl]; if (sl.indexOf("trade") == 0 && w && w.name == name && (level == null || (w.level || 0) == level)) return sl; } return null; }
 function have_item_lv(name, level) { for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && it.name == name && (level == null || (it.level || 0) == level)) return i; } return -1; }
 async function fetch_from_bank(name, level, q) { // Item aus der Bank holen (Bank ist kontoweit); Stapel: nur die gewünschte Menge
@@ -442,26 +460,31 @@ async function orders_tick() {
     log_trade_slots();
     if (Date.now() - last_orders_check < 60000 || pickup || arb_idle || gather_busy) return false; last_orders_check = Date.now();
     load_orders(); var did = false;
+    var n_orders = 0; for (var k0 in stand_orders) if (stand_orders[k0] && stand_orders[k0].price) n_orders++;
+    if (n_orders && !stand_open() && !trade_keys_local().length) { await go(home_spot(), 40); stand_on(); await sleep(1500); } // Stand auf, damit die Slots lesbar sind
+    var live = await stand_slots(true);
     for (var key in stand_orders) {
         var o = stand_orders[key]; if (!o || !o.price) continue; var name = order_name(key, o), lvl = order_level(key, o);
-        var sl = listed_slot_of(name, lvl);
+        var sl = slot_of_in(live, name, lvl);
         if (sl) { // schon am Stand: Preis prüfen
-            var cur = character.slots[sl];
+            var cur = live[sl];
             if (Math.abs((cur.price || 0) - o.price) > 1000) { try { delete listed[sl]; unequip(sl); await sleep(800); var ix = have_item(name); if (ix < 0) { say("Neu bepreisen " + name + ": nach dem Abnehmen nicht im Inventar?! (Slot " + sl + ") – bitte im Spiel prüfen"); } else { trade(ix, sl, o.price, cur.q || 1); await sleep(800); var chk = character.slots[sl]; if (chk && chk.name == name) { listed[sl] = { name: name, level: 0, t: Date.now(), price: o.price, order: true, gold0: character.gold }; save_listed(); say(name + " am Stand neu bepreist: " + o.price + " (Slot " + sl + ")"); } else { say(name + " wieder ausstellen zu " + o.price + " nicht bestätigt – liegt im Inventar, nächster Versuch"); } } } catch (e) { say("Neu bepreisen " + name + ": " + (e && e.reason || e)); } }
             order_state[key] = "am Stand für " + o.price; continue;
         }
         var ix2 = have_item_lv(name, lvl);
-        if (ix2 < 0) { var any_slot = Object.keys(character.slots || {}).some(function (k) { return k.indexOf("trade") == 0; }); if (!any_slot) { order_state[key] = "Stand-Slots nicht sichtbar"; continue; } if (order_state[key] == "nicht in Bank" && Date.now() - (o.t || 0) < 3600000) continue; if (!await fetch_from_bank(name, lvl, o.q)) { order_state[key] = "nicht in Bank"; continue; } ix2 = have_item_lv(name, lvl); did = true; }
+        if (ix2 < 0) { if (!free_slot_in(live)) { order_state[key] = "wartet (Stand voll)"; continue; } if (Date.now() - (order_miss_t[key] || 0) < 30 * 60000) continue; if (!await fetch_from_bank(name, lvl, o.q)) { order_state[key] = "nicht in Bank"; order_miss_t[key] = Date.now(); continue; } ix2 = have_item_lv(name, lvl); did = true; }
         if (ix2 < 0) continue;
         await go(home_spot(), 40); if (!stand_open()) stand_on(); await sleep(800);
-        var slot = free_trade_slot(); if (!slot) { say("Kein freier Stand-Platz für " + name); continue; }
+        live = await stand_slots(true);
+        var slot = free_slot_in(live); if (!slot) { order_state[key] = "wartet (Stand voll)"; say_once("standfull", "Kein freier Stand-Platz (" + Object.keys(live).length + " belegt) – weitere Aufträge warten", 600000); continue; }
         var tq = Math.min(character.items[ix2].q || 1, o.q || (character.items[ix2].q || 1));
-        try { trade(ix2, slot, o.price, tq); await sleep(800); listed[slot] = { name: name, level: lvl, t: Date.now(), price: o.price, q: tq, order: true, key: key, gold0: character.gold }; save_listed(); say(name + (lvl ? "+" + lvl : "") + (tq > 1 ? " ×" + tq : "") + " am Stand ausgestellt für " + o.price); order_state[key] = "am Stand für " + o.price; did = true; } catch (e) { say("Ausstellen " + name + ": " + (e && e.reason || e)); }
+        try { trade(ix2, slot, o.price, tq); await sleep(1200); if (have_item_lv(name, lvl) == ix2 && character.items[ix2] && character.items[ix2].name == name && !(character.slots && character.slots[slot] && character.slots[slot].name == name)) { var lv2 = await stand_slots(true); if (!lv2[slot] || lv2[slot].name != name) { order_state[key] = "wartet (Stand voll)"; say_once("standfull", "Stand-Platz " + slot + " nicht verfügbar (Stand voll?) – " + name + " bleibt im Inventar, weitere Aufträge warten", 600000); continue; } } listed[slot] = { name: name, level: lvl, t: Date.now(), price: o.price, q: tq, order: true, key: key, gold0: character.gold }; save_listed(); live[slot] = { name: name, level: lvl, price: o.price, q: tq }; say(name + (lvl ? "+" + lvl : "") + (tq > 1 ? " ×" + tq : "") + " am Stand ausgestellt für " + o.price); order_state[key] = "am Stand für " + o.price; did = true; } catch (e) { say("Ausstellen " + name + ": " + (e && e.reason || e)); }
     }
     // Auftrag entfernt, Item noch am Stand -> abnehmen (kommt beim nächsten Aufräumen in die Bank)
-    for (var sl4 in listed) { var r4 = listed[sl4]; if (!r4 || !r4.order || !character.slots[sl4]) continue; var k4 = r4.key || r4.name; if (!stand_orders[k4] && !order_for(r4.name, r4.level || 0)) { try { unequip(sl4); await sleep(600); } catch (e) {} delete listed[sl4]; save_listed(); manifest[item_key(r4.name, r4.level)] = "bank"; say(r4.name + " vom Stand genommen (Auftrag gelöscht) – kommt in die Bank"); did = true; } }
+    for (var sl4 in listed) { var r4 = listed[sl4]; if (!r4 || !r4.order || !(live[sl4] || (character.slots && character.slots[sl4]))) continue; var k4 = r4.key || r4.name; if (!stand_orders[k4] && !order_for(r4.name, r4.level || 0)) { try { unequip(sl4); await sleep(600); } catch (e) {} delete listed[sl4]; save_listed(); manifest[item_key(r4.name, r4.level)] = "bank"; say(r4.name + " vom Stand genommen (Auftrag gelöscht) – kommt in die Bank"); did = true; } }
     // verkauft? (Eintrag weg, Auftrag noch da)
-    for (var sl3 in listed) { var rec = listed[sl3]; if (!rec || !rec.order || character.slots[sl3]) continue;
+    var live2 = await stand_slots(true); if (!stand_live.found && !trade_keys_local().length) return did; // Stand nicht sichtbar (zu / nicht in der Liste): nichts als verkauft werten
+    for (var sl3 in listed) { var rec = listed[sl3]; if (!rec || !rec.order || live2[sl3]) continue;
         var sold = rec.gold0 != null && character.gold >= rec.gold0 + rec.price * 0.9; // wirklich verkauft: nur wenn das Gold entsprechend gestiegen ist
         delete listed[sl3]; save_listed();
         if (sold) { try { send_cm(MAGE, { t: "sold", name: rec.name, price: rec.price }); } catch (e) {} say("VERKAUFT am Stand: " + rec.name + " für " + rec.price + " Gold (Kasse jetzt " + character.gold + ")"); var ko = rec.key || rec.name, oo = stand_orders[ko]; if (oo && oo.q > (rec.q || 1)) { oo.q -= (rec.q || 1); } else delete stand_orders[ko]; try { localStorage.setItem("lp_stand_orders_" + character.name, JSON.stringify(stand_orders)); } catch (e) {} }
@@ -541,6 +564,91 @@ async function run_arbitrage(job) {
     arb_res.done = true; arb_res.profit = arb_res.earned - arb_res.spent; arb_res.gold = character.gold; arb_save();
     arb_idle = true; status("Reise fertig");
 }
+
+// ---------- Bauauftrag des Magiers (lp_mbuild_<Magier>): NPC-Teil kaufen, hochziehen/compounden (Massproduction), fertige Teile in die Bank ----------
+function mbuild_load() { try { return JSON.parse(localStorage.getItem("lp_mbuild_" + MAGE) || "null"); } catch (e) { return null; } }
+function mbuild_save(o) { try { var cur = mbuild_load(); if (cur && cur.name == o.name && cur.level == o.level) { cur.done = o.done; cur.destroyed = o.destroyed; cur.spent = o.spent; cur.step = o.step; if (o.running === false) cur.running = false; o = cur; } localStorage.setItem("lp_mbuild_" + MAGE, JSON.stringify(o)); } catch (e) {} }
+function mbuild_protected(name) { var o = mbuild_load(); return !!o && o.name == name; }
+function mbuild_running() { var o = mbuild_load(); return !!o && !!o.running && o.done < o.n; }
+function item_grade(name, level) { var g = (G.items[name] || {}).grades || [], n = 0; for (var i = 0; i < g.length; i++) if (level >= g[i]) n++; return n; }
+function inv_idx(name, level) { var out = []; for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && it.name == name && (it.level || 0) == level) out.push(i); } return out; }
+async function mbuild_wait(key) { await sleep(1200); for (var i = 0; i < 80 && character.q && character.q[key]; i++) await sleep(500); }
+async function mbuild_buy(name, n) { var npc = npc_selling(name); if (!npc) return false; var pos = npc_pos(npc); if (!pos) return false; await go(pos, 60); var c0 = 0; character.items.forEach(function (x) { if (x && x.name == name) c0++; }); try { await buy(name, n); } catch (e) { try { parent.socket.emit("buy", { name: name, quantity: n }); } catch (e2) {} } await sleep(900); var c1 = 0; character.items.forEach(function (x) { if (x && x.name == name) c1++; }); return c1 > c0; }
+async function mbuild_scroll(scroll) { if (locate_item(scroll) >= 0) return true; try { await buy(scroll, 1); } catch (e) { try { parent.socket.emit("buy", { name: scroll, quantity: 1 }); } catch (e2) {} } await sleep(700); if (locate_item(scroll) >= 0) return true; var npc = npc_selling(scroll), pos = npc && npc_pos(npc); if (pos) { await go(pos, 60); try { await buy(scroll, 1); } catch (e) {} await sleep(700); } return locate_item(scroll) >= 0; }
+async function mbuild_gold(want) { // zum Magier und Gold holen (er gibt, was über seiner Reserve frei ist)
+    if (Date.now() - last_gold_ask < 90000) return false; last_gold_ask = Date.now();
+    var t = mage_entity() || (mage && Date.now() - mage.t < 60000 ? { map: mage.map, x: mage.x, y: mage.y } : null); if (!t) { say("Bauauftrag: Kasse zu klein und Magier nicht erreichbar"); return false; }
+    status("Gold fürs Bauen"); await go({ map: t.map, x: t.x, y: t.y }, 150); var g1 = character.gold;
+    try { send_cm(MAGE, { t: "gold?", amount: want }); } catch (e) {} await sleep(2500);
+    say(character.gold > g1 ? "Bauauftrag: Kasse aufgefüllt +" + (character.gold - g1) + " → " + character.gold : "Bauauftrag: Magier konnte nicht auffüllen (will " + want + ")");
+    return character.gold > g1;
+}
+async function mbuild_bank(o) { // fertige Teile (Zielstufe) in die Bank
+    var idx = inv_idx(o.name, o.level); if (!idx.length) return;
+    try { await smart_move("bank"); } catch (e) { return; } await sleep(800);
+    idx = inv_idx(o.name, o.level); for (var i = idx.length - 1; i >= 0; i--) { try { bank_store(idx[i]); await sleep(500); } catch (e) {} }
+    say("Bauauftrag: " + idx.length + "× " + o.name + " +" + o.level + " in die Bank gelegt");
+}
+var mbuild_active = false, mbuild_pos_ok = false;
+async function mbuild_tick() {
+    var o = mbuild_load();
+    if (!o || !o.running || o.done >= o.n) { if (mbuild_active) { mbuild_active = false; mbuild_pos_ok = false; if (o && inv_idx(o.name, o.level).length) await mbuild_bank(o); } return false; }
+    var def = G.items[o.name]; if (!def || !npc_selling(o.name)) { o.running = false; o.step = "nicht kaufbar"; mbuild_save(o); return false; }
+    if (!mbuild_active) { mbuild_active = true; say("Bauauftrag: " + o.name + " +" + o.level + " × " + o.n + " (" + o.done + " fertig) – ich baue"); }
+    if (stand_open()) stand_off();
+    status("baut " + o.name + " +" + o.level);
+    var reserve = Math.max(o.reserve || 0, GOLD_MIN), comp = !!def.compound, g0 = character.gold, r = "again";
+    try {
+        if (character.esize < 4) { if (inv_idx(o.name, o.level).length) { await mbuild_bank(o); return true; } o.running = false; o.step = "Inventar voll"; mbuild_save(o); say("Bauauftrag: Inventar voll – gestoppt"); return true; }
+        r = comp ? await mbuild_compound(o, reserve) : await mbuild_upgrade(o, reserve);
+        o.spent = (o.spent || 0) + Math.max(0, g0 - character.gold);
+        if (r == "done") { o.done++; say("Bauauftrag: " + o.name + " +" + o.level + " fertig (" + o.done + "/" + o.n + ", " + o.destroyed + " zerstört, " + Math.round(o.spent / 1000) + "k Gold)"); if (o.done >= o.n || inv_idx(o.name, o.level).length >= 3) { await mbuild_bank(o); mbuild_pos_ok = false; } }
+        if (r == "gold") { o.step = "warte auf Gold (Kasse " + Math.round(character.gold / 1000) + "k, Reserve " + Math.round(reserve / 1000) + "k)"; mbuild_save(o); await mbuild_gold(Math.max(GOLD_KEEP, reserve + def.g * 5 + 200000) - character.gold); mbuild_pos_ok = false; }
+        if (r == "stop") { o.running = false; say("Bauauftrag: gestoppt (" + (o.step || "Fehler") + ")"); }
+        if (o.done >= o.n) { o.running = false; o.step = "fertig"; say("Bauauftrag fertig: " + o.n + "× " + o.name + " +" + o.level + " in der Bank · " + o.destroyed + " zerstört · " + Math.round(o.spent / 1000) + "k Gold"); }
+    } catch (e) { say("Bauauftrag-Fehler: " + (e && e.message ? e.message : e)); }
+    mbuild_save(o); return true;
+}
+async function mbuild_place(kind) { if (mbuild_pos_ok) return; try { await smart_move(kind); mbuild_pos_ok = true; } catch (e) { await sleep(1000); } }
+async function mbuild_upgrade(o, reserve) {
+    var def = G.items[o.name], lv = -1;
+    for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && it.name == o.name && (it.level || 0) < o.level && (it.level || 0) > lv) lv = it.level || 0; }
+    if (lv < 0) { if (character.gold - reserve < def.g) return "gold"; o.step = "kaufe " + o.name; mbuild_save(o); if (!await mbuild_buy(o.name, 1)) { o.step = "Kauf " + o.name + " fehlgeschlagen"; return "stop"; } mbuild_pos_ok = false; lv = 0; }
+    await mbuild_place("upgrade");
+    while (lv < o.level) {
+        if (!mbuild_running()) return "again";
+        var ii = inv_idx(o.name, lv)[0]; if (ii == null) return "again";
+        var scroll = "scroll" + item_grade(o.name, lv), sp = (G.items[scroll] || {}).g || 0;
+        if (character.gold - reserve < sp) return "gold";
+        if (!await mbuild_scroll(scroll)) { o.step = "keine " + scroll; return "stop"; }
+        var si = locate_item(scroll); ii = inv_idx(o.name, lv)[0]; if (ii == null) return "again";
+        o.step = "+" + lv + " → +" + (lv + 1); mbuild_save(o);
+        try { if (character.level >= 60) use_skill("massproductionpp"); else if (character.level >= 30) use_skill("massproduction"); } catch (e) {} await sleep(300);
+        var nS = inv_idx(o.name, lv).length, nN = inv_idx(o.name, lv + 1).length;
+        try { await upgrade(ii, si); } catch (e) {}
+        await mbuild_wait("upgrade");
+        if (inv_idx(o.name, lv + 1).length > nN) lv++;
+        else if (inv_idx(o.name, lv).length == nS) { /* fehlgeschlagen, Teil erhalten */ }
+        else { o.destroyed++; say("Bauauftrag: " + o.name + " bei +" + lv + " zerstört (" + o.destroyed + ". Mal) – nächstes Teil"); return "again"; }
+    }
+    return "done";
+}
+async function mbuild_compound(o, reserve) {
+    var def = G.items[o.name], t = o.level, n_t0 = inv_idx(o.name, t).length, l = -1;
+    for (var k = t - 1; k >= 0; k--) if (inv_idx(o.name, k).length >= 3) { l = k; break; }
+    if (l < 0) { var need = 3 - inv_idx(o.name, 0).length; if (character.gold - reserve < def.g * need) return "gold"; o.step = "kaufe " + need + "× " + o.name; mbuild_save(o); if (!await mbuild_buy(o.name, need)) { o.step = "Kauf fehlgeschlagen"; return "stop"; } mbuild_pos_ok = false; return "again"; }
+    await mbuild_place("compound");
+    var scroll = "cscroll" + item_grade(o.name, l), sp = (G.items[scroll] || {}).g || 0;
+    if (character.gold - reserve < sp) return "gold";
+    if (!await mbuild_scroll(scroll)) { o.step = "keine " + scroll; return "stop"; }
+    var si = locate_item(scroll), idx = inv_idx(o.name, l), prev = inv_idx(o.name, l + 1).length;
+    o.step = "+" + l + " ×3 → +" + (l + 1); mbuild_save(o);
+    try { if (character.level >= 60) use_skill("massproductionpp"); else if (character.level >= 30) use_skill("massproduction"); } catch (e) {} await sleep(300);
+    try { await compound(idx[0], idx[1], idx[2], si); } catch (e) {}
+    await mbuild_wait("compound");
+    if (inv_idx(o.name, l + 1).length > prev) say("Bauauftrag: " + o.name + " +" + (l + 1) + " erstellt"); else { o.destroyed++; say("Bauauftrag: Compound +" + l + " ×3 fehlgeschlagen (" + o.destroyed + ". Mal)"); }
+    return inv_idx(o.name, t).length > n_t0 ? "done" : "again";
+}
 async function loop() {
     var g = MY_GEN;
     if (HAD_OLD) { say("neue Version " + MERCH_VERSION + " übernommen"); await sleep(3000); }
@@ -572,6 +680,7 @@ async function loop() {
             if (goldback_req || (character.gold > GOLD_AUTO_BACK && Date.now() - last_goldback > 10 * 60000 && mage && Date.now() - mage.t < 30000)) { await do_goldback(); continue; }
             if (await npc_orders_tick()) continue;
             if (await orders_tick()) continue;
+            if (await mbuild_tick()) continue;
             if (await gather_tick()) continue;
             status(stand_open() ? "Stand" : "unterwegs");
             await do_home();
