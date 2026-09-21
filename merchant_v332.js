@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Händler (F4llenMerch) – Stufe 1 =====
 // Läuft unsichtbar neben dem Magier. Aufgaben: Stand kaufen und öffnen, Loot abholen/verkaufen/einlagern,
 // Startgold vom Magier holen. mluck ist abgeschaltet (braucht Lv 40, Händler levelt praktisch nicht) – USE_MLUCK/LEVEL_MODE. Meldungen gehen per Charakter-Nachricht an den Magier und erscheinen dort als "[Merch] …".
-var MERCH_VERSION = "v330";
+var MERCH_VERSION = "v332";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -27,6 +27,8 @@ var last_state = null;
 function status(state) { if (state == last_state && Date.now() - last_status < 30000) return; last_state = state; last_status = Date.now(); try { send_cm(MAGE, { t: "st", level: character.level, state: character.rip ? "tot" : state, gold: character.gold, stand: !!character.stand, map: character.map, hp: character.hp, max_hp: character.max_hp, orders: order_state, gather: (function () { try { return gather_info(); } catch (e) { return null; } })() }); } catch (e) {} }
 // ---------- Stufe 2: Abholung, Verkauf am Stand/NPC, Bank ----------
 var pickup = null, manifest = {}, pickup_done = false, STAND_MARKUP = 1.8, STAND_MAX_AGE = 24 * 3600000, GOLD_KEEP = 150000, GOLD_HANDBACK = 300000;
+var unlist_req = null;
+function stand_live_write(live) { try { localStorage.setItem("lp_stand_live_" + character.name, JSON.stringify({ t: Date.now(), found: !!(stand_live.found || trade_keys_local().length), slots: live || {} })); } catch (e) {} }
 var listed = {}; try { listed = JSON.parse(localStorage.getItem("lp_listed_" + character.name) || "{}"); } catch (e) {}
 function save_listed() { try { localStorage.setItem("lp_listed_" + character.name, JSON.stringify(listed)); } catch (e) {} }
 function item_key(name, level) { return name + "+" + (level || 0); }
@@ -105,6 +107,7 @@ function on_cm(name, data) {
     else if (data.t == "pickup_cancel") { pickup = null; }
     else if (data.t == "goldback") { goldback_req = Date.now(); }
     else if (data.t == "tidy") { tidy_req = Date.now(); say("Aufräumen angefordert"); }
+    else if (data.t == "unlist") { unlist_req = { slot: data.slot, name: data.name, t: Date.now() }; }
     else if (data.t == "kiss") { if (data.map == character.map || data.map == "main") { kiss_req = data; say("Kuss-Runde " + data.round + ": " + data.name + " (" + data.map + ")"); } else say("Kuss-Runde " + data.round + " auf " + data.map + " – zu weit, lasse aus"); }
     else if (data.t == "donate" && data.gold > 0) { donate_req = { gold: data.gold, target: data.target || 40 }; say("Spende angefordert: " + data.gold + " Gold bei Ron" + (data.target ? " (bis Lv " + data.target + ")" : "")); }
     else if (data.t == "item") { manifest[item_key(data.name, data.level)] = data.action || "bank"; if (data.action == "hold") { hold_items[item_key(data.name, data.level)] = true; hold_save(); } }
@@ -401,6 +404,9 @@ async function gather_tick() { // in der Hauptschleife: bei freiem Cooldown losz
 
 // ---------- Stand-Aufträge vom Magier: Wertsachen aus der Bank holen und zum vorgegebenen Preis anbieten ----------
 var stand_orders = {}, last_orders_check = 0, order_state = {};
+var order_listed = {}; try { order_listed = JSON.parse(localStorage.getItem("lp_order_listed_" + character.name) || "{}"); } catch (e) {} // Aufträge, die schon einmal am Stand lagen (Item danach weg = verkauft)
+function order_listed_save() { try { localStorage.setItem("lp_order_listed_" + character.name, JSON.stringify(order_listed)); } catch (e) {} }
+function order_sold(key, o, name, lvl, price) { try { send_cm(MAGE, { t: "sold", name: name, price: price }); } catch (e) {} say("VERKAUFT am Stand: " + name + (lvl ? "+" + lvl : "") + " für " + price + " Gold"); if (o && o.q > 1) { o.q -= 1; } else delete stand_orders[key]; delete order_listed[key]; order_listed_save(); try { localStorage.setItem("lp_stand_orders_" + character.name, JSON.stringify(stand_orders)); } catch (e) {} }
 function load_orders() { try { stand_orders = JSON.parse(localStorage.getItem("lp_stand_orders_" + character.name) || "{}"); } catch (e) { stand_orders = {}; } }
 function precious(it) { return !!it && (/^(scroll[2-9]|cscroll[2-9])$/.test(it.name) || npc_val(it.name, it.level) >= 1000000); } // wird nie automatisch zum NPC gebracht oder umgeräumt
 function order_name(key, o) { return (o && o.name) || String(key).split("+")[0]; }
@@ -470,32 +476,35 @@ async function orders_tick() {
     load_orders(); var did = false;
     var n_orders = 0; for (var k0 in stand_orders) if (stand_orders[k0] && stand_orders[k0].price) n_orders++;
     if (n_orders && !stand_open() && !trade_keys_local().length) { await go(home_spot(), 40); stand_on(); await sleep(1500); } // Stand auf, damit die Slots lesbar sind
-    var live = await stand_slots(true);
+    var live = await stand_slots(true); stand_live_write(live);
+    if (unlist_req) { var ur = unlist_req; unlist_req = null; try { if (!stand_open()) { await go(home_spot(), 40); stand_on(); await sleep(800); } unequip(ur.slot); await sleep(800); delete listed[ur.slot]; save_listed(); manifest[item_key(ur.name.split("+")[0], parseInt((ur.name.split("+")[1]) || 0))] = "bank"; say(ur.name + " vom Stand genommen (" + ur.slot + ") – kommt in die Bank"); } catch (e) { say("Vom Stand nehmen: " + e); } live = await stand_slots(true); stand_live_write(live); }
     for (var key in stand_orders) {
         var o = stand_orders[key]; if (!o || !o.price) continue; var name = order_name(key, o), lvl = order_level(key, o);
         var sl = slot_of_in(live, name, lvl);
         if (sl) { // schon am Stand: Preis prüfen
             var cur = live[sl];
             if (Math.abs((cur.price || 0) - o.price) > 1000) { try { delete listed[sl]; unequip(sl); await sleep(800); var ix = have_item(name); if (ix < 0) { say("Neu bepreisen " + name + ": nach dem Abnehmen nicht im Inventar?! (Slot " + sl + ") – bitte im Spiel prüfen"); } else { trade(ix, sl, o.price, cur.q || 1); await sleep(800); var chk = character.slots[sl]; if (chk && chk.name == name) { listed[sl] = { name: name, level: 0, t: Date.now(), price: o.price, order: true, gold0: character.gold }; save_listed(); say(name + " am Stand neu bepreist: " + o.price + " (Slot " + sl + ")"); } else { say(name + " wieder ausstellen zu " + o.price + " nicht bestätigt – liegt im Inventar, nächster Versuch"); } } } catch (e) { say("Neu bepreisen " + name + ": " + (e && e.reason || e)); } }
+            if (!order_listed[key]) { order_listed[key] = Date.now(); order_listed_save(); }
             order_state[key] = "am Stand für " + o.price; continue;
         }
         var ix2 = have_item_lv(name, lvl);
         if (ix2 < 0) { if (!free_slot_in(live)) { order_state[key] = "wartet (Stand voll)"; continue; }
             var snap = bank_snap_has(name, lvl), sig = bank_snap_sig();
+            if (snap === false && order_listed[key] && stand_live.found) { order_sold(key, o, name, lvl, o.price); continue; } // lag am Stand, ist weg und nicht in der Bank: verkauft
             if (snap === false) { order_state[key] = "nicht in Bank"; if (order_miss_sig[key] == sig && Date.now() - (order_miss_t[key] || 0) < 30 * 60000) continue; order_miss_sig[key] = sig; } // laut Bankstand nicht da: nur nachsehen, wenn sich der Bankstand geändert hat (oder alle 30 min)
             else if (snap === null && Date.now() - (order_miss_t[key] || 0) < 30 * 60000 && order_state[key] == "nicht in Bank") continue;
-            if (!await fetch_from_bank(name, lvl, o.q)) { order_state[key] = "nicht in Bank"; order_miss_t[key] = Date.now(); order_miss_sig[key] = bank_snap_sig(); continue; } ix2 = have_item_lv(name, lvl); did = true; }
+            if (!await fetch_from_bank(name, lvl, o.q)) { if (order_listed[key]) { order_sold(key, o, name, lvl, o.price); continue; } order_state[key] = "nicht in Bank"; order_miss_t[key] = Date.now(); order_miss_sig[key] = bank_snap_sig(); continue; } ix2 = have_item_lv(name, lvl); did = true; }
         if (ix2 < 0) continue;
         await go(home_spot(), 40); if (!stand_open()) stand_on(); await sleep(800);
         live = await stand_slots(true);
         var slot = free_slot_in(live); if (!slot) { order_state[key] = "wartet (Stand voll)"; say_once("standfull", "Kein freier Stand-Platz (" + Object.keys(live).length + " belegt) – weitere Aufträge warten", 600000); continue; }
         var tq = Math.min(character.items[ix2].q || 1, o.q || (character.items[ix2].q || 1));
-        try { trade(ix2, slot, o.price, tq); await sleep(1200); if (have_item_lv(name, lvl) == ix2 && character.items[ix2] && character.items[ix2].name == name && !(character.slots && character.slots[slot] && character.slots[slot].name == name)) { var lv2 = await stand_slots(true); if (!lv2[slot] || lv2[slot].name != name) { order_state[key] = "wartet (Stand voll)"; say_once("standfull", "Stand-Platz " + slot + " nicht verfügbar (Stand voll?) – " + name + " bleibt im Inventar, weitere Aufträge warten", 600000); continue; } } listed[slot] = { name: name, level: lvl, t: Date.now(), price: o.price, q: tq, order: true, key: key, gold0: character.gold }; save_listed(); live[slot] = { name: name, level: lvl, price: o.price, q: tq }; say(name + (lvl ? "+" + lvl : "") + (tq > 1 ? " ×" + tq : "") + " am Stand ausgestellt für " + o.price); order_state[key] = "am Stand für " + o.price; did = true; } catch (e) { say("Ausstellen " + name + ": " + (e && e.reason || e)); }
+        try { trade(ix2, slot, o.price, tq); await sleep(1200); if (have_item_lv(name, lvl) == ix2 && character.items[ix2] && character.items[ix2].name == name && !(character.slots && character.slots[slot] && character.slots[slot].name == name)) { var lv2 = await stand_slots(true); if (!lv2[slot] || lv2[slot].name != name) { order_state[key] = "wartet (Stand voll)"; say_once("standfull", "Stand-Platz " + slot + " nicht verfügbar (Stand voll?) – " + name + " bleibt im Inventar, weitere Aufträge warten", 600000); continue; } } listed[slot] = { name: name, level: lvl, t: Date.now(), price: o.price, q: tq, order: true, key: key, gold0: character.gold }; save_listed(); order_listed[key] = Date.now(); order_listed_save(); live[slot] = { name: name, level: lvl, price: o.price, q: tq }; say(name + (lvl ? "+" + lvl : "") + (tq > 1 ? " ×" + tq : "") + " am Stand ausgestellt für " + o.price); order_state[key] = "am Stand für " + o.price; did = true; } catch (e) { say("Ausstellen " + name + ": " + (e && e.reason || e)); }
     }
     // Auftrag entfernt, Item noch am Stand -> abnehmen (kommt beim nächsten Aufräumen in die Bank)
     for (var sl4 in listed) { var r4 = listed[sl4]; if (!r4 || !r4.order || !(live[sl4] || (character.slots && character.slots[sl4]))) continue; var k4 = r4.key || r4.name; if (!stand_orders[k4] && !order_for(r4.name, r4.level || 0)) { try { unequip(sl4); await sleep(600); } catch (e) {} delete listed[sl4]; save_listed(); manifest[item_key(r4.name, r4.level)] = "bank"; say(r4.name + " vom Stand genommen (Auftrag gelöscht) – kommt in die Bank"); did = true; } }
     // verkauft? (Eintrag weg, Auftrag noch da)
-    var live2 = await stand_slots(true); if (!stand_live.found && !trade_keys_local().length) return did; // Stand nicht sichtbar (zu / nicht in der Liste): nichts als verkauft werten
+    var live2 = await stand_slots(true); stand_live_write(live2); if (!stand_live.found && !trade_keys_local().length) return did; // Stand nicht sichtbar (zu / nicht in der Liste): nichts als verkauft werten
     for (var sl3 in listed) { var rec = listed[sl3]; if (!rec || !rec.order || live2[sl3]) continue;
         var back = have_item_lv(rec.name, rec.level || 0) >= 0; // Item wieder im Inventar (abgenommen/überschrieben) → nicht verkauft
         var sold = !back && ((rec.gold0 != null && character.gold >= rec.gold0 + rec.price * 0.9) || (Date.now() - (rec.t || 0) > 60000)); // weg vom Stand und nicht im Inventar = verkauft (Gold-Vergleich taugt nicht, die Kasse schwankt durch Tränke/Spenden)
