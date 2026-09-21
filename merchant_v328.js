@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Händler (F4llenMerch) – Stufe 1 =====
 // Läuft unsichtbar neben dem Magier. Aufgaben: Stand kaufen und öffnen, Loot abholen/verkaufen/einlagern,
 // Startgold vom Magier holen. mluck ist abgeschaltet (braucht Lv 40, Händler levelt praktisch nicht) – USE_MLUCK/LEVEL_MODE. Meldungen gehen per Charakter-Nachricht an den Magier und erscheinen dort als "[Merch] …".
-var MERCH_VERSION = "v326";
+var MERCH_VERSION = "v328";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -485,7 +485,8 @@ async function orders_tick() {
     // verkauft? (Eintrag weg, Auftrag noch da)
     var live2 = await stand_slots(true); if (!stand_live.found && !trade_keys_local().length) return did; // Stand nicht sichtbar (zu / nicht in der Liste): nichts als verkauft werten
     for (var sl3 in listed) { var rec = listed[sl3]; if (!rec || !rec.order || live2[sl3]) continue;
-        var sold = rec.gold0 != null && character.gold >= rec.gold0 + rec.price * 0.9; // wirklich verkauft: nur wenn das Gold entsprechend gestiegen ist
+        var back = have_item_lv(rec.name, rec.level || 0) >= 0; // Item wieder im Inventar (abgenommen/überschrieben) → nicht verkauft
+        var sold = !back && ((rec.gold0 != null && character.gold >= rec.gold0 + rec.price * 0.9) || (Date.now() - (rec.t || 0) > 60000)); // weg vom Stand und nicht im Inventar = verkauft (Gold-Vergleich taugt nicht, die Kasse schwankt durch Tränke/Spenden)
         delete listed[sl3]; save_listed();
         if (sold) { try { send_cm(MAGE, { t: "sold", name: rec.name, price: rec.price }); } catch (e) {} say("VERKAUFT am Stand: " + rec.name + " für " + rec.price + " Gold (Kasse jetzt " + character.gold + ")"); var ko = rec.key || rec.name, oo = stand_orders[ko]; if (oo && oo.q > (rec.q || 1)) { oo.q -= (rec.q || 1); } else delete stand_orders[ko]; try { localStorage.setItem("lp_stand_orders_" + character.name, JSON.stringify(stand_orders)); } catch (e) {} }
         else say(rec.name + " ist nicht mehr am Stand, aber NICHT verkauft (Gold " + character.gold + ") – stelle es wieder aus"); }
