@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v329";
+var BOT_VERSION = "v331";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -1672,6 +1672,7 @@ function init_panel() {
         else if (act == "donateauto") { donate_auto = !donate_auto; try { localStorage.setItem("lp_donate_auto", donate_auto ? "1" : "0"); } catch (x) {} game_log("Spenden-Automatik " + (donate_auto ? "an – Händler spendet alles über der Nachfüllgrenze bis Lv " + DONATE_LVL : "aus")); last_panel = 0; }
         else if (act == "banklist") { div.__banklist = !div.__banklist; last_panel = 0; }
         else if (act == "standadd") { var sk = b.getAttribute("data-key"), snm = b.getAttribute("data-name"), slv = parseInt(b.getAttribute("data-lvl")) || 0; var pe = div.querySelector("input[data-sp='" + sk + "']"), qe = div.querySelector("input[data-sq='" + sk + "']"); var sp = pe ? parse_mio(pe.value) : 0, sq = qe ? (parseInt(qe.value) || 1) : 1; if (!(sp > 0)) { game_log("Stand: Preis fehlt"); } else { stand_orders[sk] = { name: snm, level: slv, q: Math.max(1, sq), price: sp, fixed: sp, since: Date.now(), t: Date.now() }; save_stand_orders(); game_log("Stand-Auftrag: " + snm + (slv ? "+" + slv : "") + (sq > 1 ? " ×" + sq : "") + " für " + fmt(sp) + " – Händler holt es aus der Bank und stellt es aus"); last_panel = 0; } }
+        else if (act == "standclean") { var ms0 = team_state[TEAM.merch], n0 = 0; for (var ck in stand_orders) { var cs = ms0 && ms0.orders && ms0.orders[ck]; if (cs == "nicht in Bank") { delete stand_orders[ck]; n0++; } } save_stand_orders(); game_log("Stand-Aufträge: " + n0 + " nicht auffindbare (verkauft/weg) gelöscht"); last_panel = 0; }
         else if (act == "standdel") { var dk = b.getAttribute("data-key"); if (stand_orders[dk]) { game_log("Stand-Auftrag gelöscht: " + dk + " – Händler nimmt es vom Stand"); delete stand_orders[dk]; save_stand_orders(); last_panel = 0; } }
         else if (act == "bankstatus") { try { bank_status_log(); } catch (e) { game_log("Bank-Status: " + err_txt(e)); } }
         else if (act == "mbcancel") { if (merch_buy && merch_buy.stage == "away") game_log("Einkauf: Reise läuft, Abbruch erst nach Rückkehr"); else mb_fail("manuell abgebrochen"); }
@@ -2179,7 +2180,7 @@ function is_junk(it) { // kaufbare Standardausrüstung ohne Level/Attribut; unge
 var DUP_MAX_LEVEL = 5, DUP_KEEP = 1;
 var bank_cache = null; try { bank_cache = JSON.parse(localStorage.getItem("lp_bank_cache_" + character.name) || "null"); } catch (e) {}
 function bank_snapshot() { // Bankinhalt merken, solange wir drin stehen – außerhalb der Bank kennt das Spiel ihn nicht
-    if (character.bank && typeof character.bank == "object") { var snap = {}; for (var pack in character.bank) if (pack.indexOf("items") == 0 && Array.isArray(character.bank[pack])) snap[pack] = character.bank[pack].map(function (b) { return b ? { name: b.name, level: b.level, q: b.q } : null; }); bank_cache = snap; try { localStorage.setItem("lp_bank_cache_" + character.name, JSON.stringify(snap)); } catch (e) {} }
+    if (character.bank && typeof character.bank == "object") { var snap = {}; for (var pack in character.bank) if (pack.indexOf("items") == 0 && Array.isArray(character.bank[pack])) snap[pack] = character.bank[pack].map(function (b) { return b ? { name: b.name, level: b.level, q: b.q } : null; }); bank_cache = snap; try { localStorage.setItem("lp_bank_cache_" + character.name, JSON.stringify(snap)); localStorage.setItem("lp_bank_cache_t_" + character.name, String(Date.now())); } catch (e) {} }
 }
 function all_copies(name) { // Inventar + Bank (bzw. letzter Bankstand), ohne getragene
     var out = [];
@@ -3963,7 +3964,10 @@ function watch_after_scan() {
         }
     }
 }
+var bank_cache_t = 0;
+function bank_cache_refresh() { try { var t = parseInt(localStorage.getItem("lp_bank_cache_t_" + character.name) || "0") || 0; if (t > bank_cache_t) { bank_cache_t = t; var raw = localStorage.getItem("lp_bank_cache_" + character.name); if (raw) bank_cache = JSON.parse(raw); } } catch (e) {} } // Händler hat die Bank besucht: seinen Schnappschuss übernehmen
 function bank_snapshot_items() { // Bankinhalt (live oder letzter Stand) gruppiert nach Item+Level
+    if (!(character.bank && typeof character.bank == "object")) bank_cache_refresh();
     var bk = (character.bank && typeof character.bank == "object") ? character.bank : (bank_cache || {}), g = {};
     for (var pk in bk) if (pk.indexOf("items") == 0 && Array.isArray(bk[pk])) bk[pk].forEach(function (it) { if (!it || /^(hpot|mpot)/.test(it.name)) return; var k = it.name + ((it.level || 0) ? "+" + it.level : ""); var e = g[k] || (g[k] = { key: k, name: it.name, level: it.level || 0, q: 0, n: 0 }); e.q += it.q || 1; e.n++; });
     return Object.keys(g).map(function (k) { return g[k]; }).sort(function (a, b) { return ((G.items[a.name] || {}).name || a.name).localeCompare((G.items[b.name] || {}).name || b.name) || a.level - b.level; });
@@ -3979,6 +3983,7 @@ function stand_orders_html() {
     if (keys.length) { h += "<table class='lp_t' style='font-size:11px'><tr><th style='text-align:left'>Auftrag</th><th>Menge</th><th>Preis</th><th style='text-align:left'>Stand</th><th></th></tr>";
         keys.forEach(function (k) { var o = stand_orders[k], on = o.name || String(k).split("+")[0], nm = (G.items[on] || {}).name || on, st = ms && ms.orders && ms.orders[k]; h += "<tr><td>" + esc(nm) + (o.level ? " +" + o.level : "") + "</td><td>" + (o.q || 1) + "</td><td>" + fmt(o.price) + "</td><td style='text-align:left;color:#8ab4f8'>" + esc(st || "wartet auf Händler") + "</td><td><button data-act='standdel' data-key='" + esc(k) + "' title='Auftrag löschen – Händler nimmt es vom Stand, es kommt in die Bank'>✕</button></td></tr>"; });
         h += "</table>"; }
+    if (keys.length) h += "<div class='lp_row'><button data-act='standclean' title='alle Aufträge löschen, deren Item weder am Stand noch im Inventar noch in der Bank ist (verkauft oder anderweitig weg)'>Nicht auffindbare löschen</button></div>";
     h += "<div class='lp_row'><span class='lp_k'>Aus der Bank anbieten:</span><button data-act='banktoggle' title='Bank-Fenster: Bankinhalt mit NPC-/Marktwert, ausstellen oder beim NPC verkaufen'>Bank-Fenster</button><button data-act='banklist' title='alte Kurzliste'>" + (panel.__banklist ? "▾" : "▸") + "</button>" + (character.bank ? "" : "<span class='lp_k' style='font-size:11px'>(Stand vom letzten Bankbesuch)</span>") + "</div>";
     if (panel.__banklist) {
         var items = bank_snapshot_items();
