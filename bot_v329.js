@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v327";
+var BOT_VERSION = "v329";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -69,11 +69,16 @@ var HIGH_SCROLL_BONUS = { u: 0.06, c: 0.041 };   // eine Scroll-Stufe höher als
 // Gelernte Erfolgsquoten je Stufe (aus echten Versuchen), Schlüssel "u<level>" / "c<level>"
 var up_stats = {}; try { up_stats = JSON.parse(localStorage.getItem("lp_up_stats") || "{}"); } catch (e) {}
 try { if (up_stats.c0 && up_stats.c0.n > 60 && up_stats.c0.ok / up_stats.c0.n < 0.5) { delete up_stats.c0; localStorage.setItem("lp_up_stats", JSON.stringify(up_stats)); } } catch (e) {} // v107: Statistik aus der ringsj-Schleife verwerfen
-function record_attempt(kind, level, ok) { var k = kind + level, st = up_stats[k] || { n: 0, ok: 0 }; st.n++; if (ok) st.ok++; up_stats[k] = st; try { localStorage.setItem("lp_up_stats", JSON.stringify(up_stats)); } catch (e) {} }
+function item_grade_of(name, level) { var g = (G.items[name] || {}).grades || [], n = 0; for (var i = 0; i < g.length; i++) if ((level || 0) >= g[i]) n++; return n; } // Qualitätsstufe des Teils auf dieser Stufe (bestimmt Chance und Scroll)
+function stat_key(kind, level, name) { return kind + (name ? item_grade_of(name, level) + ":" : "") + level; }
+function record_attempt(kind, level, ok, name) { var k = stat_key(kind, level, name), st = up_stats[k] || { n: 0, ok: 0 }; st.n++; if (ok) st.ok++; up_stats[k] = st; try { localStorage.setItem("lp_up_stats", JSON.stringify(up_stats)); } catch (e) {} }
 var PRIOR_WEIGHT = 12; // Tabellenwert zählt wie 12 eigene Versuche; eigene Messungen verschieben ihn nach und nach
-function table_p(kind, level) { return kind == "u" ? (UP_P[level] != null ? UP_P[level] : 0.02) : (CO_P[level] != null ? CO_P[level] : 0.1); }
-function success_p(kind, level) { var st = up_stats[kind + level], t = table_p(kind, level); if (st && st.n) return (st.ok + t * PRIOR_WEIGHT) / (st.n + PRIOR_WEIGHT); return t; }
-function success_txt(kind, level) { var st = up_stats[kind + level]; return Math.round(success_p(kind, level) * 100) + " %" + (st && st.n ? " (Tabelle " + Math.round(table_p(kind, level) * 100) + " % + gemessen " + st.ok + "/" + st.n + ")" : " (Tabelle)"); }
+function table_p(kind, level, name) { // Spieltabelle G.upgrades/G.compounds nach Qualitätsstufe des Teils; Fallback alte Schätztabelle
+    try { var T = kind == "u" ? G.upgrades : G.compounds; if (T) { var gr = Math.min(name ? item_grade_of(name, level) : 0, 2), v = T[String(gr)] && T[String(gr)][String((level || 0) + 1)]; if (v != null) return v; } } catch (e) {}
+    return kind == "u" ? (UP_P[level] != null ? UP_P[level] : 0.02) : (CO_P[level] != null ? CO_P[level] : 0.1);
+}
+function success_p(kind, level, name) { var st = up_stats[stat_key(kind, level, name)], t = table_p(kind, level, name); if (st && st.n) return (st.ok + t * PRIOR_WEIGHT) / (st.n + PRIOR_WEIGHT); return t; }
+function success_txt(kind, level, name) { var st = up_stats[stat_key(kind, level, name)]; return Math.round(success_p(kind, level, name) * 100) + " %" + (st && st.n ? " (Tabelle " + Math.round(table_p(kind, level, name) * 100) + " % + gemessen " + st.ok + "/" + st.n + ")" : " (Tabelle)"); }
 // Lohnt eine höhere Scroll? Erwartete Kosten je gelungener Stufe vergleichen (Scrollpreis + Wert des Items × Verlustrisiko)
 function best_scroll_grade(def, level, kind, own_value) {
     var need = 0, g = def.grades || []; for (var i = 0; i < g.length; i++) if (level >= g[i]) need = i + 1; need = Math.min(need, 2);
@@ -2078,7 +2083,7 @@ function update_panel() {
     h += lp_sec("haendler", "Händler", stand_txt + (sc ? " · " + sc : "") + " · " + (tips.length ? tips.length + " Serverfund" + (tips.length > 1 ? "e" : "") : "kein Serverfund") + (arb_auto ? " · Handelsreise Auto" : ""),
         (merch_buy ? "<div class='lp_row'><span class='lp_k'>Einkauf:</span> <span style='color:#8ab4f8'>" + esc(mb_stage_txt()) + "</span><button data-act='mbcancel' title='Einkauf abbrechen (Gold kommt bei der nächsten Abholung zurück)'>Abbrechen</button></div>" : "") + "<div class='lp_row'><span class='lp_k'>Aktionen</span>" + (team_on.merch ? "<button data-act='goldback' title='Händler bringt alles über seinem Zielbestand, Priest/Ranger alles über ihrem Maximum zu dir'>Gold holen" + (mst0 && mst0.gold ? " (" + fmt(mst0.gold) + ")" : "") + "</button>" : "") + "<span class='lp_k' style='margin-left:6px'>Kasse:</span> <input data-mgk='target' value='" + esc(fmt_mio(MG.target)) + "' title='Zielbestand des Händlers in Mio. – er füllt bei dir auf, wenn er unter die Nachfüllgrenze fällt' style='width:44px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'> <span class='lp_k'>Mio · nachfüllen unter</span> <input data-mgk='min' value='" + esc(fmt_mio(MG.min)) + "' title='Nachfüllgrenze des Händlers in Mio.' style='width:44px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'> <span class='lp_k'>Mio · Priest/Ranger max.</span> <input data-mgk='esc' value='" + esc(fmt_mio(MG.esc_max)) + "' title='Priest/Ranger geben alles über diesem Betrag (in Mio.) an dich ab' style='width:44px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'> <span class='lp_k'>Mio</span> <span class='lp_k' style='margin-left:6px' title='Material, das der Händler braucht (z. B. Spinnenseide für die Spitzhacke): er kauft es selbst auf dem Markt, wenn ein Angebot je Stück höchstens so viel kostet'>Material max</span> <input data-mgk='mat_max' value='" + esc(fmt_mio(MG.mat_max || 0)) + "' title='Höchstpreis je Stück in Mio. (0,02 = 20k) für Material, das der Händler selbst braucht – er kauft es auf dem Markt, auch per Reise' style='width:44px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'> <span class='lp_k'>Mio" + (Object.keys(merch_needs).length ? " · braucht: " + esc(Object.keys(merch_needs).join(", ")) : "") + "</span>" + "<button data-act='mkttoggle' title='Markt-Fenster: alle Angebote aller Server, filterbar'>Markt</button><button data-act='marketscan' title='Alle Händlerstände jetzt abfragen: Zielbau-Angebote und Schnäppchen unter NPC-Wert'" + (scanning_now ? " class='on'" : "") + ">" + (scanning_now ? "Scan läuft…" : "Schnäppchen scannen") + "</button></div>"
         + (team_on.merch ? "<div class='lp_row'><span class='lp_k'>Spenden (Ron):</span> <input data-mgk='donate' value='" + esc(fmt_mio(donate_amt)) + "' title='Betrag in Mio., den der Händler bei Ron gegen XP spendet (4,8 XP/Gold bei leerer Schatzkammer)' style='width:44px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'> <span class='lp_k'>Mio</span><button data-act='donate' title='Händler läuft zu Ron und spendet den Betrag in 100k-Schritten (Kasse bleibt über der Nachfüllgrenze)'>Spenden</button><button data-act='donateauto'" + (donate_auto ? " class='on'" : "") + " title='Händler spendet automatisch alles über der Nachfüllgrenze, bis er Lv " + DONATE_LVL + " hat (mluck)'>Auto bis Lv " + DONATE_LVL + "</button>" + (mst0 && mst0.level != null ? "<span class='lp_k'>Händler Lv " + mst0.level + (mst0.level >= 40 ? " – mluck aktiv" : ", bis Lv 40 noch ~" + fmt(Math.round(lvl_xp_between(mst0.level, 40) / (donate_rate || 4.8))) + " Gold" + (donate_rate ? " (" + donate_rate.toFixed(2) + " XP/Gold gemessen)" : "")) + "</span>" : "") + "</div>" : "")
-        + "<div class='lp_row' style='flex-wrap:wrap;line-height:1.6'><span class='lp_k'>Serverwechsel:</span> <span style='font-size:11px'>" + server_tip_html() + "</span></div>" + gather_html() + arb_html(panel) + arb_trip_html() + watch_html() + lp_sec("stand", "Stand-Aufträge", Object.keys(stand_orders).filter(function (k) { return !WATCH_ITEMS[k]; }).length + " Aufträge · Bankinhalt zum Ausstellen", stand_orders_html()));
+        + "<div class='lp_row' style='flex-wrap:wrap;line-height:1.6'><span class='lp_k'>Serverwechsel:</span> <span style='font-size:11px'>" + server_tip_html() + "</span></div>" + gather_html() + arb_html(panel) + arb_trip_html() + lp_sec("stand", "Stand-Aufträge", Object.keys(stand_orders).filter(function (k) { return !WATCH_ITEMS[k]; }).length + " Aufträge · Bankinhalt zum Ausstellen", stand_orders_html()));
     // Zielbau (eingeklappt)
     var tw_sum = ["priest", "ranger"].filter(function (k) { return team_on[k]; }).map(function (k) { var cfgs = team_wish[k] || {}, n = 0, done = 0; TEAM_WISH_SLOTS.forEach(function (sl) { var c = cfgs[sl]; if (c && c.item) { n++; var s2 = tw_status(k, sl); if (s2 && s2.state == "fertig") done++; } }); return TEAM_LABEL[k] + " " + (n ? done + "/" + n : "–"); }).join(" · ");
     h += lp_sec("zielbau", "Zielbau", "Ich " + esc(wish_text()) + (tw_sum ? " · " + tw_sum : "") + (AUTO_GEAR ? " · Reserve " + fmt(WISH_RESERVE) : ""),
@@ -3343,12 +3348,12 @@ function base_price(def, name) { return is_buyable(name) ? def.g : Math.max(def.
 function cost_to_reach(name, level) { // erwartete Gesamtkosten, ein Item von 0 auf level zu bringen (inkl. Verluste)
     var def = G.items[name], c = base_price(def, name);
     for (var l = 0; l < level; l++) {
-        var p = def.upgrade ? success_p("u", l) : success_p("c", l);
+        var p = def.upgrade ? success_p("u", l, name) : success_p("c", l, name);
         if (def.compound) c = (3 * c + scroll_price_for(def, l)) / p; else c = (c + scroll_price_for(def, l)) / p;
     }
     return c;
 }
-function step_cost(name, level) { var def = G.items[name]; var p = def.upgrade ? success_p("u", level) : success_p("c", level); var own = cost_to_reach(name, level); return def.compound ? (2 * own + scroll_price_for(def, level)) / p + own * (1 - p) / p : (scroll_price_for(def, level) + own * (1 - p)) / p; }
+function step_cost(name, level) { var def = G.items[name]; var p = def.upgrade ? success_p("u", level, name) : success_p("c", level, name); var own = cost_to_reach(name, level); return def.compound ? (2 * own + scroll_price_for(def, level)) / p + own * (1 - p) / p : (scroll_price_for(def, level) + own * (1 - p)) / p; }
 function max_level(def) { return def.upgrade ? 10 : def.compound ? 5 : 0; }
 var goal_cache = {}, goal_cache_t = 0;
 function compute_goals() {
@@ -3657,13 +3662,13 @@ function build_vs_buy(slot) {
             else if (tok) { build.note = "Basis: " + tok + " Monstertokens (hast " + tokens() + ")"; if (tokens() < tok) build.possible = false; }
             else { build.possible = false; build.note = "Basis fehlt (nur Drop/Markt)"; }
         }
-        for (var l = start; l < tl; l++) { build.cost += step_cost(item, l); build.p *= def.compound ? success_p("c", l) : success_p("u", l); }
+        for (var l = start; l < tl; l++) { build.cost += step_cost(item, l); build.p *= def.compound ? success_p("c", l, item) : success_p("u", l, item); }
         if (!def.compound && !is_buyable(item) && have >= 0) build.note = "Verlustrisiko " + Math.round((1 - build.p) * 100) + " % (nicht nachkaufbar)";
     }
     var offers = global_offers.filter(function (o) { return o.name == item && o.price <= Math.max(0, slot_budget(slot)); });
     var best = null;
     offers.forEach(function (o) {
-        var rest = 0, pr = 1; for (var l = o.level; l < tl; l++) { rest += step_cost(item, l); pr *= def.compound ? success_p("c", l) : success_p("u", l); }
+        var rest = 0, pr = 1; for (var l = o.level; l < tl; l++) { rest += step_cost(item, l); pr *= def.compound ? success_p("c", l, item) : success_p("u", l, item); }
         var total = o.price + rest;
         if (!best || total < best.total) best = { price: o.price, level: o.level, server: o.server, seller: o.seller, same: o.same, rest: rest, total: total, p: pr };
     });
@@ -3970,9 +3975,9 @@ function stand_suggest_price(name, level) { // Vorschlag: knapp unter dem günst
 }
 function stand_orders_html() {
     var h = "", ms = team_state[TEAM.merch];
-    var keys = Object.keys(stand_orders).filter(function (k) { return !WATCH_ITEMS[k]; });
+    var keys = Object.keys(stand_orders); // auch scroll3 – Preis wird in der Liste/Bank-Fenster gesetzt
     if (keys.length) { h += "<table class='lp_t' style='font-size:11px'><tr><th style='text-align:left'>Auftrag</th><th>Menge</th><th>Preis</th><th style='text-align:left'>Stand</th><th></th></tr>";
-        keys.forEach(function (k) { var o = stand_orders[k], nm = (G.items[o.name] || {}).name || o.name, st = ms && ms.orders && ms.orders[k]; h += "<tr><td>" + esc(nm) + (o.level ? " +" + o.level : "") + "</td><td>" + (o.q || 1) + "</td><td>" + fmt(o.price) + "</td><td style='text-align:left;color:#8ab4f8'>" + esc(st || "wartet auf Händler") + "</td><td><button data-act='standdel' data-key='" + esc(k) + "' title='Auftrag löschen – Händler nimmt es vom Stand, es kommt in die Bank'>✕</button></td></tr>"; });
+        keys.forEach(function (k) { var o = stand_orders[k], on = o.name || String(k).split("+")[0], nm = (G.items[on] || {}).name || on, st = ms && ms.orders && ms.orders[k]; h += "<tr><td>" + esc(nm) + (o.level ? " +" + o.level : "") + "</td><td>" + (o.q || 1) + "</td><td>" + fmt(o.price) + "</td><td style='text-align:left;color:#8ab4f8'>" + esc(st || "wartet auf Händler") + "</td><td><button data-act='standdel' data-key='" + esc(k) + "' title='Auftrag löschen – Händler nimmt es vom Stand, es kommt in die Bank'>✕</button></td></tr>"; });
         h += "</table>"; }
     h += "<div class='lp_row'><span class='lp_k'>Aus der Bank anbieten:</span><button data-act='banktoggle' title='Bank-Fenster: Bankinhalt mit NPC-/Marktwert, ausstellen oder beim NPC verkaufen'>Bank-Fenster</button><button data-act='banklist' title='alte Kurzliste'>" + (panel.__banklist ? "▾" : "▸") + "</button>" + (character.bank ? "" : "<span class='lp_k' style='font-size:11px'>(Stand vom letzten Bankbesuch)</span>") + "</div>";
     if (panel.__banklist) {
@@ -4774,8 +4779,8 @@ async function compound_slot(slot) {
                 try { await compound(idx[0], idx[1], idx[2], sc); } catch (e) {}
                 await wait_queue("compound");
                 var okc2 = find_inv_indices(name, l + 1).length > prev_n1;
-                if (okc2) { record_attempt("c", l, true); game_log(name + " +" + (l + 1) + " erstellt"); }
-                else { record_attempt("c", l, false); game_log(name + " compound fehlgeschlagen (+" + l + " x3 verloren)"); }
+                if (okc2) { record_attempt("c", l, true, name); game_log(name + " +" + (l + 1) + " erstellt"); }
+                else { record_attempt("c", l, false, name); game_log(name + " compound fehlgeschlagen (+" + l + " x3 verloren)"); }
             }
         }
     } finally {
@@ -4812,8 +4817,8 @@ async function compound_spares() {
                 try { await compound(idx[0], idx[1], idx[2], sc); } catch (e) { cerr = e; }
                 await wait_queue("compound");
                 var now_n = find_inv_indices(name, l).length;
-                if (find_inv_indices(name, l + 1).length > prev_n1s) { record_attempt("c", l, true); game_log(name + " +" + (l + 1) + " erstellt"); }
-                else if (now_n < prev_n) { record_attempt("c", l, false); game_log(name + " compound (+" + l + ") fehlgeschlagen"); }
+                if (find_inv_indices(name, l + 1).length > prev_n1s) { record_attempt("c", l, true, name); game_log(name + " +" + (l + 1) + " erstellt"); }
+                else if (now_n < prev_n) { record_attempt("c", l, false, name); game_log(name + " compound (+" + l + ") fehlgeschlagen"); }
                 else { game_log(name + " compound (+" + l + ") nicht ausgeführt" + (cerr ? ": " + err_txt(cerr) : "") + " – überspringe"); break; } // nichts verbraucht -> nicht endlos wiederholen
             }
         }
@@ -4855,9 +4860,9 @@ async function upgrade_inv(name, level, target, stat_want) { // stat_want: Attri
         try { await upgrade(idx, sidx); } catch (e) {}
         await wait_queue("upgrade");
         var m_same = find_inv_indices(name, level).length, m_next = find_inv_indices(name, level + 1).length;
-        if (m_next > n_next) { record_attempt("u", level, true); level++; game_log(name + " ist jetzt +" + level); }
-        else if (m_same == n_same) { record_attempt("u", level, false); game_log(name + " Upgrade fehlgeschlagen, Item erhalten"); }
-        else { record_attempt("u", level, false); game_log("!!! " + name + " +" + level + " ZERSTÖRT !!!"); return { level: level, destroyed: true }; }
+        if (m_next > n_next) { record_attempt("u", level, true, name); level++; game_log(name + " ist jetzt +" + level); }
+        else if (m_same == n_same) { record_attempt("u", level, false, name); game_log(name + " Upgrade fehlgeschlagen, Item erhalten"); }
+        else { record_attempt("u", level, false, name); game_log("!!! " + name + " +" + level + " ZERSTÖRT !!!"); return { level: level, destroyed: true }; }
     }
     return { level: level, destroyed: false };
 }
@@ -5137,6 +5142,7 @@ function build_item_list() { // alle beim NPC kaufbaren Ausrüstungsteile mit Up
     var out = []; for (var k in G.items) { var d = G.items[k]; if (!d || (!d.upgrade && !d.compound) || !is_buyable(k)) continue; if (EQUIP_TYPES.indexOf(d.type) < 0 && !MKT_EQUIP_TYPES[d.type]) continue; out.push(k); }
     return out.sort(function (a, b) { return (G.items[a].name || a).localeCompare(G.items[b].name || b); });
 }
+function build_chance_txt(o) { if (!o) return ""; var d = G.items[o.name] || {}; return " · Chance je Stufe (Spieltabelle): " + Array.apply(null, Array(o.level)).map(function (_, l) { return "+" + (l + 1) + " " + Math.round(table_p(d.compound ? "c" : "u", l, o.name) * 100) + " %"; }).join(", "); }
 function build_status_txt() {
     var o = build_order; if (!o) return "kein Auftrag";
     return o.name + " +" + o.level + ": " + o.done + "/" + o.n + " fertig · " + o.destroyed + " zerstört · " + fmt(o.spent) + " Gold" + (build_running ? " · läuft" + (build_step_txt ? " (" + build_step_txt + ")" : "") : o.done >= o.n ? " · fertig" : " · gestoppt");
@@ -5149,7 +5155,7 @@ function build_html() {
         + " <span class='lp_k' title='Gold, das beim Bauen immer übrig bleibt (Mio.); 0 = Standard-Reserve'>Reserve</span> <input data-bo='reserve' value='" + esc(fmt_mio(build_ui.reserve || 0)) + "' style='width:36px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'> <span class='lp_k'>Mio</span>"
         + (build_running ? "<button data-act='bostop' class='on' title='nur diesen Bauauftrag anhalten – Stand bleibt gespeichert'>Stop</button>" : "<button data-act='bostart' title='Auftrag mit diesen Werten starten bzw. den gespeicherten fortsetzen'>Start</button>")
         + (o && !build_running ? "<button data-act='boclear' title='Auftrag löschen (Kopien im Inventar werden danach wieder normal behandelt)'>Löschen</button>" : "") + "</div>";
-    h += "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>" + esc(build_status_txt()) + (o ? " · Chance je Stufe: " + Array.apply(null, Array(o.level)).map(function (_, l) { return "+" + (l + 1) + " " + Math.round(success_p(G.items[o.name].compound ? "c" : "u", l) * 100) + " %"; }).join(", ") : "") + "</span></div>";
+    h += "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>" + esc(build_status_txt()) + build_chance_txt(o) + "</span></div>";
     return h;
 }
 // Zweite Zeile: Bauauftrag für den Händler (er liest lp_mbuild_<Magier>, baut in der Stadt, legt fertige Teile in die Bank)
@@ -5243,8 +5249,8 @@ async function build_compound_step(o) { // Schmuck: unterste Stufe mit 3 Kopien 
     build_step_txt = "+" + l + " ×3 → +" + (l + 1); set_message(o.name + " +" + l + " x3");
     try { await compound(idx[0], idx[1], idx[2], sc); } catch (e) {}
     await wait_queue("compound");
-    if (find_inv_indices(o.name, l + 1).length > prev) { record_attempt("c", l, true); game_log("Bauauftrag: " + o.name + " +" + (l + 1) + " erstellt"); }
-    else { record_attempt("c", l, false); o.destroyed++; game_log("Bauauftrag: Compound +" + l + " ×3 fehlgeschlagen (" + o.destroyed + ". Mal)"); }
+    if (find_inv_indices(o.name, l + 1).length > prev) { record_attempt("c", l, true, o.name); game_log("Bauauftrag: " + o.name + " +" + (l + 1) + " erstellt"); }
+    else { record_attempt("c", l, false, o.name); o.destroyed++; game_log("Bauauftrag: Compound +" + l + " ×3 fehlgeschlagen (" + o.destroyed + ". Mal)"); }
     return find_inv_indices(o.name, t).length > n_t0 ? "done" : "again";
 }
 // ---------- Hauptschleife ----------
