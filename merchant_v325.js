@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Händler (F4llenMerch) – Stufe 1 =====
 // Läuft unsichtbar neben dem Magier. Aufgaben: Stand kaufen und öffnen, Loot abholen/verkaufen/einlagern,
 // Startgold vom Magier holen. mluck ist abgeschaltet (braucht Lv 40, Händler levelt praktisch nicht) – USE_MLUCK/LEVEL_MODE. Meldungen gehen per Charakter-Nachricht an den Magier und erscheinen dort als "[Merch] …".
-var MERCH_VERSION = "v323";
+var MERCH_VERSION = "v325";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -91,7 +91,7 @@ async function do_tidy() { // auf Befehl des Magiers: billige Ausrüstung verkau
     tidy_req = 0; stand_off(); status("räumt auf");
     manifest = {}; var n_sell = 0, n_bank = 0;
     for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (!it || it.name == STAND_ITEM || /^(hpot|mpot)/.test(it.name)) continue;
-        if (it.name == "rod" || it.name == "pickaxe" || it.name == "staff" || it.name == "blade" || it.name == "tracker" || it.name == "computer" || order_for(it.name, it.level) || hold_items[item_key(it.name, it.level)]) continue;
+        if (it.name == "rod" || it.name == "pickaxe" || it.name == "staff" || it.name == "blade" || it.name == "tracker" || it.name == "computer" || mbuild_protected(it.name) || order_for(it.name, it.level) || hold_items[item_key(it.name, it.level)]) continue;
         var d = G.items[it.name] || {}, cheap = (d.type && GEAR_TYPES[d.type]) && !/^mm|^(dex|int|str|vit)(ring|earring|amulet|belt)$/.test(it.name) && (d.g || 0) < 10000 && (it.level || 0) <= 2;
         manifest[item_key(it.name, it.level)] = cheap ? "sell" : "bank"; if (cheap) n_sell++; else n_bank++; }
     say("Aufräumen: " + n_sell + " verkaufen, " + n_bank + " in die Bank");
@@ -295,7 +295,7 @@ async function process_inventory() { // in der Stadt: verkaufen, an den Stand, i
     var sell = [], stand = [], bank = [];
     var silk = 0;
     for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (!it || it.name == STAND_ITEM || /^(hpot|mpot)/.test(it.name)) continue;
-        if (it.name == "rod" || it.name == "pickaxe" || it.name == "staff" || it.name == "blade" || it.name == "anniversarygift" || /^slice_/.test(it.name) || order_for(it.name, it.level) || hold_items[item_key(it.name, it.level)]) continue; // Werkzeug, Zutaten, Event-Items, Auftrags-Items und Einkäufe für den Magier bleiben
+        if (it.name == "rod" || it.name == "pickaxe" || it.name == "staff" || it.name == "blade" || it.name == "anniversarygift" || /^slice_/.test(it.name) || mbuild_protected(it.name) || order_for(it.name, it.level) || hold_items[item_key(it.name, it.level)]) continue; // Werkzeug, Zutaten, Event-Items, Auftrags-Items und Einkäufe für den Magier bleiben
         if (it.name == "spidersilk") { silk += it.q || 1; if (silk <= 2) continue; }
         var a = manifest[item_key(it.name, it.level)] || (/^(bronzenugget|coat1|helmet1|pants1|gloves1|shoes1)$/.test(it.name) ? "sell" : "bank"); if (a == "keep") continue; (a == "sell" ? sell : a == "stand" ? stand : bank).push(i); }
     if (!sell.length && !stand.length && !bank.length) { manifest = {}; return; }
@@ -541,6 +541,91 @@ async function run_arbitrage(job) {
     arb_res.done = true; arb_res.profit = arb_res.earned - arb_res.spent; arb_res.gold = character.gold; arb_save();
     arb_idle = true; status("Reise fertig");
 }
+
+// ---------- Bauauftrag des Magiers (lp_mbuild_<Magier>): NPC-Teil kaufen, hochziehen/compounden (Massproduction), fertige Teile in die Bank ----------
+function mbuild_load() { try { return JSON.parse(localStorage.getItem("lp_mbuild_" + MAGE) || "null"); } catch (e) { return null; } }
+function mbuild_save(o) { try { var cur = mbuild_load(); if (cur && cur.name == o.name && cur.level == o.level) { cur.done = o.done; cur.destroyed = o.destroyed; cur.spent = o.spent; cur.step = o.step; if (o.running === false) cur.running = false; o = cur; } localStorage.setItem("lp_mbuild_" + MAGE, JSON.stringify(o)); } catch (e) {} }
+function mbuild_protected(name) { var o = mbuild_load(); return !!o && o.name == name; }
+function mbuild_running() { var o = mbuild_load(); return !!o && !!o.running && o.done < o.n; }
+function item_grade(name, level) { var g = (G.items[name] || {}).grades || [], n = 0; for (var i = 0; i < g.length; i++) if (level >= g[i]) n++; return n; }
+function inv_idx(name, level) { var out = []; for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && it.name == name && (it.level || 0) == level) out.push(i); } return out; }
+async function mbuild_wait(key) { await sleep(1200); for (var i = 0; i < 80 && character.q && character.q[key]; i++) await sleep(500); }
+async function mbuild_buy(name, n) { var npc = npc_selling(name); if (!npc) return false; var pos = npc_pos(npc); if (!pos) return false; await go(pos, 60); var c0 = 0; character.items.forEach(function (x) { if (x && x.name == name) c0++; }); try { await buy(name, n); } catch (e) { try { parent.socket.emit("buy", { name: name, quantity: n }); } catch (e2) {} } await sleep(900); var c1 = 0; character.items.forEach(function (x) { if (x && x.name == name) c1++; }); return c1 > c0; }
+async function mbuild_scroll(scroll) { if (locate_item(scroll) >= 0) return true; try { await buy(scroll, 1); } catch (e) { try { parent.socket.emit("buy", { name: scroll, quantity: 1 }); } catch (e2) {} } await sleep(700); if (locate_item(scroll) >= 0) return true; var npc = npc_selling(scroll), pos = npc && npc_pos(npc); if (pos) { await go(pos, 60); try { await buy(scroll, 1); } catch (e) {} await sleep(700); } return locate_item(scroll) >= 0; }
+async function mbuild_gold(want) { // zum Magier und Gold holen (er gibt, was über seiner Reserve frei ist)
+    if (Date.now() - last_gold_ask < 90000) return false; last_gold_ask = Date.now();
+    var t = mage_entity() || (mage && Date.now() - mage.t < 60000 ? { map: mage.map, x: mage.x, y: mage.y } : null); if (!t) { say("Bauauftrag: Kasse zu klein und Magier nicht erreichbar"); return false; }
+    status("Gold fürs Bauen"); await go({ map: t.map, x: t.x, y: t.y }, 150); var g1 = character.gold;
+    try { send_cm(MAGE, { t: "gold?", amount: want }); } catch (e) {} await sleep(2500);
+    say(character.gold > g1 ? "Bauauftrag: Kasse aufgefüllt +" + (character.gold - g1) + " → " + character.gold : "Bauauftrag: Magier konnte nicht auffüllen (will " + want + ")");
+    return character.gold > g1;
+}
+async function mbuild_bank(o) { // fertige Teile (Zielstufe) in die Bank
+    var idx = inv_idx(o.name, o.level); if (!idx.length) return;
+    try { await smart_move("bank"); } catch (e) { return; } await sleep(800);
+    idx = inv_idx(o.name, o.level); for (var i = idx.length - 1; i >= 0; i--) { try { bank_store(idx[i]); await sleep(500); } catch (e) {} }
+    say("Bauauftrag: " + idx.length + "× " + o.name + " +" + o.level + " in die Bank gelegt");
+}
+var mbuild_active = false, mbuild_pos_ok = false;
+async function mbuild_tick() {
+    var o = mbuild_load();
+    if (!o || !o.running || o.done >= o.n) { if (mbuild_active) { mbuild_active = false; mbuild_pos_ok = false; if (o && inv_idx(o.name, o.level).length) await mbuild_bank(o); } return false; }
+    var def = G.items[o.name]; if (!def || !npc_selling(o.name)) { o.running = false; o.step = "nicht kaufbar"; mbuild_save(o); return false; }
+    if (!mbuild_active) { mbuild_active = true; say("Bauauftrag: " + o.name + " +" + o.level + " × " + o.n + " (" + o.done + " fertig) – ich baue"); }
+    if (stand_open()) stand_off();
+    status("baut " + o.name + " +" + o.level);
+    var reserve = Math.max(o.reserve || 0, GOLD_MIN), comp = !!def.compound, g0 = character.gold, r = "again";
+    try {
+        if (character.esize < 4) { if (inv_idx(o.name, o.level).length) { await mbuild_bank(o); return true; } o.running = false; o.step = "Inventar voll"; mbuild_save(o); say("Bauauftrag: Inventar voll – gestoppt"); return true; }
+        r = comp ? await mbuild_compound(o, reserve) : await mbuild_upgrade(o, reserve);
+        o.spent = (o.spent || 0) + Math.max(0, g0 - character.gold);
+        if (r == "done") { o.done++; say("Bauauftrag: " + o.name + " +" + o.level + " fertig (" + o.done + "/" + o.n + ", " + o.destroyed + " zerstört, " + Math.round(o.spent / 1000) + "k Gold)"); if (o.done >= o.n || inv_idx(o.name, o.level).length >= 3) { await mbuild_bank(o); mbuild_pos_ok = false; } }
+        if (r == "gold") { o.step = "warte auf Gold (Kasse " + Math.round(character.gold / 1000) + "k, Reserve " + Math.round(reserve / 1000) + "k)"; mbuild_save(o); await mbuild_gold(Math.max(GOLD_KEEP, reserve + def.g * 5 + 200000) - character.gold); mbuild_pos_ok = false; }
+        if (r == "stop") { o.running = false; say("Bauauftrag: gestoppt (" + (o.step || "Fehler") + ")"); }
+        if (o.done >= o.n) { o.running = false; o.step = "fertig"; say("Bauauftrag fertig: " + o.n + "× " + o.name + " +" + o.level + " in der Bank · " + o.destroyed + " zerstört · " + Math.round(o.spent / 1000) + "k Gold"); }
+    } catch (e) { say("Bauauftrag-Fehler: " + (e && e.message ? e.message : e)); }
+    mbuild_save(o); return true;
+}
+async function mbuild_place(kind) { if (mbuild_pos_ok) return; try { await smart_move(kind); mbuild_pos_ok = true; } catch (e) { await sleep(1000); } }
+async function mbuild_upgrade(o, reserve) {
+    var def = G.items[o.name], lv = -1;
+    for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && it.name == o.name && (it.level || 0) < o.level && (it.level || 0) > lv) lv = it.level || 0; }
+    if (lv < 0) { if (character.gold - reserve < def.g) return "gold"; o.step = "kaufe " + o.name; mbuild_save(o); if (!await mbuild_buy(o.name, 1)) { o.step = "Kauf " + o.name + " fehlgeschlagen"; return "stop"; } mbuild_pos_ok = false; lv = 0; }
+    await mbuild_place("upgrade");
+    while (lv < o.level) {
+        if (!mbuild_running()) return "again";
+        var ii = inv_idx(o.name, lv)[0]; if (ii == null) return "again";
+        var scroll = "scroll" + item_grade(o.name, lv), sp = (G.items[scroll] || {}).g || 0;
+        if (character.gold - reserve < sp) return "gold";
+        if (!await mbuild_scroll(scroll)) { o.step = "keine " + scroll; return "stop"; }
+        var si = locate_item(scroll); ii = inv_idx(o.name, lv)[0]; if (ii == null) return "again";
+        o.step = "+" + lv + " → +" + (lv + 1); mbuild_save(o);
+        try { if (character.level >= 60) use_skill("massproductionpp"); else if (character.level >= 30) use_skill("massproduction"); } catch (e) {} await sleep(300);
+        var nS = inv_idx(o.name, lv).length, nN = inv_idx(o.name, lv + 1).length;
+        try { await upgrade(ii, si); } catch (e) {}
+        await mbuild_wait("upgrade");
+        if (inv_idx(o.name, lv + 1).length > nN) lv++;
+        else if (inv_idx(o.name, lv).length == nS) { /* fehlgeschlagen, Teil erhalten */ }
+        else { o.destroyed++; say("Bauauftrag: " + o.name + " bei +" + lv + " zerstört (" + o.destroyed + ". Mal) – nächstes Teil"); return "again"; }
+    }
+    return "done";
+}
+async function mbuild_compound(o, reserve) {
+    var def = G.items[o.name], t = o.level, n_t0 = inv_idx(o.name, t).length, l = -1;
+    for (var k = t - 1; k >= 0; k--) if (inv_idx(o.name, k).length >= 3) { l = k; break; }
+    if (l < 0) { var need = 3 - inv_idx(o.name, 0).length; if (character.gold - reserve < def.g * need) return "gold"; o.step = "kaufe " + need + "× " + o.name; mbuild_save(o); if (!await mbuild_buy(o.name, need)) { o.step = "Kauf fehlgeschlagen"; return "stop"; } mbuild_pos_ok = false; return "again"; }
+    await mbuild_place("compound");
+    var scroll = "cscroll" + item_grade(o.name, l), sp = (G.items[scroll] || {}).g || 0;
+    if (character.gold - reserve < sp) return "gold";
+    if (!await mbuild_scroll(scroll)) { o.step = "keine " + scroll; return "stop"; }
+    var si = locate_item(scroll), idx = inv_idx(o.name, l), prev = inv_idx(o.name, l + 1).length;
+    o.step = "+" + l + " ×3 → +" + (l + 1); mbuild_save(o);
+    try { if (character.level >= 60) use_skill("massproductionpp"); else if (character.level >= 30) use_skill("massproduction"); } catch (e) {} await sleep(300);
+    try { await compound(idx[0], idx[1], idx[2], si); } catch (e) {}
+    await mbuild_wait("compound");
+    if (inv_idx(o.name, l + 1).length > prev) say("Bauauftrag: " + o.name + " +" + (l + 1) + " erstellt"); else { o.destroyed++; say("Bauauftrag: Compound +" + l + " ×3 fehlgeschlagen (" + o.destroyed + ". Mal)"); }
+    return inv_idx(o.name, t).length > n_t0 ? "done" : "again";
+}
 async function loop() {
     var g = MY_GEN;
     if (HAD_OLD) { say("neue Version " + MERCH_VERSION + " übernommen"); await sleep(3000); }
@@ -572,6 +657,7 @@ async function loop() {
             if (goldback_req || (character.gold > GOLD_AUTO_BACK && Date.now() - last_goldback > 10 * 60000 && mage && Date.now() - mage.t < 30000)) { await do_goldback(); continue; }
             if (await npc_orders_tick()) continue;
             if (await orders_tick()) continue;
+            if (await mbuild_tick()) continue;
             if (await gather_tick()) continue;
             status(stand_open() ? "Stand" : "unterwegs");
             await do_home();

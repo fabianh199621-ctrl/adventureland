@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v323";
+var BOT_VERSION = "v325";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -1589,7 +1589,7 @@ function init_panel() {
         if (b.tagName == "INPUT" && b.getAttribute("data-mq")) return; // Mengenfeld im Markt: nur tippen
         var mkel = b.closest ? b.closest("[data-mf],[data-msort],[data-mcsort],[data-act='mbuy'],[data-act='msell'],[data-act='mgoto'],[data-act='mtrip'],[data-act='marb'],[data-act='mview'],[data-act='mmore'],[data-mg]") : null;
         if (b.tagName == "INPUT" && (b.getAttribute("data-sp") || b.getAttribute("data-sq") || b.getAttribute("data-bq") || b.getAttribute("data-bp") || b.id == "lp_bank_q")) return;
-        var bkel = b.closest ? b.closest("[data-bsort],[data-bf],[data-act='bstand'],[data-act='bnpc'],[data-act='bnpcdel'],[data-act='banktoggle'],[data-act='bankrefresh']") : null;
+        var bkel = b.closest ? b.closest("[data-bsort],[data-bf],[data-act='bstand'],[data-act='bnpc'],[data-act='bnpcdel'],[data-act='block'],[data-act='banktoggle'],[data-act='bankrefresh']") : null;
         if (bkel) { var bkr = false; try { bkr = bank_click(bkel); } catch (bke) { game_log("Bank-Fenster: " + err_txt(bke) + (bke && bke.stack ? " @ " + String(bke.stack).split("\n")[1] : "")); bkr = true; } if (bkr) return; }
         if (mkel) { var mkr = false; try { mkr = market_click(mkel); } catch (mke) { game_log("Markt-Fehler: " + err_txt(mke) + (mke && mke.stack ? " @ " + String(mke.stack).split("\n")[1] : "")); mkr = true; } if (mkr) return; }
         if (b.tagName != "BUTTON") return;
@@ -1648,6 +1648,9 @@ function init_panel() {
         else if (act == "bostart") build_start();
         else if (act == "bostop") { build_stop = true; abort_requested = false; game_log("Bauauftrag: Stop angefordert – hält nach dem laufenden Versuch"); }
         else if (act == "boclear") { build_order = null; build_save(); game_log("Bauauftrag gelöscht"); last_panel = 0; }
+        else if (act == "mbostart") mbuild_start();
+        else if (act == "mbostop") { var mo = mbuild_load(); if (mo) { mo.running = false; mbuild_save(mo); } game_log("Händler-Bauauftrag: Stop – hält nach dem laufenden Schritt"); last_panel = 0; }
+        else if (act == "mboclear") { mbuild_save(null); game_log("Händler-Bauauftrag gelöscht"); last_panel = 0; }
         else if (act == "tidy") preempt("Aufräumen", tidy_now);
         else if (act == "bank") preempt("Bank aufräumen", bank_cleanup_now);
         else if (act == "banksort") preempt("Bank sortieren", bank_sort_now);
@@ -1683,6 +1686,7 @@ function init_panel() {
         if (t.getAttribute("data-setk")) { settings_input(t); return; }
         if (t.getAttribute("data-mgk") == "donate") { var dv = parse_mio(t.value); if (dv >= 1000) { donate_amt = dv; try { localStorage.setItem("lp_donate_amt", String(dv)); } catch (x) {} game_log("Spendenbetrag: " + fmt(dv)); } try { t.blur(); } catch (x) {} return; }
         if (t.getAttribute("data-mgk")) { var mgk2 = t.getAttribute("data-mgk"); if (mgk2 == "esc") { var ev = parse_mio(t.value); if (ev >= 10000) MG.esc_max = ev; } else { var mv3 = parse_mio(t.value); if (mv3 > 0) MG[mgk2] = mv3; } if (MG.min > MG.target) MG.min = MG.target; mg_save(); game_log("Händler-Kasse: Ziel " + fmt(MG.target) + ", nachfüllen unter " + fmt(MG.min) + ", Priest/Ranger max. " + fmt(MG.esc_max)); try { t.blur(); } catch (x) {} return; }
+        if (t.getAttribute("data-mbo")) { var mbk = t.getAttribute("data-mbo"); if (mbk == "item") mbuild_ui.item = t.value; else if (mbk == "reserve") mbuild_ui.reserve = parse_mio(t.value); else mbuild_ui[mbk] = parseInt(t.value) || 0; try { localStorage.setItem("lp_mbuild_ui_" + character.name, JSON.stringify(mbuild_ui)); } catch (x) {} try { t.blur(); } catch (x) {} last_panel = 0; return; }
         if (t.getAttribute("data-bo")) { var bok = t.getAttribute("data-bo"); if (bok == "item") build_ui.item = t.value; else if (bok == "reserve") build_ui.reserve = parse_mio(t.value); else build_ui[bok] = parseInt(t.value) || 0; build_save(); try { t.blur(); } catch (x) {} last_panel = 0; return; }
         if (t.getAttribute("data-msel")) { mkt[t.getAttribute("data-msel")] = t.value; mkt_show = 0; save_mkt(); try { t.blur(); } catch (x) {} render_market(); return; }
         var ws = t.getAttribute("data-wslot"), wl = t.getAttribute("data-wlvl"), wm = t.getAttribute("data-wmax");
@@ -1707,7 +1711,7 @@ function init_panel() {
     };
     win.addEventListener("change", onChange, true);
     var onInput = function (e) { var t = e.target; if (t && t.id == "lp_wiki_q") { wiki.q = t.value; wiki.page = null; render_wiki(); } else if (t && t.id == "lp_mkt_q") { mkt.q = t.value; mkt_show = 0; render_market(); } else if (t && t.id == "lp_bank_q") { bank_ui.q = t.value; bank_render_rows(); } };
-    var onKeyCap = function (e) { var t = e.target; if (t && (t.id == "lp_wiki_q" || (t.tagName == "INPUT" && inside(e)))) { e.stopPropagation(); if (e.key == "Escape") t.blur(); if (e.key == "Enter" && (t.getAttribute("data-wmax") || t.getAttribute("data-mgk") || t.getAttribute("data-bo") || t.getAttribute("data-huntmax") || t.getAttribute("data-huntttk") || t.getAttribute("data-arbmin") || t.getAttribute("data-twmax") || t.getAttribute("data-fixprice")) && e.type == "keydown") { try { t.dispatchEvent(new Event("change", { bubbles: true })); } catch (x) {} } } }; // Tasten im Suchfeld nicht ans Spiel/Bot weitergeben
+    var onKeyCap = function (e) { var t = e.target; if (t && (t.id == "lp_wiki_q" || (t.tagName == "INPUT" && inside(e)))) { e.stopPropagation(); if (e.key == "Escape") t.blur(); if (e.key == "Enter" && (t.getAttribute("data-wmax") || t.getAttribute("data-mgk") || t.getAttribute("data-bo") || t.getAttribute("data-mbo") || t.getAttribute("data-huntmax") || t.getAttribute("data-huntttk") || t.getAttribute("data-arbmin") || t.getAttribute("data-twmax") || t.getAttribute("data-fixprice")) && e.type == "keydown") { try { t.dispatchEvent(new Event("change", { bubbles: true })); } catch (x) {} } } }; // Tasten im Suchfeld nicht ans Spiel/Bot weitergeben
     win.addEventListener("input", onInput, true);
     ["keydown", "keyup", "keypress"].forEach(function (t) { win.addEventListener(t, onKeyCap, true); });
     parent.__lp_panel_h = { down: onDown, move: onMove, up: onUp, click: onClick, change: onChange, input: onInput, key: onKeyCap };
@@ -2079,7 +2083,7 @@ function update_panel() {
     var tw_sum = ["priest", "ranger"].filter(function (k) { return team_on[k]; }).map(function (k) { var cfgs = team_wish[k] || {}, n = 0, done = 0; TEAM_WISH_SLOTS.forEach(function (sl) { var c = cfgs[sl]; if (c && c.item) { n++; var s2 = tw_status(k, sl); if (s2 && s2.state == "fertig") done++; } }); return TEAM_LABEL[k] + " " + (n ? done + "/" + n : "–"); }).join(" · ");
     h += lp_sec("zielbau", "Zielbau", "Ich " + esc(wish_text()) + (tw_sum ? " · " + tw_sum : "") + (AUTO_GEAR ? " · Reserve " + fmt(WISH_RESERVE) : ""),
         "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>Zielbau " + wish_text() + (AUTO_GEAR ? " · automatisch, Reserve " + fmt(WISH_RESERVE) : "") + "</span><button data-act='wishist' data-slot='*' title='alle Slots auf das setzen, was du gerade trägst – Preislimits bleiben erhalten'>Ist</button><button data-act='wishreset' title='alle Ziele auf das Getragene setzen und alle Limits löschen'>Zielbau = aktuelle Ausrüstung</button><button data-act='wishtoggle'>" + (panel.__wish ? "▾" : "▸") + " Liste</button></div>" + (panel.__wish ? wish_ui_html() : "") + team_wish_html(panel));
-    h += lp_sec("bau", "Bauauftrag", esc(build_status_txt()), build_html());
+    h += lp_sec("bau", "Bauauftrag", "Mage: " + esc(build_status_txt()) + " · Merch: " + esc(mbuild_status_txt()), build_html() + mbuild_html());
     // Wartung (eingeklappt)
     h += lp_sec("wartung", "Wartung", "Inv sortieren · Compound · Aufräumen · Bank",
         "<div class='lp_row'><button data-act='sortinv' title='Inventar sortieren'>Inv ⇅</button><button data-act='compound' title='Schmuck compounden (getragen + ungetragen)'>Compound</button><button data-act='tidy' title='Schrott verkaufen, Rest in die Bank'>Aufräumen</button><button data-act='bank' title='Schrott aus der Bank holen und verkaufen'>Bank aufräumen</button><button data-act='banksort' title='Bank nach Gruppen sortieren, Reiter lückenlos füllen'>Bank ⇅</button><button data-act='bankstatus' title='Alle Bankfächer ins Log: Belegung, gesperrt/frei, Preis'>Bank-Status</button><button data-act='reset' title='alle Messwerte verwerfen und neu messen'>Neu messen</button><button data-act='clearlog' title='Log-Puffer leeren'>Log leeren</button></div>");
@@ -5128,7 +5132,7 @@ var build_order = null; try { build_order = JSON.parse(localStorage.getItem("lp_
 var build_ui = { item: "coat", level: 7, n: 1, reserve: 0 }; try { var _bu = JSON.parse(localStorage.getItem("lp_build_ui_" + character.name) || "null"); if (_bu) build_ui = _bu; } catch (e) {}
 var build_running = false, build_stop = false, build_step_txt = "";
 function build_save() { try { localStorage.setItem("lp_build_" + character.name, JSON.stringify(build_order)); localStorage.setItem("lp_build_ui_" + character.name, JSON.stringify(build_ui)); } catch (e) {} }
-function build_protected(it) { return !!build_order && !!it && it.name == build_order.name; } // Kopien des Auftrags-Items: nie verkaufen, nie in die Bank
+function build_protected(it) { if (!it) return false; if (build_order && it.name == build_order.name) return true; var mo = mbuild_load(); return !!mo && it.name == mo.name; } // Kopien des Auftrags-Items: nie verkaufen, nie in die Bank
 function build_item_list() { // alle beim NPC kaufbaren Ausrüstungsteile mit Upgrade oder Compound
     var out = []; for (var k in G.items) { var d = G.items[k]; if (!d || (!d.upgrade && !d.compound) || !is_buyable(k)) continue; if (EQUIP_TYPES.indexOf(d.type) < 0 && !MKT_EQUIP_TYPES[d.type]) continue; out.push(k); }
     return out.sort(function (a, b) { return (G.items[a].name || a).localeCompare(G.items[b].name || b); });
@@ -5139,7 +5143,7 @@ function build_status_txt() {
 }
 function build_html() {
     var o = build_order, items = build_item_list();
-    var h = "<div class='lp_row'><span class='lp_k'>Bauen:</span> <select data-bo='item' style='font-size:11px;background:#1c2029;color:#eee;border:1px solid #555;max-width:150px'>" + items.map(function (k) { return "<option value='" + k + "'" + (build_ui.item == k ? " selected" : "") + ">" + esc(G.items[k].name || k) + " (" + fmt(G.items[k].g) + ")</option>"; }).join("") + "</select>"
+    var h = "<div class='lp_row'><span class='lp_k' title='Der Magier baut selbst (steht so lange in der Stadt)'>Mage:</span> <select data-bo='item' style='font-size:11px;background:#1c2029;color:#eee;border:1px solid #555;max-width:150px'>" + items.map(function (k) { return "<option value='" + k + "'" + (build_ui.item == k ? " selected" : "") + ">" + esc(G.items[k].name || k) + " (" + fmt(G.items[k].g) + ")</option>"; }).join("") + "</select>"
         + " <span class='lp_k'>Stufe</span> <input data-bo='level' value='" + (build_ui.level || 0) + "' style='width:28px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'>"
         + " <span class='lp_k'>Stück</span> <input data-bo='n' value='" + (build_ui.n || 1) + "' style='width:28px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'>"
         + " <span class='lp_k' title='Gold, das beim Bauen immer übrig bleibt (Mio.); 0 = Standard-Reserve'>Reserve</span> <input data-bo='reserve' value='" + esc(fmt_mio(build_ui.reserve || 0)) + "' style='width:36px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'> <span class='lp_k'>Mio</span>"
@@ -5147,6 +5151,32 @@ function build_html() {
         + (o && !build_running ? "<button data-act='boclear' title='Auftrag löschen (Kopien im Inventar werden danach wieder normal behandelt)'>Löschen</button>" : "") + "</div>";
     h += "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>" + esc(build_status_txt()) + (o ? " · Chance je Stufe: " + Array.apply(null, Array(o.level)).map(function (_, l) { return "+" + (l + 1) + " " + Math.round(success_p(G.items[o.name].compound ? "c" : "u", l) * 100) + " %"; }).join(", ") : "") + "</span></div>";
     return h;
+}
+// Zweite Zeile: Bauauftrag für den Händler (er liest lp_mbuild_<Magier>, baut in der Stadt, legt fertige Teile in die Bank)
+var mbuild_ui = { item: "coat", level: 7, n: 1, reserve: 0 }; try { var _mu = JSON.parse(localStorage.getItem("lp_mbuild_ui_" + character.name) || "null"); if (_mu) mbuild_ui = _mu; } catch (e) {}
+function mbuild_load() { try { return JSON.parse(localStorage.getItem("lp_mbuild_" + character.name) || "null"); } catch (e) { return null; } }
+function mbuild_save(o) { try { if (o) localStorage.setItem("lp_mbuild_" + character.name, JSON.stringify(o)); else localStorage.removeItem("lp_mbuild_" + character.name); localStorage.setItem("lp_mbuild_ui_" + character.name, JSON.stringify(mbuild_ui)); } catch (e) {} }
+function mbuild_status_txt() {
+    var o = mbuild_load(); if (!o) return "kein Auftrag";
+    return o.name + " +" + o.level + ": " + o.done + "/" + o.n + " fertig · " + o.destroyed + " zerstört · " + fmt(o.spent || 0) + " Gold" + (o.running ? " · Händler baut" + (o.step ? " (" + o.step + ")" : "") : o.done >= o.n ? " · fertig (in der Bank)" : " · gestoppt" + (o.step ? " (" + o.step + ")" : ""));
+}
+function mbuild_html() {
+    var o = mbuild_load(), items = build_item_list();
+    return "<div class='lp_row'><span class='lp_k' title='Der Händler baut in der Stadt aus seiner Kasse, fertige Teile kommen in die Bank; der Magier farmt weiter'>Merch:</span> <select data-mbo='item' style='font-size:11px;background:#1c2029;color:#eee;border:1px solid #555;max-width:150px'>" + items.map(function (k) { return "<option value='" + k + "'" + (mbuild_ui.item == k ? " selected" : "") + ">" + esc(G.items[k].name || k) + " (" + fmt(G.items[k].g) + ")</option>"; }).join("") + "</select>"
+        + " <span class='lp_k'>Stufe</span> <input data-mbo='level' value='" + (mbuild_ui.level || 0) + "' style='width:28px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'>"
+        + " <span class='lp_k'>Stück</span> <input data-mbo='n' value='" + (mbuild_ui.n || 1) + "' style='width:28px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'>"
+        + " <span class='lp_k' title='Gold, das in der Händlerkasse immer bleibt (Mio.)'>Reserve</span> <input data-mbo='reserve' value='" + esc(fmt_mio(mbuild_ui.reserve || 0)) + "' style='width:36px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'> <span class='lp_k'>Mio</span>"
+        + (o && o.running ? "<button data-act='mbostop' class='on' title='Händler-Bauauftrag anhalten – Stand bleibt gespeichert'>Stop</button>" : "<button data-act='mbostart' title='Händler baut mit diesen Werten bzw. setzt den gespeicherten Auftrag fort'" + (team_on.merch ? "" : " disabled") + ">Start</button>")
+        + (o && !o.running ? "<button data-act='mboclear' title='Händler-Auftrag löschen'>Löschen</button>" : "") + "</div>"
+        + "<div class='lp_row'><span class='lp_mode' style='color:#9aa3b2'>" + esc(mbuild_status_txt()) + "</span></div>";
+}
+function mbuild_start() {
+    var name = mbuild_ui.item, def = G.items[name]; if (!def || !is_buyable(name)) { game_log("Händler-Bauauftrag: " + name + " ist nicht beim NPC kaufbar"); return; }
+    var level = Math.max(1, Math.min(parseInt(mbuild_ui.level) || 0, max_level(def))), n = Math.max(1, parseInt(mbuild_ui.n) || 1), o = mbuild_load();
+    if (!o || o.name != name || o.level != level || o.done >= o.n) o = { name: name, level: level, n: n, done: 0, destroyed: 0, spent: 0, reserve: mbuild_ui.reserve || 0, step: "" };
+    else { o.n = n; o.reserve = mbuild_ui.reserve || 0; }
+    o.running = true; o.t = Date.now(); mbuild_save(o); last_panel = 0;
+    game_log("Händler-Bauauftrag: " + name + " +" + level + " × " + n + " – Händler baut aus seiner Kasse (Reserve " + fmt(o.reserve || 0) + "), fertige Teile kommen in die Bank");
 }
 function build_start() {
     if (build_running) return;
