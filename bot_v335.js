@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v333";
+var BOT_VERSION = "v335";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -2229,7 +2229,7 @@ async function sell_duplicates(pre) { // im Laden stehen; pre = vorgefilterte In
     var idx = pre || duplicate_indices().filter(function (di) { var dt = character.items[di]; if (dt && stand_instead(dt)) { stand_auto_order(dt); return false; } return true; }); if (!idx.length) return 0;
     var names = [];
     idx.sort(function (a, b) { return b - a; });
-    for (var i = 0; i < idx.length; i++) { var it = character.items[idx[i]]; if (!it) continue; names.push(it.name + "+" + (it.level || 0)); await sell_measured(idx[i], 1); }
+    for (var i = 0; i < idx.length; i++) { var it = character.items[idx[i]]; if (!it) continue; if (dup_protected(it) || should_keep(it) || KEEP_ITEMS.test(it.name)) { game_log("Duplikat-Verkauf übersprungen: " + it.name + "+" + (it.level || 0) + " (geschützt / Inventar verschoben)"); continue; } names.push(it.name + "+" + (it.level || 0)); await sell_measured(idx[i], 1); }
     game_log("Duplikate verkauft: " + names.join(", "));
     return idx.length;
 }
@@ -2378,7 +2378,7 @@ var tidy_force = false, give_done = {}; // Button: kompletter Durchgang unabhän
 async function tidy_inventory() {
     if (ev_away() && !tidy_force) return; // vom Event-Ort keine Stadtgänge
     var min_free = focus_mode ? FOCUS_MIN_FREE : INV_MIN_FREE;
-    if (busy || upgrading || paused || (!tidy_force && (character.esize >= min_free || Date.now() < tidy_next))) return;
+    if (busy || upgrading || sorting_inv || bank_cleaning || paused || (!tidy_force && (character.esize >= min_free || Date.now() < tidy_next))) return; // nie parallel zu Sortieren/Bank-Aufräumen – sonst verschieben sich die Plätze unter dem Verkauf
     if (!tidy_force && merchant_available()) { // Stufe 2: Händler holt ab, Magier bleibt am Spot
         var done = await merchant_pickup("Inventar voll");
         if (done) { if (character.esize < min_free) tidy_next = Date.now() + 5 * 60000; return; }
@@ -2388,12 +2388,13 @@ async function tidy_inventory() {
     try {
         // 1. verkaufen (im Fokus-Modus auf jeden Fall zum Händler: dort werden auch die Tränke aufgefüllt)
         var junk = [];
-        for (var i = 0; i < character.items.length; i++) { var jt = character.items[i]; if (jt && (is_junk(jt) || (!worth_keeping(jt) && !equipped_names()[jt.name]))) { if (stand_instead(jt)) stand_auto_order(jt); else junk.push(i); } }
+        var junk_exp = {};
+        for (var i = 0; i < character.items.length; i++) { var jt = character.items[i]; if (jt && (is_junk(jt) || (!worth_keeping(jt) && !equipped_names()[jt.name]))) { if (stand_instead(jt)) stand_auto_order(jt); else { junk.push(i); junk_exp[i] = jt.name + "+" + (jt.level || 0); } } }
         var dups = duplicate_indices().filter(function (di) { var dt = character.items[di]; if (dt && stand_instead(dt)) { stand_auto_order(dt); return false; } return true; });
         if (junk.length || dups.length || focus_mode) {
             set_message("Verkaufen"); await travel_place("potions");
             var sold_names = [];
-            for (var j = 0; j < junk.length; j++) { var it = character.items[junk[j]]; if (!it) continue; sold_names.push(it.name + ((it.level || 0) ? "+" + it.level : "") + ((it.q || 1) > 1 ? " ×" + it.q : "")); await sell_measured(junk[j], it.q || 1); }
+            for (var j = 0; j < junk.length; j++) { var it = character.items[junk[j]]; if (!it) continue; if (junk_exp[junk[j]] != it.name + "+" + (it.level || 0)) { game_log("Verkauf übersprungen: Platz " + junk[j] + " enthält jetzt " + it.name + " statt " + junk_exp[junk[j]] + " (Inventar hat sich verschoben)"); continue; } if (!is_junk(it) && (worth_keeping(it) || equipped_names()[it.name])) continue; sold_names.push(it.name + ((it.level || 0) ? "+" + it.level : "") + ((it.q || 1) > 1 ? " ×" + it.q : "")); await sell_measured(junk[j], it.q || 1); }
             if (junk.length) game_log("Inventar: " + junk.length + " Schrott-Items verkauft: " + sold_names.join(", "));
             await sell_duplicates(dups);
             if (focus_mode) { try { var hp_t = pick_pot_tier(POTS_HP), mp_t = pick_pot_tier(POTS_MP), pp = G.items[hp_t].g + G.items[mp_t].g, need = Math.max(0, 150 - Math.min(pots_total(POTS_HP), pots_total(POTS_MP))), amt = Math.min(need, Math.floor((spendable() * 0.7) / pp)); if (amt >= 10) { buy(hp_t, amt); buy(mp_t, amt); await sleep(500); game_log("Tränke aufgefüllt: " + amt + " " + hp_t + " / " + amt + " " + mp_t); } } catch (e) { game_log("Tränke: " + err_txt(e)); } }
@@ -3110,7 +3111,7 @@ async function tidy_now() {
     // 2. dann eigenes Inventar
     tidy_force = true; tidy_next = 0;
     try { await tidy_inventory(); } finally { tidy_force = false; }
-    if (!paused) { try { await sort_inventory(); } catch (e) {} }
+    // kein automatisches Sortieren mehr (nur noch per Knopf „Inv ⇅“) – weniger bewegliche Teile, weniger Risiko
     game_log("Aufräumen fertig – frei: " + character.esize + " (behalten: Tränke, Scrolls, Event, 3er-Sets Schmuck, Ziel-Items – Reserven liegen in der Bank)");
     after_action("Aufräumen");
 }
@@ -3130,7 +3131,7 @@ function inv_rank(it) {
 }
 async function sort_inventory() {
     if (sorting_inv) return;
-    sorting_inv = true;
+    sorting_inv = true; var was_busy = busy; busy = true; // während des Sortierens darf kein Verkauf laufen
     try {
         var items = [];
         for (var i = 0; i < character.items.length; i++) if (character.items[i]) items.push({ i: i, it: character.items[i] });
@@ -3153,7 +3154,7 @@ async function sort_inventory() {
         }
         game_log("Inventar sortiert (" + n + " Verschiebungen)");
     } catch (e) { game_log("Sortier-Fehler: " + err_txt(e)); }
-    sorting_inv = false;
+    sorting_inv = false; busy = was_busy;
 }
 
 // ---------- Ponty: gebrauchte Items prüfen und kaufen ----------
