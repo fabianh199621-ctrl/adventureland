@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v335";
+var BOT_VERSION = "v337";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -1897,8 +1897,13 @@ function mon_ttk(d) { // Sekunden pro Kill inkl. Lebensraub
     return (d.hp || 0) / net;
 }
 var death_log = {}; try { death_log = JSON.parse(localStorage.getItem("lp_deaths") || "{}"); } catch (e) {} // Monster -> [Zeitstempel der Tode] (7 Tage): jeder Tod erhöht die angezeigte Gefahr
-function note_death(mon) { if (!mon) return; var a = (death_log[mon] || []).filter(function (t) { return Date.now() - t < 7 * 86400000; }); a.push(Date.now()); death_log[mon] = a; try { localStorage.setItem("lp_deaths", JSON.stringify(death_log)); } catch (e) {} }
-function deaths_at(mon) { return (death_log[mon] || []).filter(function (t) { return Date.now() - t < 7 * 86400000; }).length; }
+function death_t(e) { return typeof e == "number" ? e : (e && e.t) || 0; }
+function note_death(mon) { if (!mon) return; var a = (death_log[mon] || []).filter(function (e) { return Date.now() - death_t(e) < 7 * 86400000; }); a.push({ t: Date.now(), hp: character.max_hp, lv: character.level }); death_log[mon] = a; try { localStorage.setItem("lp_deaths", JSON.stringify(death_log)); } catch (e) {} }
+function deaths_at(mon) { // gewichtete Tode der letzten 7 Tage: verblassen linear mit der Zeit und zählen nur im Verhältnis damaliger zu heutiger HP (ein Tod mit halben HP zählt ein Viertel)
+    var now = Date.now(), sum = 0;
+    (death_log[mon] || []).forEach(function (e) { var age = now - death_t(e); if (age < 0 || age >= 7 * 86400000) return; var w = 1 - age / (7 * 86400000); if (e && e.hp && character.max_hp > e.hp) { var r = e.hp / character.max_hp; w *= r * r; } sum += w; });
+    return sum;
+}
 var mon_id_cache = null;
 function mon_id_of(d) { if (!mon_id_cache) { mon_id_cache = new Map(); for (var k in G.monsters) mon_id_cache.set(G.monsters[k], k); } return mon_id_cache.get(d) || null; }
 function mon_danger(d) { // Anteil meiner HP, den ein Kill kostet
@@ -4194,6 +4199,7 @@ function save_mkt() { try { localStorage.setItem("lp_mkt", JSON.stringify(mkt));
 function market_note_scan(merchants) { // aus dem Rohscan: komplette Angebotsliste + Preisgeschichte
     var mine = my_server(), all = [], mins = {};
     merchants.forEach(function (m) {
+        if (m.name == TEAM.merch) return; // eigener Stand zählt nicht als Markt
         for (var sl in m.slots) {
             if (sl.indexOf("trade") != 0) continue; var it = m.slots[sl]; if (!it || !it.price || !G.items[it.name]) continue;
             var o = { name: it.name, level: it.level || 0, price: it.price, q: it.q || 1, b: !!it.b, seller: m.name, server: m.server || "?", same: norm_server(m.server) == mine, map: m.map, x: m.x, y: m.y, tslot: sl, stat_type: it.stat_type || null, t: Date.now() };
@@ -4638,6 +4644,7 @@ async function scan_all_merchants(force, only_slot) {
     try { market_note_scan(merchants); } catch (e) { game_log("Markt-Liste: " + err_txt(e)); }
     var finds = [], mine = my_server(), all = [], arb = []; watch_prices = {};
     merchants.forEach(function (m) {
+        if (m.name == TEAM.merch) return; // eigener Stand: keine Empfehlung, kein Kauf vom eigenen Händler
         for (var sl in m.slots) {
             if (sl.indexOf("trade") != 0) continue;
             var it = m.slots[sl]; if (!it || !it.price) continue;
