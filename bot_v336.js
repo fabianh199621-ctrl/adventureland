@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v334";
+var BOT_VERSION = "v336";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -3111,7 +3111,7 @@ async function tidy_now() {
     // 2. dann eigenes Inventar
     tidy_force = true; tidy_next = 0;
     try { await tidy_inventory(); } finally { tidy_force = false; }
-    if (!paused) { try { await sort_inventory(); } catch (e) {} }
+    // kein automatisches Sortieren mehr (nur noch per Knopf „Inv ⇅“) – weniger bewegliche Teile, weniger Risiko
     game_log("Aufräumen fertig – frei: " + character.esize + " (behalten: Tränke, Scrolls, Event, 3er-Sets Schmuck, Ziel-Items – Reserven liegen in der Bank)");
     after_action("Aufräumen");
 }
@@ -4194,6 +4194,7 @@ function save_mkt() { try { localStorage.setItem("lp_mkt", JSON.stringify(mkt));
 function market_note_scan(merchants) { // aus dem Rohscan: komplette Angebotsliste + Preisgeschichte
     var mine = my_server(), all = [], mins = {};
     merchants.forEach(function (m) {
+        if (m.name == TEAM.merch) return; // eigener Stand zählt nicht als Markt
         for (var sl in m.slots) {
             if (sl.indexOf("trade") != 0) continue; var it = m.slots[sl]; if (!it || !it.price || !G.items[it.name]) continue;
             var o = { name: it.name, level: it.level || 0, price: it.price, q: it.q || 1, b: !!it.b, seller: m.name, server: m.server || "?", same: norm_server(m.server) == mine, map: m.map, x: m.x, y: m.y, tslot: sl, stat_type: it.stat_type || null, t: Date.now() };
@@ -4638,6 +4639,7 @@ async function scan_all_merchants(force, only_slot) {
     try { market_note_scan(merchants); } catch (e) { game_log("Markt-Liste: " + err_txt(e)); }
     var finds = [], mine = my_server(), all = [], arb = []; watch_prices = {};
     merchants.forEach(function (m) {
+        if (m.name == TEAM.merch) return; // eigener Stand: keine Empfehlung, kein Kauf vom eigenen Händler
         for (var sl in m.slots) {
             if (sl.indexOf("trade") != 0) continue;
             var it = m.slots[sl]; if (!it || !it.price) continue;
