@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v337";
+var BOT_VERSION = "v339";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -1675,7 +1675,8 @@ function init_panel() {
         else if (act == "standclean") { var ms0 = team_state[TEAM.merch], n0 = 0; for (var ck in stand_orders) { var cs = ms0 && ms0.orders && ms0.orders[ck]; if (cs == "nicht in Bank") { delete stand_orders[ck]; n0++; } } save_stand_orders(); game_log("Stand-Aufträge: " + n0 + " nicht auffindbare (verkauft/weg) gelöscht"); last_panel = 0; }
         else if (act == "standdel") { var dk = b.getAttribute("data-key"), dsl = b.getAttribute("data-slot"); if (stand_orders[dk]) { game_log("Stand-Auftrag gelöscht: " + dk + " – Händler nimmt es vom Stand"); delete stand_orders[dk]; save_stand_orders(); } if (dsl && team_on.merch && team_running(TEAM.merch)) { team_send(TEAM.merch, { t: "unlist", slot: dsl, name: dk }); game_log("Händler: " + dk + " vom Stand nehmen (" + dsl + ")"); } last_panel = 0; }
         else if (act == "bankstatus") { try { bank_status_log(); } catch (e) { game_log("Bank-Status: " + err_txt(e)); } }
-        else if (act == "mbcancel") { if (merch_buy && merch_buy.stage == "away") game_log("Einkauf: Reise läuft, Abbruch erst nach Rückkehr"); else mb_fail("manuell abgebrochen"); }
+        else if (act == "mbcancel") { if (merch_buy && merch_buy.stage == "away") { if (arb_job) arb_finish(arb_job.res || null, "manuell abgebrochen"); mb_fail("manuell abgebrochen"); } else mb_fail("manuell abgebrochen"); }
+        else if (act == "arbabort") { if (arb_job) arb_finish(arb_job.res || null, "manuell abgebrochen"); else game_log("Keine Handelsreise aktiv"); }
         else if (act == "geartoggle") { div.__gear = !div.__gear; try { localStorage.setItem("lp_panel_gear", div.__gear ? "1" : "0"); } catch (x) {} }
         else if (act == "clearlog") { log_buf = []; try { localStorage.setItem("lp_log", "[]"); } catch (x) {} _game_log("Log-Puffer geleert"); }
         last_panel = 0;
@@ -4080,7 +4081,7 @@ function arb_finish(res, why) {
 }
 function arb_trip_html() {
     var h = "";
-    if (arb_job) { var el = Math.round((Date.now() - arb_job.t) / 1000), r = arb_job.res; h += "<div class='lp_row'><span class='lp_k'>Handelsreise:</span> <span style='color:#8ab4f8'>" + esc(pretty_server(arb_job.server)) + " – " + (arb_job.stage == "stopped" ? "Händler wird abgemeldet" : r ? r.bought + "/" + arb_job.offers.length + " gekauft" + (r.sold ? ", " + r.sold + " verkauft" : "") + (r.log && r.log.length ? " · " + esc(r.log[r.log.length - 1]) : "") : "unterwegs") + " (" + el + " s)</span></div>"; }
+    if (arb_job) { var el = Math.round((Date.now() - arb_job.t) / 1000), r = arb_job.res; h += "<div class='lp_row'><span class='lp_k'>Handelsreise:</span> <span style='color:#8ab4f8'>" + esc(pretty_server(arb_job.server)) + " – " + (arb_job.stage == "stopped" ? "Händler wird abgemeldet" : r ? r.bought + "/" + arb_job.offers.length + " gekauft" + (r.sold ? ", " + r.sold + " verkauft" : "") + (r.log && r.log.length ? " · " + esc(r.log[r.log.length - 1]) : "") : "unterwegs") + " (" + el + " s)</span><button data-act='arbabort' title='Reise sofort abbrechen: Fenster auf dem anderen Server schließen, Händler zuhause neu starten (schon Gekauftes bleibt bei ihm)'>Abbrechen</button></div>"; }
     else {
         var groups = arb_by_server(), bl = arb_blocked();
         h += "<div class='lp_row' style='flex-wrap:wrap'><span class='lp_k'>Handelsreise:</span> <button data-act='arbauto'" + (arb_auto ? " class='on'" : "") + " title='Händler fährt automatisch, sobald ein Server diesen Gewinn hergibt'>Auto</button> ab <input data-arbmin='1' value='" + esc(fmt_mio(ARB_TRIP_MIN)) + "' style='width:52px;font-size:11px;background:#1c2029;color:#eee;border:1px solid #555'> Gewinn" + (bl ? " <span style='color:#9aa3b2'>(" + esc(bl) + ")</span>" : "") + (groups.length ? " · " + groups.slice(0, 4).map(function (g) { return esc(pretty_server(g.server)) + " ~" + fmt(Math.round(g.profit)) + " <button data-act='arbtrip' data-sv='" + esc(g.key) + "' style='padding:0 5px'" + (bl ? " disabled" : "") + ">Reise</button>"; }).join(" · ") : " <span style='color:#9aa3b2'>keine lohnenden Server</span>");
