@@ -1,12 +1,48 @@
 // ===== Adventure Land – LogicPlan Priester (F4llenPriest) – Stufe 1 =====
 // Folgt dem Magier, heilt ihn und sich, nimmt die Party-Einladung an, greift erst ab PRIEST_ATTACK_LEVEL mit an.
 // Meldungen gehen per Charakter-Nachricht an den Magier ("[Priest] …").
-var PRIEST_VERSION = "v340";
+var PRIEST_VERSION = "v342";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
 
 var MAGE = "F4llen";
+// Item-Regeln des Magiers (Bank-Fenster): keep/comp/stand → in die Bank, npc → selbst verkaufen, team/"" → Übergabe an den Magier wie bisher
+// ---------- Bankfächer: Gabrielle (items0) = Ausrüstung, Gabriella (items1) = Drops/Material, Ledia (items2) = Überlauf ----------
+var BANK_GEAR_TYPES = { helmet: 1, chest: 1, pants: 1, shoes: 1, gloves: 1, cape: 1, weapon: 1, ring: 1, earring: 1, amulet: 1, belt: 1, orb: 1, quiver: 1, shield: 1, source: 1, misc_offhand: 1 };
+var BANK_PACKS = { gear: "items0", mat: "items1", over: "items2" };
+function bank_pack_for(it) { var d = (it && G.items[it.name]) || {}; return BANK_GEAR_TYPES[d.type] ? BANK_PACKS.gear : BANK_PACKS.mat; }
+function bank_free_in(pack, it) { // freier Platz im Fach (bei stapelbaren Items zuerst ein Stapel mit Luft), -1 = keiner / Fach nicht gekauft
+    var p = character.bank && character.bank[pack]; if (!Array.isArray(p)) return -1;
+    var d = it && G.items[it.name]; if (d && d.s) { var mx = typeof d.s == "number" ? d.s : 9999; for (var j = 0; j < p.length; j++) { var b = p[j]; if (b && b.name == it.name && (b.level || 0) == (it.level || 0) && (b.q || 1) + (it.q || 1) <= mx) return j; } }
+    for (var i = 0; i < p.length; i++) if (!p[i]) return i; return -1;
+}
+async function bank_put_at(i, pack, s) { // Item i in Fach/Platz legen; hat der Server getauscht statt gestapelt → zurücktauschen und freien Platz nehmen
+    var it = character.items[i]; if (!it) return false; var old = character.bank[pack][s], oq = old ? (old.q || 1) : 0, myq = it.q || 1;
+    bank_store(i, pack, s); await sleep(500);
+    var now = character.items[i], bs = character.bank[pack] && character.bank[pack][s];
+    if (old && now && now.name == it.name && (now.q || 1) == oq && bs && bs.name == it.name && (bs.q || 1) == myq) { bank_store(i, pack, s); await sleep(500); var f = -1, p = character.bank[pack]; for (var k = 0; k < p.length; k++) if (!p[k]) { f = k; break; } if (f < 0) return false; bank_store(i, pack, f); await sleep(500); }
+    return true;
+}
+async function bank_put(i) { // ins passende Fach; ist es voll → Ledia; ohne Fächer-Info → wie das Spiel es wählt
+    var it = character.items[i]; if (!it) return false;
+    var want = bank_pack_for(it), s = bank_free_in(want, it);
+    if (s < 0) { want = BANK_PACKS.over; s = bank_free_in(want, it); }
+    if (s < 0) { bank_store(i); await sleep(300); return true; }
+    return bank_put_at(i, want, s);
+}
+function item_rules() { try { return JSON.parse(localStorage.getItem("lp_item_rules") || "{}"); } catch (e) { return {}; } }
+function type_rules() { try { return JSON.parse(localStorage.getItem("lp_type_rules") || "{}"); } catch (e) { return {}; } } // Typregeln (Fallback, wenn das Item keine eigene Regel hat)
+function rule_of_it(it) { if (!it) return ""; var R = item_rules(), r = R[it.name + ((it.level || 0) ? "+" + it.level : "")] || R[it.name]; if (!r) { var d = G.items[it.name] || {}; r = type_rules()[d.type || ""]; } return (r || {}).r || ""; }
+function inv_brief() { var out = []; for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it) out.push({ n: it.name, l: it.level || 0, q: it.q || 1 }); } return out; }
+async function apply_rules_in_town() { // beim Stadtgang: Regel NPC verkaufen, Regel Behalten/Compound/Stand in die Bank (Bank ist kontoweit)
+    var sellR = [], bankR = [];
+    for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (!it || /^(hpot|mpot)/.test(it.name) || it.name == "tracker" || it.name == "computer") continue; var r = rule_of_it(it); if (r == "npc") sellR.push(i); else if (r == "keep" || r == "comp" || r == "stand") bankR.push(i); }
+    var sold = 0, banked = 0;
+    if (sellR.length) { try { await smart_move("potions"); for (var a = sellR.length - 1; a >= 0; a--) { var s1 = character.items[sellR[a]]; if (!s1 || rule_of_it(s1) != "npc") continue; try { sell(sellR[a], s1.q || 1); sold++; } catch (e) {} await sleep(300); } } catch (e) {} }
+    if (bankR.length) { try { await smart_move("bank"); for (var w = 0; w < 25 && !character.bank; w++) await sleep(200); for (var b = bankR.length - 1; b >= 0; b--) { var b1 = character.items[bankR[b]]; if (!b1) continue; var rb = rule_of_it(b1); if (rb != "keep" && rb != "comp" && rb != "stand") continue; var e0 = character.esize; try { await bank_put(bankR[b]); } catch (e) {} await sleep(200); if (character.esize > e0) banked++; } } catch (e) {} }
+    if (sold || banked) say("Regeln: " + sold + " beim NPC verkauft, " + banked + " in die Bank gelegt" + (bankR.length > banked ? " (" + (bankR.length - banked) + " nicht – Bank voll?)" : ""));
+}
 try { localStorage.setItem("lp_tlog_" + character.name, JSON.stringify([{ t: Date.now(), m: "Skript geladen (" + character.ctype + ", Lv " + character.level + ", Server " + (typeof server != "undefined" && server ? (server.region + " " + server.id) : "?") + ")" }])); } catch (e) {}
 var PRIEST_ATTACK_LEVEL = 20;      // vorher nur folgen und heilen
 var FOLLOW_DIST = 120, FOLLOW_MAX = 220;
@@ -29,7 +65,8 @@ function junk_items() { // Ausrüstung, die die Automatik nie anlegen würde: ni
     var out = [];
     for (var i = 0; i < character.items.length; i++) {
         var it = character.items[i]; if (!it) continue; var d = G.items[it.name]; if (!d || /^(hpot|mpot|mm)/.test(it.name)) continue; // mm* = Token-Set für den Magier
-        if ((d.g || 0) >= 50000 || (it.level || 0) >= 4 || it.stat_type) continue; // wertvolle Teile nie beim NPC verkaufen – gehen beim Aufräumen an den Magier (Bank/Stand)
+        var rj = rule_of_it(it); if (rj && rj != "npc") continue; // Regel Behalten/Compound/Stand/Team: nicht als Schrott
+        if (rj != "npc" && ((d.g || 0) >= 50000 || (it.level || 0) >= 4 || it.stat_type)) continue; // wertvolle Teile nie beim NPC verkaufen – gehen beim Aufräumen an den Magier (Bank/Stand)
         if (!(d.type && ALL_SLOTS_TYPES[d.type]) && !d.wtype) continue; // keine Ausrüstung
         var useful = false, fits_me = false;
         for (var slot in ALL_SLOTS) { if (!fits_any(d, slot)) continue; fits_me = true; var worn = character.slots[slot]; var ws = worn ? gear_score(G.items[worn.name], worn.level || 0, worn.stat_type) : 0; if (gear_score(d, it.level || 0, it.stat_type) > ws * 1.02) useful = true; }
@@ -95,6 +132,7 @@ async function go_give_mage() { // alles außer Tränken/Tokens/Tracker zum Magi
         for (var i = 0; i < 4; i++) { try { await smart_move(tgt); } catch (e) {} m = mage_entity(); if (m && character.map == m.map && dist(character, m) < 200) break; if (mage) tgt = { map: mage.map, x: mage.x, y: mage.y }; }
         m = mage_entity(); if (!m || character.map != m.map || dist(character, m) > 300) throw "Magier nicht erreicht (" + character.map + ")";
         for (var j = character.items.length - 1; j >= 0; j--) { var it = character.items[j]; if (!it) continue; if (/^(hpot|mpot)/.test(it.name) || it.name == "tracker" || it.name == "computer") continue;
+            var rg = rule_of_it(it); if (rg && rg != "team") continue; // Regel-Items erledige ich selbst beim Stadtgang (Bank/NPC)
             if (mage && mage.free != null && mage.free <= 1) { left++; continue; }
             try { send_item(MAGE, j, it.q || 1); n++; names.push(it.name + (it.q > 1 ? "×" + it.q : "")); } catch (e) { left++; } await sleep(350); }
         say("Übergabe: " + n + " Posten an " + MAGE + (left ? ", " + left + " nicht (Magier voll)" : "") + (names.length ? " – " + names.join(", ") : ""));
@@ -123,7 +161,7 @@ async function go_tidy() { // Aufräumen auf Befehl des Magiers: Schrott verkauf
         var failed = 0;
         var last_err = "";
         if (bank.length) { try { if (!(await enter_bank())) throw "Bank nicht erreicht (Karte " + character.map + " " + Math.round(character.x) + "," + Math.round(character.y) + ")";
-            for (var b = bank.length - 1; b >= 0; b--) { var ib = character.items[bank[b]]; if (!ib) continue; var e0 = character.esize; try { var pr = bank_store(bank[b]); if (pr && pr.then) pr.then(null, function (e) { last_err = String(e && e.reason || e); }); } catch (e) { last_err = String(e && e.reason || e); } await sleep(600); if (character.esize > e0) stored++; else failed++; } } catch (e) { say("Bank: " + (e && e.message || e)); } }
+            for (var b = bank.length - 1; b >= 0; b--) { var ib = character.items[bank[b]]; if (!ib) continue; var e0 = character.esize; try { await bank_put(bank[b]); } catch (e) { last_err = String(e && e.reason || e); } await sleep(300); if (character.esize > e0) stored++; else failed++; } } catch (e) { say("Bank: " + (e && e.message || e)); } }
         say("Aufgeräumt: " + sold + " verkauft, " + stored + " in die Bank" + (failed ? ", " + failed + " nicht abgelegt (" + (last_err || "kein Fehler gemeldet") + ")" : "") + " – frei " + character.esize);
     } catch (e) { say("Aufräumen: " + (e && e.message ? e.message : e)); }
     shopping = false;
@@ -151,7 +189,9 @@ async function go_shopping() { // in die Stadt: fehlende Ausrüstung und Tränke
         // ersetzte/überflüssige Ausrüstung beim NPC verkaufen
         var junk = cheap_junk();
         if (junk.length) { try { await smart_move("potions"); for (var j3 = junk.length - 1; j3 >= 0; j3--) { var ij3 = character.items[junk[j3]]; if (ij3) { try { sell(junk[j3], ij3.q || 1); } catch (e) {} await sleep(300); } } say("Alte Ausrüstung verkauft: " + junk.length); } catch (e) {} }
+        try { await apply_rules_in_town(); } catch (e) { say("Regeln: " + (e && e.message || e)); }
         try { await hunt_town_step(); } catch (e) { say("Jagd/Daisy: " + (e && e.message || e)); }
+        if (character.esize < 3) { last_shop = Date.now() + 25 * 60000; say_once("invfull", "Inventar bleibt voll (" + character.esize + " frei) – nächster Stadtgang in 30 min; Regeln im Bank-Fenster setzen oder Aufräumen", 1800000); }
         // anlegen
         for (var i2 = 0; i2 < character.items.length; i2++) { var it = character.items[i2]; if (!it) continue; var d = G.items[it.name]; for (var k = 0; k < GEAR_SLOTS.length; k++) { var sl = GEAR_SLOTS[k]; if (!character.slots[sl] && fits(d, sl)) { try { equip(i2); await sleep(400); say(it.name + " angelegt"); } catch (e) {} break; } } }
     } catch (e) { say("Einkauf-Fehler: " + (e && e.message ? e.message : e)); }
@@ -162,7 +202,7 @@ function say_once(key, msg, every) { if (last_log[key] && Date.now() - last_log[
 function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 var last_state = null;
 function worn_summary() { var o = {}; for (var sl in character.slots) { var it = character.slots[sl]; if (it && sl.indexOf("trade") != 0) o[sl] = { name: it.name, level: it.level || 0 }; } return o; }
-function status(state) { if (state == last_state && Date.now() - last_status < 30000) return; last_state = state; last_status = Date.now(); try { send_cm(MAGE, { t: "st", hpots: pot_count("hpot"), mpots: pot_count("mpot"), cav: { has: have_item("tracker") >= 0, next: cav_next }, level: character.level, state: character.rip ? "tot" : state, hp: character.hp, max_hp: character.max_hp, mp_pct: character.mp / character.max_mp, map: character.map, free: character.esize, attack: character.attack, frequency: character.frequency, tokens: pot_count("monstertoken"), hunt: (mh_q() ? { id: mh_q().id, c: mh_q().c || 0, ms: mh_q().ms || 0 } : null), slots: worn_summary() }); } catch (e) {} }
+function status(state) { if (state == last_state && Date.now() - last_status < 30000) return; last_state = state; last_status = Date.now(); try { send_cm(MAGE, { t: "st", inv: inv_brief(), hpots: pot_count("hpot"), mpots: pot_count("mpot"), cav: { has: have_item("tracker") >= 0, next: cav_next }, level: character.level, state: character.rip ? "tot" : state, hp: character.hp, max_hp: character.max_hp, mp_pct: character.mp / character.max_mp, map: character.map, free: character.esize, attack: character.attack, frequency: character.frequency, tokens: pot_count("monstertoken"), hunt: (mh_q() ? { id: mh_q().id, c: mh_q().c || 0, ms: mh_q().ms || 0 } : null), slots: worn_summary() }); } catch (e) {} }
 var gear_incoming = [];
 async function equip_incoming() { // vom Magier erhaltene Teile anlegen, ersetzte Teile beim nächsten Einkauf verkaufen
     while (gear_incoming.length) {
@@ -172,7 +212,7 @@ async function equip_incoming() { // vom Magier erhaltene Teile anlegen, ersetzt
         try { equip(idx, g.slot); await sleep(600); if (g.manual) manual_choice[g.slot] = g.name + "+" + g.level; say(g.name + "+" + g.level + " angelegt (" + g.slot + (g.manual ? ", von dir gewählt – bleibt an" : "") + ")"); } catch (e) { say("Anlegen " + g.name + ": " + (e && e.reason || e)); }
     }
     last_autoequip = 0; try { await auto_equip(); } catch (e) {}
-    try { send_cm(MAGE, { t: "st", hpots: pot_count("hpot"), mpots: pot_count("mpot"), level: character.level, state: last_state || "bei dir", hp: character.hp, max_hp: character.max_hp, mp_pct: character.mp / character.max_mp, map: character.map, free: character.esize, attack: character.attack, frequency: character.frequency, tokens: pot_count("monstertoken"), hunt: (mh_q() ? { id: mh_q().id, c: mh_q().c || 0, ms: mh_q().ms || 0 } : null), slots: worn_summary() }); } catch (e) {}
+    try { send_cm(MAGE, { t: "st", inv: inv_brief(), hpots: pot_count("hpot"), mpots: pot_count("mpot"), level: character.level, state: last_state || "bei dir", hp: character.hp, max_hp: character.max_hp, mp_pct: character.mp / character.max_mp, map: character.map, free: character.esize, attack: character.attack, frequency: character.frequency, tokens: pot_count("monstertoken"), hunt: (mh_q() ? { id: mh_q().id, c: mh_q().c || 0, ms: mh_q().ms || 0 } : null), slots: worn_summary() }); } catch (e) {}
 }
 // ---------- Auto-Anlegen: besseres Teil im Inventar (egal woher) wird angelegt ----------
 var ALL_SLOTS = { helmet: "helmet", chest: "chest", pants: "pants", shoes: "shoes", gloves: "gloves", cape: "cape", mainhand: "weapon", offhand: "offhand", ring1: "ring", ring2: "ring", earring1: "earring", earring2: "earring", amulet: "amulet", belt: "belt", orb: "orb" };
@@ -222,7 +262,7 @@ async function hunt_town_step() { // in der Stadt: Jagd abgeben/holen, Tokens in
     var miss = []; // Tokens werden nicht automatisch ausgegeben (Set-Teile/Tracker kauft Fabian manuell)
     var bought = [];
     for (var i = 0; i < miss.length; i++) { var m = miss[i]; if (!m.cost || pot_count("monstertoken") < m.cost || character.esize < 2) continue; try { exchange_buy("monstertoken", m.name); await sleep(1500); } catch (e) {} if (have_item(m.name) >= 0) { bought.push(m.name); say("Tokens: " + m.name + " für " + MAGE + " gekauft (" + m.cost + ")"); } }
-    if (bought.length) { try { await smart_move("bank"); await sleep(800); for (var b = 0; b < bought.length; b++) { var bi = have_item(bought[b]); if (bi >= 0) { bank_store(bi); await sleep(400); } } say("Tokens: " + bought.join(", ") + " in die Bank gelegt"); } catch (e) { say("Bank: " + (e && e.message || e)); } }
+    if (bought.length) { try { await smart_move("bank"); await sleep(800); for (var b = 0; b < bought.length; b++) { var bi = have_item(bought[b]); if (bi >= 0) { await bank_put(bi); await sleep(200); } } say("Tokens: " + bought.join(", ") + " in die Bank gelegt"); } catch (e) { say("Bank: " + (e && e.message || e)); } }
 }
 function spot_target_near() { // freies, ungeleveltes Exemplar des aktuellen Team-Spots in der Nähe (nur ohne Team-Häkchen)
     if (!mage || !mage.spot || Date.now() - mage.t > 15000 || p_paused) return null; var sp = mage.spot, base = G.monsters[sp] || {}; if ((base.attack || 0) * 8 > character.max_hp) return null;
