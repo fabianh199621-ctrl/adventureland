@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v349";
+var BOT_VERSION = "v351";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -2205,7 +2205,7 @@ async function bank_put(i) { // ins passende Fach; ist es voll → Ledia; ohne F
     var want = bank_pack_for(it), s = bank_free_in(want, it);
     if (s < 0) { want = BANK_PACKS.over; s = bank_free_in(want, it); }
     if (s < 0 && character.bank) { for (var pk in character.bank) { if (pk.indexOf("items") != 0 || !Array.isArray(character.bank[pk])) continue; var f2 = bank_free_in(pk, it); if (f2 >= 0) { want = pk; s = f2; break; } } } // irgendein gekauftes Fach
-    if (s < 0) { if (character.bank) return false; bank_store(i); await sleep(300); return true; } // Bank voll → false (kein blinder Versuch)
+    if (s < 0) return false; // Bank voll oder nicht in der Bank → false (kein blinder Versuch)
     return bank_put_at(i, want, s);
 }
 var type_rules = {}; try { var tr_raw = localStorage.getItem("lp_type_rules"); if (tr_raw) type_rules = JSON.parse(tr_raw); else { type_rules = { amulet: { r: "comp", lv: 3 }, belt: { r: "comp", lv: 3 }, earring: { r: "comp", lv: 3 } }; localStorage.setItem("lp_type_rules", JSON.stringify(type_rules)); } } catch (e) {} // Startwerte (einmalig): Schmuck-Sorten compounden // Typregeln: Fallback für Items ohne eigene Regel, Schlüssel = G.items[..].type
@@ -2476,14 +2476,18 @@ async function tidy_inventory() {
         if (!focus_mode && character.esize < target_free && has_compound_triples()) { try { await compound_spares(); } catch (e) { if (e == "PAUSE") throw e; } }
         // 3. Rest in die Bank (vorher: Teile für leere Slots zurückholen) – so lange, bis INV_TARGET_FREE Plätze frei sind
         if (character.esize < target_free) {
-            set_message("Bank"); await travel_place("bank"); await sleep(800);
+            set_message("Bank"); try { await travel_place("bank"); } catch (e) {} await sleep(800);
+            for (var w0 = 0; w0 < 25 && !character.bank; w0++) await sleep(200);
+            if (!character.bank) { game_log("Bank nicht erreicht (Karte " + character.map + ") – zweiter Versuch"); try { await smart_move("bank"); } catch (e) {} for (var w1 = 0; w1 < 25 && !character.bank; w1++) await sleep(200); }
+            if (!character.bank) throw new Error("Bank nicht erreicht (Karte " + character.map + ")");
             await retrieve_for_empty_slots();
             try { await retrieve_better_from_bank(); } catch (e) {}
-            var n = 0;
+            var n = 0, nfail = [];
             for (var k = 0; k < character.items.length; k++) {
                 var it2 = character.items[k]; if (!it2 || should_keep(it2)) continue;
-                await bank_put(k); n++; await sleep(100);
+                if (await bank_put(k)) n++; else nfail.push(it2.name + (it2.level ? "+" + it2.level : "")); await sleep(100);
             }
+            if (nfail.length) game_log("Nicht in die Bank gelegt (kein Platz): " + nfail.join(", "));
             // reicht noch nicht: auch wartenden Schmuck (Einzelstücke/Paare) und überzählige Reserven einlagern
             var extra = 0;
             if (character.esize < target_free) {
@@ -3107,6 +3111,7 @@ async function check_gear_slots() {
 }
 // Immer das aktuell beste Teil je Slot tragen (Inventar vs. getragen)
 async function ensure_best_equipped() {
+    if (!equip_auto_allowed()) return;
     for (var slot in SLOT_TYPES) {
         var worn = character.slots[slot]; if (!worn) continue;
         var b = best_inv_for_slot(slot); if (b < 0) continue;
@@ -5073,7 +5078,9 @@ function bank_better_for(only_slot) { // Bankteile, die besser sind als das Getr
     }
     return out;
 }
+function equip_auto_allowed() { return !!SET.auto_equip || (upgrading && !auto_mode); } // Ausrüstung automatisch wechseln nur mit Einstellung „Autoequip“ – oder in der von Hand gestarteten U-Routine
 async function retrieve_better_from_bank(only_slot) { // läuft zur Bank, wenn dort etwas Besseres liegt
+    if (!equip_auto_allowed()) return 0;
     var list = bank_better_for(only_slot); if (!list.length) return 0;
     if (character.map != "bank") { set_message("Bank"); await travel_place("bank"); await sleep(800); list = bank_better_for(only_slot); }
     var got = 0;
