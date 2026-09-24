@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v342";
+var BOT_VERSION = "v344";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -175,7 +175,7 @@ function meet_escort() { // Begleiter hängt auf derselben Karte länger fest (k
     smart_move({ x: p.x + 40, y: p.y }).catch(function () {}).then(function () { busy = false; });
 }
 // Einstellungen (⚙): Darstellung + Verhalten, gespeichert unter lp_settings
-var SET = { alpha: 1, font: 12, accent: "green", list_right: true, wait_behind: 500, rally: 350, hold_flee: 60, team_grace: 10, hp_pot: 40, mp_pot: 50, xp_weight: 50, team_hunt_first: true, hunt_town_only: false, log_pots: true };
+var SET = { alpha: 1, font: 12, accent: "green", list_right: true, wait_behind: 500, rally: 350, hold_flee: 60, team_grace: 10, hp_pot: 40, mp_pot: 50, xp_weight: 50, team_hunt_first: true, hunt_town_only: false, log_pots: true, auto_equip: false };
 try { var so = JSON.parse(localStorage.getItem("lp_settings") || "null"); if (so) for (var sk in so) if (sk in SET) SET[sk] = so[sk]; } catch (e) {}
 function save_settings() { try { localStorage.setItem("lp_settings", JSON.stringify(SET)); } catch (e) {} apply_settings(); }
 var ACCENTS = { green: ["#2e7d32", "#4caf50"], blue: ["#1e6fb8", "#3d8bdc"], orange: ["#b8641e", "#e08a3c"], purple: ["#7b3fb8", "#9d5fd6"], red: ["#b83f4a", "#d65f6a"] };
@@ -1340,6 +1340,7 @@ function go_to_farm_spot() {
     var areas = spawn_areas(mon);
     // Schon im Spawngebiet, aber nichts in Sicht -> umherstreifen statt Weg neu suchen
     if (areas.length && !get_nearest_monster({ type: mon })) {
+        if (strict_mon(mon) && wait_team_on && !SOLO && !event_mode && escorts().length && escort_behind(WAIT_NEAR)) { set_message(wait_txt()); if (!team_grace()) { wait_log("Team-Pflicht " + mon + ": streife nicht allein im Spawngebiet – warte auf das Team"); rally_back(mon); } return; } // v343: nie allein in einem Team-Feld umherlaufen (Bigbird-Tod)
         var b = areas[Math.floor(Math.random() * areas.length)];
         var tx = b[0] + Math.random() * (b[2] - b[0]), ty = b[1] + Math.random() * (b[3] - b[1]);
         if (!roam_logged) { roam_logged = true; game_log("Keine " + mon + " in Sicht – streife im Spawngebiet umher"); }
@@ -1990,6 +1991,7 @@ function render_settings(sp) {
         + "<h4>Automatik</h4><label>Gold <input type='range' data-setk='xp_weight' min='0' max='100' step='10' value='" + SET.xp_weight + "'> XP <span style='color:#e6e6e6'>" + SET.xp_weight + " % XP</span></label>";
     else h += "<label><input type='checkbox' data-setk='team_hunt_first'" + (SET.team_hunt_first ? " checked" : "") + "> Laufende Team-Jagd zuerst beenden</label>"
         + "<label><input type='checkbox' data-setk='hunt_town_only'" + (SET.hunt_town_only ? " checked" : "") + "> Neue Jagd nur holen, wenn ohnehin in der Stadt</label>"
+        + "<label title='alle 5 min prüfen, ob im Inventar oder in der Bank etwas Besseres liegt, und es automatisch anlegen (aus = Ausrüstung nur von Hand, per U-Knopf oder Zielbau-Kauf)'><input type='checkbox' data-setk='auto_equip'" + (SET.auto_equip ? " checked" : "") + "> Autoequip (Besseres automatisch anlegen)</label>"
         + "<label><input type='checkbox' data-setk='log_pots'" + (SET.log_pots ? " checked" : "") + "> Trank-Zeilen im Log anzeigen</label>";
     h += "<div style='color:#6b7280;margin-top:6px'>Gilt für alle Chars, wird gespeichert.</div>";
     sp.innerHTML = h;
@@ -2656,6 +2658,7 @@ async function check_flee() {
     var n = attackers_on_me();
     var strong = false, oneshot = false; for (var sid in parent.entities) { var se = parent.entities[sid]; if (se && se.type == "monster" && !se.dead && se.target == character.name && too_strong(se)) { strong = true; if ((se.attack || (G.monsters[se.mtype] || {}).attack || 0) >= character.max_hp * 0.5) oneshot = true; break; } }
     if (!strong && !event_mode) { for (var bid2 in parent.entities) { var be = parent.entities[bid2]; if (be && be.type == "monster" && !be.dead && (G.monsters[be.mtype] || {}).boss && distance(character, be) < 350 && (be.attack || (G.monsters[be.mtype] || {}).attack || 0) >= character.max_hp * 0.3) { strong = true; oneshot = true; game_log("Boss " + be.mtype + " in der Nähe – weg hier"); break; } } } // Event-/Weltbosse (Icegolem usw.) nicht abwarten
+    if (!strong && n > 0 && hp < 0.35 && !character.rip) { var pr0 = null; try { pr0 = team_on.priest ? get_player(TEAM.priest) : null; } catch (e) {} if (!(pr0 && !pr0.rip && pr0.map == character.map && distance(character, pr0) < 250)) { strong = true; game_log("Notfall: HP " + Math.round(hp * 100) + " % mit " + n + " Angreifer(n) und kein Priest in der Nähe – breche ab und ziehe mich zurück"); } } // v343: greift auch mitten im Laufen, unabhängig von der Stärke-Einstufung
     if (strong && (hp < 0.8 || oneshot)) {
         fleeing = true; busy = true; if (!event_mode) note_retreat();
         var pr = null; try { pr = team_on.priest ? get_player(TEAM.priest) : null; } catch (e) {}
@@ -3827,7 +3830,7 @@ var NONWISH_MAX_PRICE = 400000; // Käufe außerhalb des Zielbaus ("jetzt besser
 var auto_mode = false; // läuft die Ausrüstungsroutine gerade automatisch?
 var last_best_check = 0;
 function best_equip_tick() {
-    if (busy || upgrading || paused || Date.now() - last_best_check < 5 * 60000) return; last_best_check = Date.now();
+    if (!SET.auto_equip || busy || upgrading || paused || Date.now() - last_best_check < 5 * 60000) return; last_best_check = Date.now();
     if (bank_better_for().length) { busy = true; retrieve_better_from_bank().catch(function () {}).then(function () { busy = false; if (!paused) go_to_farm_spot(); }); }
     else ensure_best_equipped().catch(function () {});
 }
