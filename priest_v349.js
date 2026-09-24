@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Priester (F4llenPriest) – Stufe 1 =====
 // Folgt dem Magier, heilt ihn und sich, nimmt die Party-Einladung an, greift erst ab PRIEST_ATTACK_LEVEL mit an.
 // Meldungen gehen per Charakter-Nachricht an den Magier ("[Priest] …").
-var PRIEST_VERSION = "v347";
+var PRIEST_VERSION = "v349";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -10,25 +10,26 @@ var MAGE = "F4llen";
 // Item-Regeln des Magiers (Bank-Fenster): keep/comp/stand → in die Bank, npc → selbst verkaufen, team/"" → Übergabe an den Magier wie bisher
 // ---------- Bankfächer: Gabrielle (items0) = Ausrüstung, Gabriella (items1) = Drops/Material, Ledia (items2) = Überlauf ----------
 var BANK_GEAR_TYPES = { helmet: 1, chest: 1, pants: 1, shoes: 1, gloves: 1, cape: 1, weapon: 1, ring: 1, earring: 1, amulet: 1, belt: 1, orb: 1, quiver: 1, shield: 1, source: 1, misc_offhand: 1 };
-var BANK_PACKS = { gear: "items0", mat: "items1", over: "items2" };
+var BANK_PACKS = { gear: "items0", mat: "items1", over: "items2" }, BANK_PACK_SIZE = 42;
 function bank_pack_for(it) { var d = (it && G.items[it.name]) || {}; return BANK_GEAR_TYPES[d.type] ? BANK_PACKS.gear : BANK_PACKS.mat; }
 function bank_free_in(pack, it) { // freier Platz im Fach (bei stapelbaren Items zuerst ein Stapel mit Luft), -1 = keiner / Fach nicht gekauft
     var p = character.bank && character.bank[pack]; if (!Array.isArray(p)) return -1;
     var d = it && G.items[it.name]; if (d && d.s) { var mx = typeof d.s == "number" ? d.s : 9999; for (var j = 0; j < p.length; j++) { var b = p[j]; if (b && b.name == it.name && (b.level || 0) == (it.level || 0) && (b.q || 1) + (it.q || 1) <= mx) return j; } }
-    for (var i = 0; i < p.length; i++) if (!p[i]) return i; return -1;
+    for (var i = 0; i < BANK_PACK_SIZE; i++) if (!p[i]) return i; return -1; // das Spiel liefert das Fach nur bis zum letzten belegten Platz – dahinter ist frei
 }
 async function bank_put_at(i, pack, s) { // Item i in Fach/Platz legen; hat der Server getauscht statt gestapelt → zurücktauschen und freien Platz nehmen
     var it = character.items[i]; if (!it) return false; var old = character.bank[pack][s], oq = old ? (old.q || 1) : 0, myq = it.q || 1;
     bank_store(i, pack, s); await sleep(500);
     var now = character.items[i], bs = character.bank[pack] && character.bank[pack][s];
-    if (old && now && now.name == it.name && (now.q || 1) == oq && bs && bs.name == it.name && (bs.q || 1) == myq) { bank_store(i, pack, s); await sleep(500); var f = -1, p = character.bank[pack]; for (var k = 0; k < p.length; k++) if (!p[k]) { f = k; break; } if (f < 0) return false; bank_store(i, pack, f); await sleep(500); }
+    if (old && now && now.name == it.name && (now.q || 1) == oq && bs && bs.name == it.name && (bs.q || 1) == myq) { bank_store(i, pack, s); await sleep(500); var f = -1, p = character.bank[pack]; for (var k = 0; k < BANK_PACK_SIZE; k++) if (!p[k]) { f = k; break; } if (f < 0) return false; bank_store(i, pack, f); await sleep(500); }
     return true;
 }
 async function bank_put(i) { // ins passende Fach; ist es voll → Ledia; ohne Fächer-Info → wie das Spiel es wählt
     var it = character.items[i]; if (!it) return false;
     var want = bank_pack_for(it), s = bank_free_in(want, it);
     if (s < 0) { want = BANK_PACKS.over; s = bank_free_in(want, it); }
-    if (s < 0) { bank_store(i); await sleep(300); return true; }
+    if (s < 0 && character.bank) { for (var pk in character.bank) { if (pk.indexOf("items") != 0 || !Array.isArray(character.bank[pk])) continue; var f2 = bank_free_in(pk, it); if (f2 >= 0) { want = pk; s = f2; break; } } } // irgendein gekauftes Fach
+    if (s < 0) { if (character.bank) return false; bank_store(i); await sleep(300); return true; } // Bank voll → false (kein blinder Versuch)
     return bank_put_at(i, want, s);
 }
 function item_rules() { try { return JSON.parse(localStorage.getItem("lp_item_rules") || "{}"); } catch (e) { return {}; } }
@@ -133,11 +134,13 @@ async function go_give_mage() { // alles außer Tränken/Tokens/Tracker zum Magi
         m = mage_entity(); if (!m || character.map != m.map || dist(character, m) > 300) throw "Magier nicht erreicht (" + character.map + ")";
         for (var j = character.items.length - 1; j >= 0; j--) { var it = character.items[j]; if (!it) continue; if (/^(hpot|mpot)/.test(it.name) || it.name == "tracker" || it.name == "computer") continue;
             var rg = rule_of_it(it); if (rg && rg != "team") continue; // Regel-Items erledige ich selbst beim Stadtgang (Bank/NPC)
-            if (mage && mage.free != null && mage.free <= 1) { left++; continue; }
+            if (mage && mage.free != null && mage.free - n <= 4) { left++; continue; } // dem Magier 4 Plätze lassen, sonst kann er nicht compounden/sortieren
             try { send_item(MAGE, j, it.q || 1); n++; names.push(it.name + (it.q > 1 ? "×" + it.q : "")); } catch (e) { left++; } await sleep(350); }
         say("Übergabe: " + n + " Posten an " + MAGE + (left ? ", " + left + " nicht (Magier voll)" : "") + (names.length ? " – " + names.join(", ") : ""));
     } catch (e) { say("Übergabe: " + (e && e.message ? e.message : e)); }
     try { send_cm(MAGE, { t: "given", n: n, left: left }); } catch (e) {}
+    try { var ruled = 0; for (var r2 = 0; r2 < character.items.length; r2++) { var ir = character.items[r2]; if (!ir || /^(hpot|mpot)/.test(ir.name)) continue; var rr = rule_of_it(ir); if (rr == "npc" || rr == "keep" || rr == "comp" || rr == "stand") ruled++; }
+        if (ruled) { say("Aufräumen: " + ruled + " Regel-Items – gehe in die Stadt (NPC/Bank)"); status("Regeln"); await apply_rules_in_town(); last_shop = Date.now(); } } catch (e) { say("Regeln: " + (e && e.message || e)); } // v348: Regel-Items sofort erledigen, nicht erst beim nächsten Stadtgang
     shopping = false;
 }
 var tidy_req = 0, goldback_req = 0, last_goldback = 0, GOLD_MAX = 2000000;
@@ -176,7 +179,7 @@ async function go_tidy() { // Aufräumen auf Befehl des Magiers: Schrott verkauf
         var failed = 0;
         var last_err = "";
         if (bank.length) { try { if (!(await enter_bank())) throw "Bank nicht erreicht (Karte " + character.map + " " + Math.round(character.x) + "," + Math.round(character.y) + ")";
-            for (var b = bank.length - 1; b >= 0; b--) { var ib = character.items[bank[b]]; if (!ib) continue; var e0 = character.esize; try { await bank_put(bank[b]); } catch (e) { last_err = String(e && e.reason || e); } await sleep(300); if (character.esize > e0) stored++; else failed++; } } catch (e) { say("Bank: " + (e && e.message || e)); } }
+            for (var b = bank.length - 1; b >= 0; b--) { var ib = character.items[bank[b]]; if (!ib) continue; var e0 = character.esize; try { if (!(await bank_put(bank[b]))) last_err = "Bank voll"; } catch (e) { last_err = String(e && e.reason || e); } await sleep(300); if (character.esize > e0) stored++; else failed++; } } catch (e) { say("Bank: " + (e && e.message || e)); } }
         say("Aufgeräumt: " + sold + " verkauft, " + stored + " in die Bank" + (failed ? ", " + failed + " nicht abgelegt (" + (last_err || "kein Fehler gemeldet") + ")" : "") + " – frei " + character.esize);
     } catch (e) { say("Aufräumen: " + (e && e.message ? e.message : e)); }
     shopping = false;

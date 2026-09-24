@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v347";
+var BOT_VERSION = "v349";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -2186,25 +2186,26 @@ var EQUIP_TYPES = ["helmet", "chest", "pants", "shoes", "gloves", "cape", "weapo
 // Regel je Item (Name, optional Name+Stufe): "" Auto · keep Behalten (Bank) · comp Compound bis lv · stand an den Händler · npc verkaufen · team an Priest/Ranger. Gemeinsamer Speicher, alle Chars lesen ihn.
 // ---------- Bankfächer: Gabrielle (items0) = Ausrüstung, Gabriella (items1) = Drops/Material, Ledia (items2) = Überlauf ----------
 var BANK_GEAR_TYPES = { helmet: 1, chest: 1, pants: 1, shoes: 1, gloves: 1, cape: 1, weapon: 1, ring: 1, earring: 1, amulet: 1, belt: 1, orb: 1, quiver: 1, shield: 1, source: 1, misc_offhand: 1 };
-var BANK_PACKS = { gear: "items0", mat: "items1", over: "items2" };
+var BANK_PACKS = { gear: "items0", mat: "items1", over: "items2" }, BANK_PACK_SIZE = 42;
 function bank_pack_for(it) { var d = (it && G.items[it.name]) || {}; return BANK_GEAR_TYPES[d.type] ? BANK_PACKS.gear : BANK_PACKS.mat; }
 function bank_free_in(pack, it) { // freier Platz im Fach (bei stapelbaren Items zuerst ein Stapel mit Luft), -1 = keiner / Fach nicht gekauft
     var p = character.bank && character.bank[pack]; if (!Array.isArray(p)) return -1;
     var d = it && G.items[it.name]; if (d && d.s) { var mx = typeof d.s == "number" ? d.s : 9999; for (var j = 0; j < p.length; j++) { var b = p[j]; if (b && b.name == it.name && (b.level || 0) == (it.level || 0) && (b.q || 1) + (it.q || 1) <= mx) return j; } }
-    for (var i = 0; i < p.length; i++) if (!p[i]) return i; return -1;
+    for (var i = 0; i < BANK_PACK_SIZE; i++) if (!p[i]) return i; return -1; // das Spiel liefert das Fach nur bis zum letzten belegten Platz – dahinter ist frei
 }
 async function bank_put_at(i, pack, s) { // Item i in Fach/Platz legen; hat der Server getauscht statt gestapelt → zurücktauschen und freien Platz nehmen
     var it = character.items[i]; if (!it) return false; var old = character.bank[pack][s], oq = old ? (old.q || 1) : 0, myq = it.q || 1;
     bank_store(i, pack, s); await sleep(500);
     var now = character.items[i], bs = character.bank[pack] && character.bank[pack][s];
-    if (old && now && now.name == it.name && (now.q || 1) == oq && bs && bs.name == it.name && (bs.q || 1) == myq) { bank_store(i, pack, s); await sleep(500); var f = -1, p = character.bank[pack]; for (var k = 0; k < p.length; k++) if (!p[k]) { f = k; break; } if (f < 0) return false; bank_store(i, pack, f); await sleep(500); }
+    if (old && now && now.name == it.name && (now.q || 1) == oq && bs && bs.name == it.name && (bs.q || 1) == myq) { bank_store(i, pack, s); await sleep(500); var f = -1, p = character.bank[pack]; for (var k = 0; k < BANK_PACK_SIZE; k++) if (!p[k]) { f = k; break; } if (f < 0) return false; bank_store(i, pack, f); await sleep(500); }
     return true;
 }
 async function bank_put(i) { // ins passende Fach; ist es voll → Ledia; ohne Fächer-Info → wie das Spiel es wählt
     var it = character.items[i]; if (!it) return false;
     var want = bank_pack_for(it), s = bank_free_in(want, it);
     if (s < 0) { want = BANK_PACKS.over; s = bank_free_in(want, it); }
-    if (s < 0) { bank_store(i); await sleep(300); return true; }
+    if (s < 0 && character.bank) { for (var pk in character.bank) { if (pk.indexOf("items") != 0 || !Array.isArray(character.bank[pk])) continue; var f2 = bank_free_in(pk, it); if (f2 >= 0) { want = pk; s = f2; break; } } } // irgendein gekauftes Fach
+    if (s < 0) { if (character.bank) return false; bank_store(i); await sleep(300); return true; } // Bank voll → false (kein blinder Versuch)
     return bank_put_at(i, want, s);
 }
 var type_rules = {}; try { var tr_raw = localStorage.getItem("lp_type_rules"); if (tr_raw) type_rules = JSON.parse(tr_raw); else { type_rules = { amulet: { r: "comp", lv: 3 }, belt: { r: "comp", lv: 3 }, earring: { r: "comp", lv: 3 } }; localStorage.setItem("lp_type_rules", JSON.stringify(type_rules)); } } catch (e) {} // Startwerte (einmalig): Schmuck-Sorten compounden // Typregeln: Fallback für Items ohne eigene Regel, Schlüssel = G.items[..].type
@@ -2589,7 +2590,7 @@ function bank_status_log() { // alle Bankfächer: Karte, Belegung, freigeschalte
     var keys = bp ? Object.keys(bp) : Object.keys(bk).filter(function (k) { return k.indexOf("items") == 0; });
     keys.sort(function (a, b) { return parseInt(a.replace("items", "")) - parseInt(b.replace("items", "")); }).forEach(function (k) {
         var meta = bp && bp[k], arr = bk[k];
-        if (Array.isArray(arr)) { var used = arr.filter(function (x) { return !!x; }).length; total += arr.length; free += arr.length - used; lines.push(k + " (" + (meta ? meta[0] : "?") + "): " + used + "/" + arr.length); }
+        if (Array.isArray(arr)) { var used = arr.filter(function (x) { return !!x; }).length; total += BANK_PACK_SIZE; free += BANK_PACK_SIZE - used; lines.push(k + " (" + (meta ? meta[0] : "?") + "): " + used + "/" + BANK_PACK_SIZE); }
         else lines.push(k + " (" + (meta ? meta[0] : "?") + "): gesperrt" + (meta ? ", " + fmt(meta[1]) + " Gold" : ""));
     });
     game_log("Bank: " + (character.bank ? "" : "(letzter Stand, nicht in der Bank) ") + free + " von " + total + " Plätzen frei · " + (lines.length ? lines.join(" · ") : "keine Fächer bekannt (Preisliste " + (bp ? "da" : "fehlt") + ", Bankdaten " + (Object.keys(bk).length ? "da" : "fehlen") + ")"));
@@ -4426,7 +4427,7 @@ function bank_render_rows() { if (!bank_panel || !bank_panel.parentNode) return;
 function render_bank() {
     if (!bank_panel || !bank_panel.parentNode) return;
     try { var ae = parent.document.activeElement; if (ae && (ae.id == "lp_bank_q" || (ae.getAttribute && (ae.getAttribute("data-bq") || ae.getAttribute("data-bp") || ae.getAttribute("data-brlv") || ae.getAttribute("data-brpr") || ae.getAttribute("data-brule") || ae.getAttribute("data-trule") || ae.getAttribute("data-trlv") || ae.getAttribute("data-trpr"))) && bank_panel.contains(ae))) return; } catch (e) {} // beim Tippen nicht neu zeichnen
-    var rows = bank_rows(), total = 0, free = 0; try { var bk = character.bank || bank_cache || {}; for (var pk in bk) if (pk.indexOf("items") == 0 && Array.isArray(bk[pk])) { total += bk[pk].length; bk[pk].forEach(function (x) { if (!x) free++; }); } } catch (e) {}
+    var rows = bank_rows(), total = 0, free = 0; try { var bk = character.bank || bank_cache || {}; for (var pk in bk) if (pk.indexOf("items") == 0 && Array.isArray(bk[pk])) { total += BANK_PACK_SIZE; free += BANK_PACK_SIZE - bk[pk].filter(function (x) { return !!x; }).length; } } catch (e) {}
     bank_panel.querySelector("#lp_bank_info").textContent = rows.length + " Posten · " + free + " von " + total + " Plätzen frei" + (Object.keys(npc_orders).length ? " · " + Object.keys(npc_orders).length + " NPC-Auftrag/-Aufträge offen" : "") + (Object.keys(stand_orders).length ? " · " + Object.keys(stand_orders).length + " Stand-Auftrag/-Aufträge" : "");
     var chip = function (k, lab) { return "<span class='lp_chip" + (bank_ui.f == k ? " on" : "") + "' data-bf='" + k + "'>" + lab + "</span>"; };
     bank_panel.querySelector("#lp_bank_bar").innerHTML = chip("", "Bank") + chip("equip", "Bank: Ausrüstung") + chip("mat", "Bank: Material") + chip("all", "Alle Items (Bank + Inventare)") + chip("rule", "mit Regel") + chip("type", "Typregeln") + "<span style='flex:1'></span><input id='lp_bank_q' placeholder='Suche …' value='" + esc(bank_ui.q) + "'>";
