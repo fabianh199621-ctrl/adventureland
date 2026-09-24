@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v350";
+var BOT_VERSION = "v352";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -2200,13 +2200,14 @@ async function bank_put_at(i, pack, s) { // Item i in Fach/Platz legen; hat der 
     if (old && now && now.name == it.name && (now.q || 1) == oq && bs && bs.name == it.name && (bs.q || 1) == myq) { bank_store(i, pack, s); await sleep(500); var f = -1, p = character.bank[pack]; for (var k = 0; k < BANK_PACK_SIZE; k++) if (!p[k]) { f = k; break; } if (f < 0) return false; bank_store(i, pack, f); await sleep(500); }
     return true;
 }
-async function bank_put(i) { // ins passende Fach; ist es voll → Ledia; ohne Fächer-Info → wie das Spiel es wählt
-    var it = character.items[i]; if (!it) return false;
-    var want = bank_pack_for(it), s = bank_free_in(want, it);
-    if (s < 0) { want = BANK_PACKS.over; s = bank_free_in(want, it); }
-    if (s < 0 && character.bank) { for (var pk in character.bank) { if (pk.indexOf("items") != 0 || !Array.isArray(character.bank[pk])) continue; var f2 = bank_free_in(pk, it); if (f2 >= 0) { want = pk; s = f2; break; } } } // irgendein gekauftes Fach
-    if (s < 0) { if (character.bank) return false; bank_store(i); await sleep(300); return true; } // Bank voll → false (kein blinder Versuch)
-    return bank_put_at(i, want, s);
+function bank_stack_slot(pack, it) { var p = character.bank && character.bank[pack]; if (!Array.isArray(p) || !it) return -1; var d = G.items[it.name]; if (!d || !d.s) return -1; var mx = typeof d.s == "number" ? d.s : 9999; for (var j = 0; j < p.length; j++) { var b = p[j]; if (b && b.name == it.name && (b.level || 0) == (it.level || 0) && (b.q || 1) + (it.q || 1) <= mx) return j; } return -1; }
+function bank_empty_slot(pack) { var p = character.bank && character.bank[pack]; if (!Array.isArray(p)) return -1; for (var i = 0; i < BANK_PACK_SIZE; i++) if (!p[i]) return i; return -1; }
+async function bank_put(i) { // ins passende Fach; voll → Ledia → irgendein gekauftes Fach. Erst Stapel mit Luft, dann leerer Platz (Fächer-übergreifend)
+    var it = character.items[i]; if (!it || !character.bank) return false;
+    var packs = [bank_pack_for(it), BANK_PACKS.over]; for (var pk in character.bank) if (pk.indexOf("items") == 0 && Array.isArray(character.bank[pk]) && packs.indexOf(pk) < 0) packs.push(pk);
+    for (var a = 0; a < packs.length; a++) { var ss = bank_stack_slot(packs[a], it); if (ss >= 0) { if (await bank_put_at(i, packs[a], ss)) return true; if (!character.items[i]) return true; } }
+    for (var b = 0; b < packs.length; b++) { var fs = bank_empty_slot(packs[b]); if (fs >= 0) { bank_store(i, packs[b], fs); await sleep(400); return !character.items[i]; } }
+    return false;
 }
 var type_rules = {}; try { var tr_raw = localStorage.getItem("lp_type_rules"); if (tr_raw) type_rules = JSON.parse(tr_raw); else { type_rules = { amulet: { r: "comp", lv: 3 }, belt: { r: "comp", lv: 3 }, earring: { r: "comp", lv: 3 } }; localStorage.setItem("lp_type_rules", JSON.stringify(type_rules)); } } catch (e) {} // Startwerte (einmalig): Schmuck-Sorten compounden // Typregeln: Fallback für Items ohne eigene Regel, Schlüssel = G.items[..].type
 function type_rules_save() { try { localStorage.setItem("lp_type_rules", JSON.stringify(type_rules)); localStorage.setItem("lp_item_rules_t", String(Date.now())); } catch (e) {} }
@@ -2476,14 +2477,18 @@ async function tidy_inventory() {
         if (!focus_mode && character.esize < target_free && has_compound_triples()) { try { await compound_spares(); } catch (e) { if (e == "PAUSE") throw e; } }
         // 3. Rest in die Bank (vorher: Teile für leere Slots zurückholen) – so lange, bis INV_TARGET_FREE Plätze frei sind
         if (character.esize < target_free) {
-            set_message("Bank"); await travel_place("bank"); await sleep(800);
+            set_message("Bank"); try { await travel_place("bank"); } catch (e) {} await sleep(800);
+            for (var w0 = 0; w0 < 25 && !character.bank; w0++) await sleep(200);
+            if (!character.bank) { game_log("Bank nicht erreicht (Karte " + character.map + ") – zweiter Versuch"); try { await smart_move("bank"); } catch (e) {} for (var w1 = 0; w1 < 25 && !character.bank; w1++) await sleep(200); }
+            if (!character.bank) throw new Error("Bank nicht erreicht (Karte " + character.map + ")");
             await retrieve_for_empty_slots();
             try { await retrieve_better_from_bank(); } catch (e) {}
-            var n = 0;
+            var n = 0, nfail = [];
             for (var k = 0; k < character.items.length; k++) {
                 var it2 = character.items[k]; if (!it2 || should_keep(it2)) continue;
-                await bank_put(k); n++; await sleep(100);
+                if (await bank_put(k)) n++; else nfail.push(it2.name + (it2.level ? "+" + it2.level : "")); await sleep(100);
             }
+            if (nfail.length) game_log("Nicht in die Bank gelegt (kein Platz): " + nfail.join(", "));
             // reicht noch nicht: auch wartenden Schmuck (Einzelstücke/Paare) und überzählige Reserven einlagern
             var extra = 0;
             if (character.esize < target_free) {

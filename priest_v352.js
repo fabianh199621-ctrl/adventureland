@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Priester (F4llenPriest) – Stufe 1 =====
 // Folgt dem Magier, heilt ihn und sich, nimmt die Party-Einladung an, greift erst ab PRIEST_ATTACK_LEVEL mit an.
 // Meldungen gehen per Charakter-Nachricht an den Magier ("[Priest] …").
-var PRIEST_VERSION = "v350";
+var PRIEST_VERSION = "v352";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -24,13 +24,14 @@ async function bank_put_at(i, pack, s) { // Item i in Fach/Platz legen; hat der 
     if (old && now && now.name == it.name && (now.q || 1) == oq && bs && bs.name == it.name && (bs.q || 1) == myq) { bank_store(i, pack, s); await sleep(500); var f = -1, p = character.bank[pack]; for (var k = 0; k < BANK_PACK_SIZE; k++) if (!p[k]) { f = k; break; } if (f < 0) return false; bank_store(i, pack, f); await sleep(500); }
     return true;
 }
-async function bank_put(i) { // ins passende Fach; ist es voll → Ledia; ohne Fächer-Info → wie das Spiel es wählt
-    var it = character.items[i]; if (!it) return false;
-    var want = bank_pack_for(it), s = bank_free_in(want, it);
-    if (s < 0) { want = BANK_PACKS.over; s = bank_free_in(want, it); }
-    if (s < 0 && character.bank) { for (var pk in character.bank) { if (pk.indexOf("items") != 0 || !Array.isArray(character.bank[pk])) continue; var f2 = bank_free_in(pk, it); if (f2 >= 0) { want = pk; s = f2; break; } } } // irgendein gekauftes Fach
-    if (s < 0) { if (character.bank) return false; bank_store(i); await sleep(300); return true; } // Bank voll → false (kein blinder Versuch)
-    return bank_put_at(i, want, s);
+function bank_stack_slot(pack, it) { var p = character.bank && character.bank[pack]; if (!Array.isArray(p) || !it) return -1; var d = G.items[it.name]; if (!d || !d.s) return -1; var mx = typeof d.s == "number" ? d.s : 9999; for (var j = 0; j < p.length; j++) { var b = p[j]; if (b && b.name == it.name && (b.level || 0) == (it.level || 0) && (b.q || 1) + (it.q || 1) <= mx) return j; } return -1; }
+function bank_empty_slot(pack) { var p = character.bank && character.bank[pack]; if (!Array.isArray(p)) return -1; for (var i = 0; i < BANK_PACK_SIZE; i++) if (!p[i]) return i; return -1; }
+async function bank_put(i) { // ins passende Fach; voll → Ledia → irgendein gekauftes Fach. Erst Stapel mit Luft, dann leerer Platz (Fächer-übergreifend)
+    var it = character.items[i]; if (!it || !character.bank) return false;
+    var packs = [bank_pack_for(it), BANK_PACKS.over]; for (var pk in character.bank) if (pk.indexOf("items") == 0 && Array.isArray(character.bank[pk]) && packs.indexOf(pk) < 0) packs.push(pk);
+    for (var a = 0; a < packs.length; a++) { var ss = bank_stack_slot(packs[a], it); if (ss >= 0) { if (await bank_put_at(i, packs[a], ss)) return true; if (!character.items[i]) return true; } }
+    for (var b = 0; b < packs.length; b++) { var fs = bank_empty_slot(packs[b]); if (fs >= 0) { bank_store(i, packs[b], fs); await sleep(400); return !character.items[i]; } }
+    return false;
 }
 function item_rules() { try { return JSON.parse(localStorage.getItem("lp_item_rules") || "{}"); } catch (e) { return {}; } }
 function type_rules() { try { return JSON.parse(localStorage.getItem("lp_type_rules") || "{}"); } catch (e) { return {}; } } // Typregeln (Fallback, wenn das Item keine eigene Regel hat)
