@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v343";
+var BOT_VERSION = "v345";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -175,7 +175,7 @@ function meet_escort() { // Begleiter hängt auf derselben Karte länger fest (k
     smart_move({ x: p.x + 40, y: p.y }).catch(function () {}).then(function () { busy = false; });
 }
 // Einstellungen (⚙): Darstellung + Verhalten, gespeichert unter lp_settings
-var SET = { alpha: 1, font: 12, accent: "green", list_right: true, wait_behind: 500, rally: 350, hold_flee: 60, team_grace: 10, hp_pot: 40, mp_pot: 50, xp_weight: 50, team_hunt_first: true, hunt_town_only: false, log_pots: true };
+var SET = { alpha: 1, font: 12, accent: "green", list_right: true, wait_behind: 500, rally: 350, hold_flee: 60, team_grace: 10, hp_pot: 40, mp_pot: 50, xp_weight: 50, team_hunt_first: true, hunt_town_only: false, log_pots: true, auto_equip: false };
 try { var so = JSON.parse(localStorage.getItem("lp_settings") || "null"); if (so) for (var sk in so) if (sk in SET) SET[sk] = so[sk]; } catch (e) {}
 function save_settings() { try { localStorage.setItem("lp_settings", JSON.stringify(SET)); } catch (e) {} apply_settings(); }
 var ACCENTS = { green: ["#2e7d32", "#4caf50"], blue: ["#1e6fb8", "#3d8bdc"], orange: ["#b8641e", "#e08a3c"], purple: ["#7b3fb8", "#9d5fd6"], red: ["#b83f4a", "#d65f6a"] };
@@ -1991,6 +1991,7 @@ function render_settings(sp) {
         + "<h4>Automatik</h4><label>Gold <input type='range' data-setk='xp_weight' min='0' max='100' step='10' value='" + SET.xp_weight + "'> XP <span style='color:#e6e6e6'>" + SET.xp_weight + " % XP</span></label>";
     else h += "<label><input type='checkbox' data-setk='team_hunt_first'" + (SET.team_hunt_first ? " checked" : "") + "> Laufende Team-Jagd zuerst beenden</label>"
         + "<label><input type='checkbox' data-setk='hunt_town_only'" + (SET.hunt_town_only ? " checked" : "") + "> Neue Jagd nur holen, wenn ohnehin in der Stadt</label>"
+        + "<label title='alle 5 min prüfen, ob im Inventar oder in der Bank etwas Besseres liegt, und es automatisch anlegen (aus = Ausrüstung nur von Hand, per U-Knopf oder Zielbau-Kauf)'><input type='checkbox' data-setk='auto_equip'" + (SET.auto_equip ? " checked" : "") + "> Autoequip (Besseres automatisch anlegen)</label>"
         + "<label><input type='checkbox' data-setk='log_pots'" + (SET.log_pots ? " checked" : "") + "> Trank-Zeilen im Log anzeigen</label>";
     h += "<div style='color:#6b7280;margin-top:6px'>Gilt für alle Chars, wird gespeichert.</div>";
     sp.innerHTML = h;
@@ -2192,7 +2193,7 @@ async function bank_put(i) { // ins passende Fach; ist es voll → Ledia; ohne F
     if (s < 0) { bank_store(i); await sleep(300); return true; }
     return bank_put_at(i, want, s);
 }
-var type_rules = {}; try { type_rules = JSON.parse(localStorage.getItem("lp_type_rules") || "{}"); } catch (e) {} // Typregeln: Fallback für Items ohne eigene Regel, Schlüssel = G.items[..].type
+var type_rules = {}; try { var tr_raw = localStorage.getItem("lp_type_rules"); if (tr_raw) type_rules = JSON.parse(tr_raw); else { type_rules = { amulet: { r: "comp", lv: 3 }, belt: { r: "comp", lv: 3 }, earring: { r: "comp", lv: 3 } }; localStorage.setItem("lp_type_rules", JSON.stringify(type_rules)); } } catch (e) {} // Startwerte (einmalig): Schmuck-Sorten compounden // Typregeln: Fallback für Items ohne eigene Regel, Schlüssel = G.items[..].type
 function type_rules_save() { try { localStorage.setItem("lp_type_rules", JSON.stringify(type_rules)); localStorage.setItem("lp_item_rules_t", String(Date.now())); } catch (e) {} }
 var TYPE_LABEL = { helmet: "Helm", chest: "Rüstung", pants: "Hose", shoes: "Schuhe", gloves: "Handschuhe", cape: "Umhang", weapon: "Waffe", ring: "Ring", earring: "Ohrring", amulet: "Amulett", belt: "Gürtel", orb: "Orb", quiver: "Köcher", shield: "Schild", source: "Quelle (Source)", misc_offhand: "Nebenhand", material: "Material", quest: "Quest-Item", token: "Token", uscroll: "Upgrade-Scroll", cscroll: "Compound-Scroll", pscroll: "Stat-Scroll", offering: "Offering", elixir: "Elixier", pot: "Trank", gem: "Edelstein", box: "Box", stone: "Stein", misc: "Sonstiges", throw: "Wurf-Item", tool: "Werkzeug", dungeon_key: "Dungeon-Schlüssel", bank_key: "Bank-Schlüssel", cosmetics: "Kosmetik", booster: "Booster", tome: "Buch", jar: "Glas", chrysalis: "Kokon", skill_item: "Skill-Item", spawner: "Spawner", xp: "XP-Item", flute: "Flöte", licence: "Lizenz", petlicence: "Pet-Lizenz", container: "Behälter", activator: "Aktivator", qubics: "Qubics", stand: "Stand", tracker: "Tracker", computer: "Computer" };
 function type_label(t) { return TYPE_LABEL[t] || t || "?"; }
@@ -3829,7 +3830,7 @@ var NONWISH_MAX_PRICE = 400000; // Käufe außerhalb des Zielbaus ("jetzt besser
 var auto_mode = false; // läuft die Ausrüstungsroutine gerade automatisch?
 var last_best_check = 0;
 function best_equip_tick() {
-    if (busy || upgrading || paused || Date.now() - last_best_check < 5 * 60000) return; last_best_check = Date.now();
+    if (!SET.auto_equip || busy || upgrading || paused || Date.now() - last_best_check < 5 * 60000) return; last_best_check = Date.now();
     if (bank_better_for().length) { busy = true; retrieve_better_from_bank().catch(function () {}).then(function () { busy = false; if (!paused) go_to_farm_spot(); }); }
     else ensure_best_equipped().catch(function () {});
 }

@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Priester (F4llenPriest) – Stufe 1 =====
 // Folgt dem Magier, heilt ihn und sich, nimmt die Party-Einladung an, greift erst ab PRIEST_ATTACK_LEVEL mit an.
 // Meldungen gehen per Charakter-Nachricht an den Magier ("[Priest] …").
-var PRIEST_VERSION = "v343";
+var PRIEST_VERSION = "v345";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -141,6 +141,21 @@ async function go_give_mage() { // alles außer Tränken/Tokens/Tracker zum Magi
     shopping = false;
 }
 var tidy_req = 0, goldback_req = 0, last_goldback = 0, GOLD_MAX = 2000000;
+var last_autogive = 0;
+function auto_give_mage() { // v345: Inventar fast voll und Magier steht daneben → regellose Items direkt rübergeben (kein Laufen, alle 10 min)
+    if (character.esize >= 4 || shopping || Date.now() - last_autogive < 10 * 60000) return;
+    var m = mage_entity(); if (!m || m.map != character.map || dist(character, m) > 280 || m.rip) return;
+    if (!mage || mage.free == null || Date.now() - mage.t > 60000 || mage.free < 6) { if (mage && mage.free != null && mage.free < 6) { last_autogive = Date.now() - 8 * 60000; } return; } // Magier selbst voll: in 2 min nochmal schauen
+    last_autogive = Date.now();
+    var n = 0, names = [], free = mage.free;
+    (async function () { try {
+        for (var j = character.items.length - 1; j >= 0 && free > 2; j--) { var it = character.items[j]; if (!it) continue; if (/^(hpot|mpot)/.test(it.name) || it.name == "tracker" || it.name == "computer" || it.name == "monstertoken") continue;
+            var rg = rule_of_it(it); if (rg && rg != "team") continue; // Regel-Items erledige ich selbst beim Stadtgang
+            var d = G.items[it.name] || {}; for (var sl in character.slots) { if (character.slots[sl] && character.slots[sl].name == it.name) { d = null; break; } } if (!d) continue; // getragene Sorte behalten (Ersatz)
+            try { send_item(MAGE, j, it.q || 1); n++; free--; names.push(it.name + (it.q > 1 ? "×" + it.q : "")); } catch (e) {} await sleep(350); }
+        if (n) say("Inventar voll: " + n + " Posten an " + MAGE + " gegeben – " + names.join(", "));
+    } catch (e) {} })();
+}
 function gold_handback() { // alles über GOLD_MAX an den Magier, wenn er in Reichweite steht (auf Befehl sofort, sonst alle 5 min prüfen)
     var over = character.gold - GOLD_MAX; if (over < (goldback_req ? 1000 : 50000)) { if (goldback_req) { goldback_req = 0; say("Gold: nichts über " + GOLD_MAX + " (habe " + character.gold + ")"); } return; }
     if (!goldback_req && Date.now() - last_goldback < 5 * 60000) return;
@@ -330,6 +345,7 @@ async function tick() {
     if (kiss_req && !my_attacker()) { do_kiss(kiss_req); return; }
     try { event_handover(); } catch (e) {}
     try { gold_handback(); } catch (e) {}
+    try { auto_give_mage(); } catch (e) {}
     if (!my_attacker() && Date.now() - last_autoequip > 30000) { await auto_equip(); }
     if (character.gold < 40000 && mage && Date.now() - last_gold_ask > 3 * 60000) { var mg = mage_entity(); if (mg && character.map == mg.map && dist(character, mg) < 350) { last_gold_ask = Date.now(); try { send_cm(MAGE, { t: "gold?", amount: Math.max(20000, GOLD_MAX - character.gold) }); } catch (e) {} } }
     var mage_fighting = mage && mage.tgt && Date.now() - mage.t < 15000 && !mage.paused;
