@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v344";
+var BOT_VERSION = "v346";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -1234,7 +1234,7 @@ function reset_measurements() {
 
 // Messung
 function start_measure(mon) {
-    meas = { mon: mon, manual: !!manual_spot, start: Date.now(), xp: 0, gold: 0, last_xp: character.xp, last_level: character.level, last_gold: character.gold, paused_ms: 0, pause_start: 0 };
+    meas = { mon: mon, manual: !!manual_spot, start: Date.now(), xp: 0, gold: 0, last_xp: character.xp, last_level: character.level, last_gold: character.gold, paused_ms: 0, pause_start: 0, lows: [], hp_min: 1, min_t: Date.now() };
 }
 function measure_tick() {
     if (!meas || !has_weapon()) return;
@@ -1250,20 +1250,22 @@ function measure_tick() {
     if (busy || upgrading) { if (!meas.pause_start) meas.pause_start = Date.now(); }
     else if (meas.pause_start) { meas.paused_ms += Date.now() - meas.pause_start; meas.pause_start = 0; }
 
+    if (!busy && !upgrading && !fleeing && !character.rip) { var hf = character.hp / character.max_hp; if (!meas.lows) { meas.lows = []; meas.hp_min = 1; meas.min_t = Date.now(); } if (hf < meas.hp_min) meas.hp_min = hf; if (Date.now() - meas.min_t >= 60000) { meas.lows.push(Math.round(meas.hp_min * 100) / 100); meas.hp_min = 1; meas.min_t = Date.now(); } } // gemessene Gefahr: tiefster HP-Stand je Minute
     var active = Date.now() - meas.start - meas.paused_ms - (meas.pause_start ? Date.now() - meas.pause_start : 0);
     if (Date.now() - last_state_save > 10000) { last_state_save = Date.now(); save_state(); }
     if (active >= EVAL_MS) {
         if (!meas.manual) finish_measure(false);
         else { // fester Spot: Messwert speichern und Zähler neu starten
             var h = active / 3600000;
-            record_stat(meas.mon, meas.xp / h, meas.gold / h); save_stats();
-            meas.start = Date.now(); meas.xp = 0; meas.gold = 0; meas.paused_ms = 0; meas.pause_start = 0; save_state();
+            record_stat(meas.mon, meas.xp / h, meas.gold / h, meas.lows, h); save_stats();
+            meas.start = Date.now(); meas.xp = 0; meas.gold = 0; meas.paused_ms = 0; meas.pause_start = 0; meas.lows = []; save_state();
         }
     }
 }
 // Messwert in die Statistik übernehmen: gleitender Mittelwert (max. 10 Messungen), Reset bei geändertem ANG
-function record_stat(mon, xp_h, gold_h) {
+function record_stat(mon, xp_h, gold_h, lows, hours) {
     var st = farm_stats[mon] || { deaths: 0 };
+    if (lows && lows.length) st.lows = (st.lows || []).concat(lows).slice(-30); if (hours > 0) st.hours = Math.round(((st.hours || 0) + hours) * 100) / 100; // gemessene Gefahr: letzte 30 Minuten-Tiefstwerte + Farmstunden (für Tode/h)
     var same = st.attack && Math.abs(character.attack - st.attack) / st.attack <= ATTACK_DRIFT && st.n;
     if (same) { var n = Math.min(st.n, 9); st.xp_h = (st.xp_h * n + xp_h) / (n + 1); st.gold_h = (st.gold_h * n + gold_h) / (n + 1); st.n = n + 1; }
     else { st.xp_h = xp_h; st.gold_h = gold_h; st.n = 1; }
@@ -1274,7 +1276,7 @@ function finish_measure(died) {
     if (!meas) return;
     var active = Math.max(60000, Date.now() - meas.start - meas.paused_ms);
     var h = active / 3600000;
-    var st = record_stat(meas.mon, meas.xp / h, meas.gold / h);
+    var st = record_stat(meas.mon, meas.xp / h, meas.gold / h, meas.lows, h);
     if (died) { st.deaths = (st.deaths || 0) + 1; if (!manual_spot) { st.unsafe_until = character.level + 3; st.xp_h = 0; } }
     save_stats();
     game_log("Spot " + meas.mon + ": " + Math.round(st.xp_h) + " XP/h, " + Math.round(st.gold_h) + " Gold/h" + (died ? (st.unsafe_until ? " – GESTORBEN, gesperrt bis Level " + st.unsafe_until : " – GESTORBEN (fester Spot, nicht gesperrt)") : ""));
@@ -1876,7 +1878,8 @@ function mon_dps_on_me(d) {
     var def = d.damage_type == "magical" ? (character.resistance || 0) - (d.rpiercing || 0) : (character.armor || 0) - (d.apiercing || 0);
     return mon_dps(d) * dmg_mult(def);
 }
-function pack_factor(d) { // aggressive Monster mit großer Reichweite ziehen im Pulk: bis zu 3 gleichzeitige Angreifer einrechnen
+function pack_factor(d) { // aggressive Monster mit großer Reichweite ziehen im Pulk: bis zu 3 gleichzeitige Angreifer einrechnen; aggressive Nahkämpfer stehen dicht: 2
+    if (d.aggro >= 1 && !(d.range >= 250)) return 2;
     if (!(d.aggro > 0) || !(d.range >= 250)) return 1;
     var n = 3; try { var id = null; for (var k in G.monsters) if (G.monsters[k] === d) { id = k; break; } if (id) n = Math.min(3, Math.max(1, spawn_count(id))); } catch (e) {}
     return n;
@@ -1911,14 +1914,25 @@ function deaths_at(mon) { // gewichtete Tode der letzten 7 Tage: verblassen line
 }
 var mon_id_cache = null;
 function mon_id_of(d) { if (!mon_id_cache) { mon_id_cache = new Map(); for (var k in G.monsters) mon_id_cache.set(G.monsters[k], k); } return mon_id_cache.get(d) || null; }
-function mon_danger(d) { // Anteil meiner HP, den ein Kill kostet
+function my_sustain() { // HP/s, die ich selbst nachheile: bester Heiltrank im Inventar (2-s-Cooldown, ~80 % Ausnutzung) + Grundregeneration
+    var best = 0; for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it && /^hpot/.test(it.name)) { var gv = (G.items[it.name] || {}).gives; if (gv) gv.forEach(function (x) { if (x[0] == "hp" && x[1] > best) best = x[1]; }); } }
+    return best / 2 * 0.8 + 10;
+}
+function measured_danger(id) { // aus dem echten Farmen: 1 − Median des minütlichen HP-Tiefs, plus 0,25 je Tod pro Stunde; null = noch keine 5 Minuten gemessen
+    var st = farm_stats[id]; if (!st || !st.lows || st.lows.length < 5) return null;
+    var a = st.lows.slice().sort(function (x, y) { return x - y; }), med = a[Math.floor(a.length / 2)];
+    var dph = st.hours >= 0.5 ? (st.deaths || 0) / st.hours : 0;
+    return { v: (1 - med) + 0.25 * dph, low: med, dph: dph, min: st.lows.length };
+}
+function mon_danger(d) { // Kill-Dauer ÷ Zeit bis zum Tod (Schaden auf mich minus Tränke/Regeneration und halbe Priest-Heilung); gemessene Gefahr am Spot überstimmt die Schätzung, wenn sie höher ist
     var ttk = mon_ttk(d); if (!isFinite(ttk)) return Infinity;
     var raw = mon_dps_on_me(d) * pack_factor(d) + my_dps_vs(d) * (d.reflection || 0) / 100;
-    var incoming = Math.max(raw * 0.5, raw - team_heal_rate()); // Priest-Heilung zählt höchstens die Hälfte – er ist nicht immer daneben (Stadtgang, andere Karte), Gefahr darf nie 0 werden
-    var dg = incoming * ttk / character.max_hp;
-    var id = mon_id_of(d); if (id) dg += 0.15 * deaths_at(id); // jeder Tod der letzten 7 Tage: +15 % Gefahr
+    var incoming = Math.max(raw * 0.5, raw - team_heal_rate()) - my_sustain(); // Priest-Heilung zählt höchstens die Hälfte (nicht immer daneben); eigene Tränke voll
+    var dg = incoming > 0 ? incoming * ttk / character.max_hp : 0;
+    var id = mon_id_of(d); if (id) { dg += 0.15 * deaths_at(id); var md = measured_danger(id); if (md && md.v > dg) dg = md.v; } // jeder Tod der letzten 7 Tage: +15 %; gemessen schlägt geschätzt
     return dg;
 }
+function mon_danger_est(d) { var ttk = mon_ttk(d); if (!isFinite(ttk)) return Infinity; var raw = mon_dps_on_me(d) * pack_factor(d) + my_dps_vs(d) * (d.reflection || 0) / 100; var inc = Math.max(raw * 0.5, raw - team_heal_rate()) - my_sustain(); var dg = inc > 0 ? inc * ttk / character.max_hp : 0; var id = mon_id_of(d); if (id) dg += 0.15 * deaths_at(id); return dg; } // nur die Schätzung (fürs Tooltip)
 // Anzahl gleichzeitiger Spawns eines Monstertyps (alle Karten)
 var spawn_count_cache = {};
 function spawn_count(mon) {
@@ -2108,18 +2122,18 @@ function update_panel() {
     var hr = "";
     if (!panel.__collapsed) {
         var cols = [["name", "Monster"], ["hunt", "Jagd"], ["strict", "Team"], ["danger", "Gefahr"], ["xph", "XP/h"], ["gph", "G/h"]];
-        hr += "<div class='lp_k' style='font-size:11px;margin-top:4px'>Gefahr mit Team" + (team_bonus_txt() ? team_bonus_txt().replace(/^ mit Team/, "") : "") + " · ×" + xp_calibration().toFixed(1) + " kalibriert (" + Object.keys(farm_stats).length + " Spots)</div>";
+        hr += "<div class='lp_k' style='font-size:11px;margin-top:4px'>Gefahr = Kill-Dauer ÷ Zeit bis zum Tod (Tränke eingerechnet), <sup>m</sup> = gemessen am Spot · mit Team" + (team_bonus_txt() ? team_bonus_txt().replace(/^ mit Team/, "") : "") + " · ×" + xp_calibration().toFixed(1) + " kalibriert (" + Object.keys(farm_stats).length + " Spots)</div>";
         hr += "<table class='lp_t'><tr>" + cols.map(function (c) { return "<th data-sort='" + c[0] + "'" + (sort_key == c[0] ? " class='sorted'" : "") + ">" + c[1] + (sort_key == c[0] ? (sort_dir < 0 ? " ▾" : " ▴") : "") + "</th>"; }).join("") + "<th></th></tr>";
         var mons = visible_mons();
         mons.sort(function (x, y) { var a1 = sort_value(x, sort_key), b1 = sort_value(y, sort_key); return (a1 < b1 ? -1 : a1 > b1 ? 1 : 0) * sort_dir; });
         mons.forEach(function (m) {
             var st = farm_stats[m], d = G.monsters[m], oldc = st && !stats_valid(st) ? " class='old'" : "";
-            var dg = mon_danger(d), ttk = mon_ttk(d);
-            var tip = "s/Kill " + (isFinite(ttk) ? ttk.toFixed(1) : "∞") + " · XP/Kill " + fmt(d.xp) + " · Schätzung " + fmt(mon_xph_est(d, m)) + " XP/h" + (st && st.attack ? " · ANG bei Messung " + st.attack : "") + "\n" + mon_tooltip(m);
+            var dg = mon_danger(d), ttk = mon_ttk(d), mdg = measured_danger(m), dge = mon_danger_est(d), by_meas = !!(mdg && mdg.v > dge);
+            var tip = "Gefahr geschätzt " + (isFinite(dge) ? Math.round(dge * 100) + " %" : "∞") + (mdg ? " · gemessen " + Math.round(mdg.v * 100) + " % (HP-Tief Ø " + Math.round(mdg.low * 100) + " %, " + (Math.round(mdg.dph * 10) / 10) + " Tode/h, " + mdg.min + " min)" : " · noch nicht gemessen") + "\n" + "s/Kill " + (isFinite(ttk) ? ttk.toFixed(1) : "∞") + " · XP/Kill " + fmt(d.xp) + " · Schätzung " + fmt(mon_xph_est(d, m)) + " XP/h" + (st && st.attack ? " · ANG bei Messung " + st.attack : "") + "\n" + mon_tooltip(m);
             hr += "<tr" + (m == current_spot ? " class='cur'" : "") + "><td title='" + esc(tip) + "'>" + esc(m) + (st && st.deaths ? " <span style='color:#ef5350'>†" + st.deaths + "</span>" : "") + "</td>"
                + "<td><input type='checkbox' data-huntok='" + m + "'" + (hunt_allowed(m) ? " checked" : "") + " title='Jagd auf " + esc(m) + " erlauben (auch für die Automatik)'></td>"
                + "<td><input type='checkbox' data-strict='" + m + "'" + (strict_mon(m) ? " checked" : "") + " title='Team-Pflicht: Sammelpunkt vor dem Spot, Angriff erst mit Priest und Ranger < 250 px; Priest/Ranger ziehen nie selbst'></td>"
-               + "<td style='color:" + (dg > 0.35 ? "#ef5350" : dg > 0.15 ? "#ffb74d" : "#81c784") + "'>" + (isFinite(dg) ? Math.round(dg * 100) + "%" : "∞") + "</td>"
+               + "<td style='color:" + (dg > 0.35 ? "#ef5350" : dg > 0.15 ? "#ffb74d" : "#81c784") + "'>" + (isFinite(dg) ? Math.round(dg * 100) + "%" : "∞") + (by_meas ? "<sup title='gemessener Wert liegt über der Schätzung'>m</sup>" : "") + "</td>"
                + "<td" + oldc + ">" + (st ? fmt(st.xp_h) : "-") + "</td><td" + oldc + ">" + (st ? fmt(st.gold_h) : "-") + "</td>"
                + "<td><button data-act='farm' data-mon='" + m + "'" + (m == manual_spot ? " class='on'" : "") + ">Farmen</button> <button data-act='hide' data-mon='" + m + "' title='ausblenden' style='padding:1px 5px'>✕</button></td></tr>";
         });
@@ -2193,7 +2207,7 @@ async function bank_put(i) { // ins passende Fach; ist es voll → Ledia; ohne F
     if (s < 0) { bank_store(i); await sleep(300); return true; }
     return bank_put_at(i, want, s);
 }
-var type_rules = {}; try { type_rules = JSON.parse(localStorage.getItem("lp_type_rules") || "{}"); } catch (e) {} // Typregeln: Fallback für Items ohne eigene Regel, Schlüssel = G.items[..].type
+var type_rules = {}; try { var tr_raw = localStorage.getItem("lp_type_rules"); if (tr_raw) type_rules = JSON.parse(tr_raw); else { type_rules = { amulet: { r: "comp", lv: 3 }, belt: { r: "comp", lv: 3 }, earring: { r: "comp", lv: 3 } }; localStorage.setItem("lp_type_rules", JSON.stringify(type_rules)); } } catch (e) {} // Startwerte (einmalig): Schmuck-Sorten compounden // Typregeln: Fallback für Items ohne eigene Regel, Schlüssel = G.items[..].type
 function type_rules_save() { try { localStorage.setItem("lp_type_rules", JSON.stringify(type_rules)); localStorage.setItem("lp_item_rules_t", String(Date.now())); } catch (e) {} }
 var TYPE_LABEL = { helmet: "Helm", chest: "Rüstung", pants: "Hose", shoes: "Schuhe", gloves: "Handschuhe", cape: "Umhang", weapon: "Waffe", ring: "Ring", earring: "Ohrring", amulet: "Amulett", belt: "Gürtel", orb: "Orb", quiver: "Köcher", shield: "Schild", source: "Quelle (Source)", misc_offhand: "Nebenhand", material: "Material", quest: "Quest-Item", token: "Token", uscroll: "Upgrade-Scroll", cscroll: "Compound-Scroll", pscroll: "Stat-Scroll", offering: "Offering", elixir: "Elixier", pot: "Trank", gem: "Edelstein", box: "Box", stone: "Stein", misc: "Sonstiges", throw: "Wurf-Item", tool: "Werkzeug", dungeon_key: "Dungeon-Schlüssel", bank_key: "Bank-Schlüssel", cosmetics: "Kosmetik", booster: "Booster", tome: "Buch", jar: "Glas", chrysalis: "Kokon", skill_item: "Skill-Item", spawner: "Spawner", xp: "XP-Item", flute: "Flöte", licence: "Lizenz", petlicence: "Pet-Lizenz", container: "Behälter", activator: "Aktivator", qubics: "Qubics", stand: "Stand", tracker: "Tracker", computer: "Computer" };
 function type_label(t) { return TYPE_LABEL[t] || t || "?"; }
