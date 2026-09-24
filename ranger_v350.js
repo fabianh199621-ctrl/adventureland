@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Ranger (F4llenRanger) =====
 // Folgt dem Magier, greift dessen Ziel an (Supershot, Hunter's Mark, 3-/5-Shot), versorgt sich selbst mit NPC-Ausrüstung und Tränken.
 // Meldungen gehen per Charakter-Nachricht an den Magier ("[Ranger] …").
-var RANGER_VERSION = "v348";
+var RANGER_VERSION = "v350";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -10,18 +10,18 @@ var MAGE = "F4llen";
 // Item-Regeln des Magiers (Bank-Fenster): keep/comp/stand → in die Bank, npc → selbst verkaufen, team/"" → Übergabe an den Magier wie bisher
 // ---------- Bankfächer: Gabrielle (items0) = Ausrüstung, Gabriella (items1) = Drops/Material, Ledia (items2) = Überlauf ----------
 var BANK_GEAR_TYPES = { helmet: 1, chest: 1, pants: 1, shoes: 1, gloves: 1, cape: 1, weapon: 1, ring: 1, earring: 1, amulet: 1, belt: 1, orb: 1, quiver: 1, shield: 1, source: 1, misc_offhand: 1 };
-var BANK_PACKS = { gear: "items0", mat: "items1", over: "items2" };
+var BANK_PACKS = { gear: "items0", mat: "items1", over: "items2" }, BANK_PACK_SIZE = 42;
 function bank_pack_for(it) { var d = (it && G.items[it.name]) || {}; return BANK_GEAR_TYPES[d.type] ? BANK_PACKS.gear : BANK_PACKS.mat; }
 function bank_free_in(pack, it) { // freier Platz im Fach (bei stapelbaren Items zuerst ein Stapel mit Luft), -1 = keiner / Fach nicht gekauft
     var p = character.bank && character.bank[pack]; if (!Array.isArray(p)) return -1;
     var d = it && G.items[it.name]; if (d && d.s) { var mx = typeof d.s == "number" ? d.s : 9999; for (var j = 0; j < p.length; j++) { var b = p[j]; if (b && b.name == it.name && (b.level || 0) == (it.level || 0) && (b.q || 1) + (it.q || 1) <= mx) return j; } }
-    for (var i = 0; i < p.length; i++) if (!p[i]) return i; return -1;
+    for (var i = 0; i < BANK_PACK_SIZE; i++) if (!p[i]) return i; return -1; // das Spiel liefert das Fach nur bis zum letzten belegten Platz – dahinter ist frei
 }
 async function bank_put_at(i, pack, s) { // Item i in Fach/Platz legen; hat der Server getauscht statt gestapelt → zurücktauschen und freien Platz nehmen
     var it = character.items[i]; if (!it) return false; var old = character.bank[pack][s], oq = old ? (old.q || 1) : 0, myq = it.q || 1;
     bank_store(i, pack, s); await sleep(500);
     var now = character.items[i], bs = character.bank[pack] && character.bank[pack][s];
-    if (old && now && now.name == it.name && (now.q || 1) == oq && bs && bs.name == it.name && (bs.q || 1) == myq) { bank_store(i, pack, s); await sleep(500); var f = -1, p = character.bank[pack]; for (var k = 0; k < p.length; k++) if (!p[k]) { f = k; break; } if (f < 0) return false; bank_store(i, pack, f); await sleep(500); }
+    if (old && now && now.name == it.name && (now.q || 1) == oq && bs && bs.name == it.name && (bs.q || 1) == myq) { bank_store(i, pack, s); await sleep(500); var f = -1, p = character.bank[pack]; for (var k = 0; k < BANK_PACK_SIZE; k++) if (!p[k]) { f = k; break; } if (f < 0) return false; bank_store(i, pack, f); await sleep(500); }
     return true;
 }
 async function bank_put(i) { // ins passende Fach; ist es voll → Ledia; ohne Fächer-Info → wie das Spiel es wählt
