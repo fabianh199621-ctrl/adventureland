@@ -1,22 +1,46 @@
 // ===== Adventure Land – LogicPlan Ranger (F4llenRanger) =====
 // Folgt dem Magier, greift dessen Ziel an (Supershot, Hunter's Mark, 3-/5-Shot), versorgt sich selbst mit NPC-Ausrüstung und Tränken.
 // Meldungen gehen per Charakter-Nachricht an den Magier ("[Ranger] …").
-var RANGER_VERSION = "v341";
+var RANGER_VERSION = "v343";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
 
 var MAGE = "F4llen";
 // Item-Regeln des Magiers (Bank-Fenster): keep/comp/stand → in die Bank, npc → selbst verkaufen, team/"" → Übergabe an den Magier wie bisher
+// ---------- Bankfächer: Gabrielle (items0) = Ausrüstung, Gabriella (items1) = Drops/Material, Ledia (items2) = Überlauf ----------
+var BANK_GEAR_TYPES = { helmet: 1, chest: 1, pants: 1, shoes: 1, gloves: 1, cape: 1, weapon: 1, ring: 1, earring: 1, amulet: 1, belt: 1, orb: 1, quiver: 1, shield: 1, source: 1, misc_offhand: 1 };
+var BANK_PACKS = { gear: "items0", mat: "items1", over: "items2" };
+function bank_pack_for(it) { var d = (it && G.items[it.name]) || {}; return BANK_GEAR_TYPES[d.type] ? BANK_PACKS.gear : BANK_PACKS.mat; }
+function bank_free_in(pack, it) { // freier Platz im Fach (bei stapelbaren Items zuerst ein Stapel mit Luft), -1 = keiner / Fach nicht gekauft
+    var p = character.bank && character.bank[pack]; if (!Array.isArray(p)) return -1;
+    var d = it && G.items[it.name]; if (d && d.s) { var mx = typeof d.s == "number" ? d.s : 9999; for (var j = 0; j < p.length; j++) { var b = p[j]; if (b && b.name == it.name && (b.level || 0) == (it.level || 0) && (b.q || 1) + (it.q || 1) <= mx) return j; } }
+    for (var i = 0; i < p.length; i++) if (!p[i]) return i; return -1;
+}
+async function bank_put_at(i, pack, s) { // Item i in Fach/Platz legen; hat der Server getauscht statt gestapelt → zurücktauschen und freien Platz nehmen
+    var it = character.items[i]; if (!it) return false; var old = character.bank[pack][s], oq = old ? (old.q || 1) : 0, myq = it.q || 1;
+    bank_store(i, pack, s); await sleep(500);
+    var now = character.items[i], bs = character.bank[pack] && character.bank[pack][s];
+    if (old && now && now.name == it.name && (now.q || 1) == oq && bs && bs.name == it.name && (bs.q || 1) == myq) { bank_store(i, pack, s); await sleep(500); var f = -1, p = character.bank[pack]; for (var k = 0; k < p.length; k++) if (!p[k]) { f = k; break; } if (f < 0) return false; bank_store(i, pack, f); await sleep(500); }
+    return true;
+}
+async function bank_put(i) { // ins passende Fach; ist es voll → Ledia; ohne Fächer-Info → wie das Spiel es wählt
+    var it = character.items[i]; if (!it) return false;
+    var want = bank_pack_for(it), s = bank_free_in(want, it);
+    if (s < 0) { want = BANK_PACKS.over; s = bank_free_in(want, it); }
+    if (s < 0) { bank_store(i); await sleep(300); return true; }
+    return bank_put_at(i, want, s);
+}
 function item_rules() { try { return JSON.parse(localStorage.getItem("lp_item_rules") || "{}"); } catch (e) { return {}; } }
-function rule_of_it(it) { if (!it) return ""; var R = item_rules(); return ((R[it.name + ((it.level || 0) ? "+" + it.level : "")] || R[it.name]) || {}).r || ""; }
+function type_rules() { try { return JSON.parse(localStorage.getItem("lp_type_rules") || "{}"); } catch (e) { return {}; } } // Typregeln (Fallback, wenn das Item keine eigene Regel hat)
+function rule_of_it(it) { if (!it) return ""; var R = item_rules(), r = R[it.name + ((it.level || 0) ? "+" + it.level : "")] || R[it.name]; if (!r) { var d = G.items[it.name] || {}; r = type_rules()[d.type || ""]; } return (r || {}).r || ""; }
 function inv_brief() { var out = []; for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (it) out.push({ n: it.name, l: it.level || 0, q: it.q || 1 }); } return out; }
 async function apply_rules_in_town() { // beim Stadtgang: Regel NPC verkaufen, Regel Behalten/Compound/Stand in die Bank (Bank ist kontoweit)
     var sellR = [], bankR = [];
     for (var i = 0; i < character.items.length; i++) { var it = character.items[i]; if (!it || /^(hpot|mpot)/.test(it.name) || it.name == "tracker" || it.name == "computer") continue; var r = rule_of_it(it); if (r == "npc") sellR.push(i); else if (r == "keep" || r == "comp" || r == "stand") bankR.push(i); }
     var sold = 0, banked = 0;
     if (sellR.length) { try { await smart_move("potions"); for (var a = sellR.length - 1; a >= 0; a--) { var s1 = character.items[sellR[a]]; if (!s1 || rule_of_it(s1) != "npc") continue; try { sell(sellR[a], s1.q || 1); sold++; } catch (e) {} await sleep(300); } } catch (e) {} }
-    if (bankR.length) { try { await smart_move("bank"); for (var w = 0; w < 25 && !character.bank; w++) await sleep(200); for (var b = bankR.length - 1; b >= 0; b--) { var b1 = character.items[bankR[b]]; if (!b1) continue; var rb = rule_of_it(b1); if (rb != "keep" && rb != "comp" && rb != "stand") continue; var e0 = character.esize; try { bank_store(bankR[b]); } catch (e) {} await sleep(400); if (character.esize > e0) banked++; } } catch (e) {} }
+    if (bankR.length) { try { await smart_move("bank"); for (var w = 0; w < 25 && !character.bank; w++) await sleep(200); for (var b = bankR.length - 1; b >= 0; b--) { var b1 = character.items[bankR[b]]; if (!b1) continue; var rb = rule_of_it(b1); if (rb != "keep" && rb != "comp" && rb != "stand") continue; var e0 = character.esize; try { await bank_put(bankR[b]); } catch (e) {} await sleep(200); if (character.esize > e0) banked++; } } catch (e) {} }
     if (sold || banked) say("Regeln: " + sold + " beim NPC verkauft, " + banked + " in die Bank gelegt" + (bankR.length > banked ? " (" + (bankR.length - banked) + " nicht – Bank voll?)" : ""));
 }
 try { localStorage.setItem("lp_tlog_" + character.name, JSON.stringify([{ t: Date.now(), m: "Skript geladen (" + character.ctype + ", Lv " + character.level + ", Server " + (typeof server != "undefined" && server ? (server.region + " " + server.id) : "?") + ")" }])); } catch (e) {}
@@ -137,7 +161,7 @@ async function go_tidy() { // Aufräumen auf Befehl des Magiers: Schrott verkauf
         var failed = 0;
         var last_err = "";
         if (bank.length) { try { if (!(await enter_bank())) throw "Bank nicht erreicht (Karte " + character.map + " " + Math.round(character.x) + "," + Math.round(character.y) + ")";
-            for (var b = bank.length - 1; b >= 0; b--) { var ib = character.items[bank[b]]; if (!ib) continue; var e0 = character.esize; try { var pr = bank_store(bank[b]); if (pr && pr.then) pr.then(null, function (e) { last_err = String(e && e.reason || e); }); } catch (e) { last_err = String(e && e.reason || e); } await sleep(600); if (character.esize > e0) stored++; else failed++; } } catch (e) { say("Bank: " + (e && e.message || e)); } }
+            for (var b = bank.length - 1; b >= 0; b--) { var ib = character.items[bank[b]]; if (!ib) continue; var e0 = character.esize; try { await bank_put(bank[b]); } catch (e) { last_err = String(e && e.reason || e); } await sleep(300); if (character.esize > e0) stored++; else failed++; } } catch (e) { say("Bank: " + (e && e.message || e)); } }
         say("Aufgeräumt: " + sold + " verkauft, " + stored + " in die Bank" + (failed ? ", " + failed + " nicht abgelegt (" + (last_err || "kein Fehler gemeldet") + ")" : "") + " – frei " + character.esize);
     } catch (e) { say("Aufräumen: " + (e && e.message ? e.message : e)); }
     shopping = false;
@@ -238,7 +262,7 @@ async function hunt_town_step() { // in der Stadt: Jagd abgeben/holen, Tokens in
     var miss = []; // Tokens werden nicht automatisch ausgegeben (Set-Teile/Tracker kauft Fabian manuell)
     var bought = [];
     for (var i = 0; i < miss.length; i++) { var m = miss[i]; if (!m.cost || pot_count("monstertoken") < m.cost || character.esize < 2) continue; try { exchange_buy("monstertoken", m.name); await sleep(1500); } catch (e) {} if (have_item(m.name) >= 0) { bought.push(m.name); say("Tokens: " + m.name + " für " + MAGE + " gekauft (" + m.cost + ")"); } }
-    if (bought.length) { try { await smart_move("bank"); await sleep(800); for (var b = 0; b < bought.length; b++) { var bi = have_item(bought[b]); if (bi >= 0) { bank_store(bi); await sleep(400); } } say("Tokens: " + bought.join(", ") + " in die Bank gelegt"); } catch (e) { say("Bank: " + (e && e.message || e)); } }
+    if (bought.length) { try { await smart_move("bank"); await sleep(800); for (var b = 0; b < bought.length; b++) { var bi = have_item(bought[b]); if (bi >= 0) { await bank_put(bi); await sleep(200); } } say("Tokens: " + bought.join(", ") + " in die Bank gelegt"); } catch (e) { say("Bank: " + (e && e.message || e)); } }
 }
 function spot_target_near() { // freies, ungeleveltes Exemplar des aktuellen Team-Spots in der Nähe (nur ohne Team-Häkchen)
     if (!mage || !mage.spot || Date.now() - mage.t > 15000 || p_paused) return null; var sp = mage.spot, base = G.monsters[sp] || {}; if ((base.attack || 0) * 8 > character.max_hp) return null;
