@@ -9,7 +9,7 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v346";
+var BOT_VERSION = "v348";
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -1519,7 +1519,7 @@ function session_tick() {
 }
 function clamp_pos(el, x, y) {
     var w = parent.window.innerWidth || 1200, h = parent.window.innerHeight || 800;
-    x = Math.max(0, Math.min(x, w - 80)); y = Math.max(0, Math.min(y, h - 40));
+    var ow = 0; try { ow = el.offsetWidth || 0; } catch (e) {} x = Math.max(0, Math.min(x, w - Math.max(80, Math.min(ow, w)))); y = Math.max(0, Math.min(y, h - 40)); // Fenster nie über den rechten Rand hinaus
     el.style.left = x + "px"; el.style.top = y + "px";
 }
 function init_panel() {
@@ -2204,7 +2204,8 @@ async function bank_put(i) { // ins passende Fach; ist es voll → Ledia; ohne F
     var it = character.items[i]; if (!it) return false;
     var want = bank_pack_for(it), s = bank_free_in(want, it);
     if (s < 0) { want = BANK_PACKS.over; s = bank_free_in(want, it); }
-    if (s < 0) { bank_store(i); await sleep(300); return true; }
+    if (s < 0 && character.bank) { for (var pk in character.bank) { if (pk.indexOf("items") != 0 || !Array.isArray(character.bank[pk])) continue; var f2 = bank_free_in(pk, it); if (f2 >= 0) { want = pk; s = f2; break; } } } // irgendein gekauftes Fach
+    if (s < 0) { if (character.bank) return false; bank_store(i); await sleep(300); return true; } // Bank voll → false (kein blinder Versuch)
     return bank_put_at(i, want, s);
 }
 var type_rules = {}; try { var tr_raw = localStorage.getItem("lp_type_rules"); if (tr_raw) type_rules = JSON.parse(tr_raw); else { type_rules = { amulet: { r: "comp", lv: 3 }, belt: { r: "comp", lv: 3 }, earring: { r: "comp", lv: 3 } }; localStorage.setItem("lp_type_rules", JSON.stringify(type_rules)); } } catch (e) {} // Startwerte (einmalig): Schmuck-Sorten compounden // Typregeln: Fallback für Items ohne eigene Regel, Schlüssel = G.items[..].type
@@ -4403,18 +4404,18 @@ function init_bank_panel() {
     var doc = parent.document, old = doc.getElementById("lp_bank"); if (old) old.remove();
     var st = doc.getElementById("lp_bank_style"); if (st) st.remove();
     st = doc.createElement("style"); st.id = "lp_bank_style";
-    st.textContent = "#lp_bank{position:fixed;left:520px;top:200px;z-index:2147483000;pointer-events:auto;width:960px;background:rgba(20,22,28,var(--lp-alpha));color:#e6e6e6;font:var(--lp-fs)/1.4 'Segoe UI',Arial,sans-serif;border:1px solid #3a3f4b;border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.6);user-select:none;overflow:hidden}"
+    st.textContent = "#lp_bank{position:fixed;left:520px;top:200px;z-index:2147483000;pointer-events:auto;width:min(1240px,calc(100vw - 24px));background:rgba(20,22,28,var(--lp-alpha));color:#e6e6e6;font:var(--lp-fs)/1.4 'Segoe UI',Arial,sans-serif;border:1px solid #3a3f4b;border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.6);user-select:none;overflow:hidden}"
       + "#lp_bank_head{display:flex;align-items:center;gap:8px;padding:6px 10px;background:rgba(36,41,54,var(--lp-alpha));cursor:move;border-bottom:1px solid #3a3f4b}#lp_bank_head b{font-size:13px}#lp_bank_head .lp_k{flex:1}"
       + "#lp_bank button{font:11px 'Segoe UI',Arial;padding:1px 7px;cursor:pointer;background:#2f3440;color:#eee;border:1px solid #555;border-radius:3px}#lp_bank button.on{background:var(--lp-acc);border-color:var(--lp-acc2)}#lp_bank button:disabled{opacity:.35;cursor:default}"
       + "#lp_bank_bar{display:flex;align-items:center;gap:6px;padding:5px 10px;border-bottom:1px solid #2a2f3a;flex-wrap:wrap}#lp_bank .lp_chip{background:#1f2430;border:1px solid #3a4152;border-radius:12px;padding:1px 9px;font-size:11px;cursor:pointer;color:#c9ced8}#lp_bank .lp_chip.on{background:var(--lp-acc);border-color:var(--lp-acc2);color:#fff}"
       + "#lp_bank input{background:#1c2029;color:#eee;border:1px solid #555;border-radius:3px;padding:1px 4px;font:11px 'Segoe UI',Arial}#lp_bank_q{width:140px}"
-      + "#lp_bank_body{padding:4px 10px 8px;max-height:calc(100vh - 260px);overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain}#lp_bank table{width:100%;border-collapse:collapse}#lp_bank th,#lp_bank td{padding:3px 6px;text-align:right;border-bottom:1px solid #22262f;white-space:nowrap}#lp_bank th{color:#9aa3b2;font-weight:normal;font-size:11px;cursor:pointer;position:sticky;top:0;background:#14161c}#lp_bank th.sorted{color:#8ab4f8}#lp_bank td.l,#lp_bank th.l{text-align:left}"
+      + "#lp_bank_body{padding:4px 10px 8px;max-height:calc(100vh - 260px);overflow-y:auto;overflow-x:auto;overscroll-behavior:contain}#lp_bank table{width:100%;border-collapse:collapse}#lp_bank th,#lp_bank td{padding:3px 6px;text-align:right;border-bottom:1px solid #22262f;white-space:nowrap}#lp_bank th{color:#9aa3b2;font-weight:normal;font-size:11px;cursor:pointer;position:sticky;top:0;background:#14161c}#lp_bank th.sorted{color:#8ab4f8}#lp_bank td.l,#lp_bank th.l{text-align:left}"
       + "#lp_bank tr.good td{background:rgba(30,60,30,.35)}#lp_bank tr.meh td{color:#8b93a0}#lp_bank_foot{padding:4px 10px;border-top:1px solid #2a2f3a;color:#9aa3b2;font-size:11px;display:flex;gap:14px;flex-wrap:wrap}";
     doc.head.appendChild(st);
     var div = doc.createElement("div"); div.id = "lp_bank";
     div.innerHTML = "<div id='lp_bank_head'><b>Bank</b><span class='lp_k' id='lp_bank_info'></span><button data-act='banksort' title='Händler sortiert die Bank um: Ausrüstung → Gabrielle (Fach 1), Drops/Material → Gabriella (Fach 2), volles Fach → Ledia (Fach 3). Neu eingelagerte Items landen ab jetzt automatisch im richtigen Fach.'>Bank sortieren</button><button data-act='bankrefresh' title='Bankstand neu einlesen (Magier muss dafür in die Bank – geht beim nächsten Bankgang automatisch)'>Stand: letzter Bankbesuch</button><button data-act='banktoggle' title='Fenster schließen'>✕</button></div><div id='lp_bank_bar'></div><div id='lp_bank_body'></div><div id='lp_bank_foot'><span><b style='color:#7ed67e'>grün</b> Markt deutlich über NPC → am Stand anbieten</span><span><b style='color:#8b93a0'>grau</b> Markt ≈ NPC → direkt NPC ist schneller</span><span>Ø 3 Tage = Median der Tages-Tiefstpreise aller Server (sammelt ab jetzt)</span></div>";
     doc.body.appendChild(div);
-    try { var p = JSON.parse(localStorage.getItem("lp_bank_pos") || "null"); if (p) clamp_pos(div, p.x, p.y); else clamp_pos(div, Math.max(0, (parent.window.innerWidth || 1200) - 980), 140); } catch (e) {}
+    try { var p = JSON.parse(localStorage.getItem("lp_bank_pos") || "null"); if (p) clamp_pos(div, p.x, p.y); else clamp_pos(div, Math.max(0, (parent.window.innerWidth || 1200) - 1260), 140); } catch (e) {}
     return div;
 }
 function toggle_bank_panel() {
