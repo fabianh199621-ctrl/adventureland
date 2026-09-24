@@ -1,7 +1,7 @@
 // ===== Adventure Land – LogicPlan Priester (F4llenPriest) – Stufe 1 =====
 // Folgt dem Magier, heilt ihn und sich, nimmt die Party-Einladung an, greift erst ab PRIEST_ATTACK_LEVEL mit an.
 // Meldungen gehen per Charakter-Nachricht an den Magier ("[Priest] …").
-var PRIEST_VERSION = "v351";
+var PRIEST_VERSION = "v353";
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -17,20 +17,32 @@ function bank_free_in(pack, it) { // freier Platz im Fach (bei stapelbaren Items
     var d = it && G.items[it.name]; if (d && d.s) { var mx = typeof d.s == "number" ? d.s : 9999; for (var j = 0; j < p.length; j++) { var b = p[j]; if (b && b.name == it.name && (b.level || 0) == (it.level || 0) && (b.q || 1) + (it.q || 1) <= mx) return j; } }
     for (var i = 0; i < BANK_PACK_SIZE; i++) if (!p[i]) return i; return -1; // das Spiel liefert das Fach nur bis zum letzten belegten Platz – dahinter ist frei
 }
-async function bank_put_at(i, pack, s) { // Item i in Fach/Platz legen; hat der Server getauscht statt gestapelt → zurücktauschen und freien Platz nehmen
-    var it = character.items[i]; if (!it) return false; var old = character.bank[pack][s], oq = old ? (old.q || 1) : 0, myq = it.q || 1;
-    bank_store(i, pack, s); await sleep(500);
-    var now = character.items[i], bs = character.bank[pack] && character.bank[pack][s];
-    if (old && now && now.name == it.name && (now.q || 1) == oq && bs && bs.name == it.name && (bs.q || 1) == myq) { bank_store(i, pack, s); await sleep(500); var f = -1, p = character.bank[pack]; for (var k = 0; k < BANK_PACK_SIZE; k++) if (!p[k]) { f = k; break; } if (f < 0) return false; bank_store(i, pack, f); await sleep(500); }
-    return true;
+async function bank_stack_merge(i, pack, s) { // Stapel i auf den Bankstapel (pack,s) legen: Bankstapel ins Inventar holen, dort zusammenlegen (imove stapelt), zurücklegen
+    var it = character.items[i]; if (!it || !character.bank || !character.bank[pack] || !character.bank[pack][s]) return false;
+    if (character.esize < 1) return false;
+    var before = character.items.map(function (x) { return !!x; }), q0 = it.q || 1;
+    try { bank_retrieve(pack, s); } catch (e) { return false; } await sleep(500);
+    var k = -1; for (var j = 0; j < character.items.length; j++) { if (character.items[j] && !before[j]) { k = j; break; } }
+    if (k < 0) { var me = character.items[i]; if (me && me.name == it.name && (me.q || 1) > q0) { bank_store(i, pack, s); await sleep(400); return !character.items[i]; } return false; } // Server hat beim Holen direkt auf meinen Stapel gelegt
+    try { swap(i, k); } catch (e) { try { parent.socket.emit("imove", { a: i, b: k }); } catch (e2) {} } await sleep(400);
+    var a = character.items[i], b = character.items[k];
+    if (a && !b) { bank_store(i, pack, s); await sleep(400); return !character.items[i]; }
+    if (b && !a) { bank_store(k, pack, s); await sleep(400); return !character.items[k]; }
+    var back = (b && b.name == it.name && (b.q || 1) != q0) ? k : i; bank_store(back, pack, s); await sleep(400); return false; // nicht zusammengelegt: Bankstapel zurück
 }
-async function bank_put(i) { // ins passende Fach; ist es voll → Ledia; ohne Fächer-Info → wie das Spiel es wählt
-    var it = character.items[i]; if (!it) return false;
-    var want = bank_pack_for(it), s = bank_free_in(want, it);
-    if (s < 0) { want = BANK_PACKS.over; s = bank_free_in(want, it); }
-    if (s < 0 && character.bank) { for (var pk in character.bank) { if (pk.indexOf("items") != 0 || !Array.isArray(character.bank[pk])) continue; var f2 = bank_free_in(pk, it); if (f2 >= 0) { want = pk; s = f2; break; } } } // irgendein gekauftes Fach
-    if (s < 0) return false; // Bank voll oder nicht in der Bank → false (kein blinder Versuch)
-    return bank_put_at(i, want, s);
+async function bank_put_at(i, pack, s) { // Item i in Fach/Platz legen (leerer Platz oder Stapel)
+    var it = character.items[i]; if (!it) return false; var old = character.bank[pack] && character.bank[pack][s];
+    if (old) return bank_stack_merge(i, pack, s);
+    bank_store(i, pack, s); await sleep(400); return !character.items[i];
+}
+function bank_stack_slot(pack, it) { var p = character.bank && character.bank[pack]; if (!Array.isArray(p) || !it) return -1; var d = G.items[it.name]; if (!d || !d.s) return -1; var mx = typeof d.s == "number" ? d.s : 9999; for (var j = 0; j < p.length; j++) { var b = p[j]; if (b && b.name == it.name && (b.level || 0) == (it.level || 0) && (b.q || 1) + (it.q || 1) <= mx) return j; } return -1; }
+function bank_empty_slot(pack) { var p = character.bank && character.bank[pack]; if (!Array.isArray(p)) return -1; for (var i = 0; i < BANK_PACK_SIZE; i++) if (!p[i]) return i; return -1; }
+async function bank_put(i) { // ins passende Fach; voll → Ledia → irgendein gekauftes Fach. Erst Stapel mit Luft, dann leerer Platz (Fächer-übergreifend)
+    var it = character.items[i]; if (!it || !character.bank) return false;
+    var packs = [bank_pack_for(it), BANK_PACKS.over]; for (var pk in character.bank) if (pk.indexOf("items") == 0 && Array.isArray(character.bank[pk]) && packs.indexOf(pk) < 0) packs.push(pk);
+    for (var a = 0; a < packs.length; a++) { var ss = bank_stack_slot(packs[a], it); if (ss >= 0) { if (await bank_put_at(i, packs[a], ss)) return true; if (!character.items[i]) return true; } }
+    for (var b = 0; b < packs.length; b++) { var fs = bank_empty_slot(packs[b]); if (fs >= 0) { bank_store(i, packs[b], fs); await sleep(400); return !character.items[i]; } }
+    return false;
 }
 function item_rules() { try { return JSON.parse(localStorage.getItem("lp_item_rules") || "{}"); } catch (e) { return {}; } }
 function type_rules() { try { return JSON.parse(localStorage.getItem("lp_type_rules") || "{}"); } catch (e) { return {}; } } // Typregeln (Fallback, wenn das Item keine eigene Regel hat)
