@@ -9,7 +9,8 @@
 // Upgrades laufen NUR auf Tastendruck. GOLD_RESERVE wird nie angetastet.
 // Wird per Loader aus GitHub geladen: https://github.com/fabianh199621-ctrl/adventureland
 
-var BOT_VERSION = "v353";
+var BOT_VERSION = "v355";
+function lp_base_url() { try { if (parent.base_url) return String(parent.base_url).replace(/\/+$/, ""); } catch (e) {} return "https://adventure.land"; } // Live-Server oder eigener Server (Mini-PC)
 var MAIN_NAME = "F4llen", SOLO = character.name != MAIN_NAME; // SOLO: Zweit-Magier (Token-Jäger) – farmt und jagt allein, kein Team/Panel-Steuerung, eigene Einstellungen
 var localStorage = SOLO ? (function () { var pfx = "lp_solo_" + character.name + "_", w = window.localStorage; return { getItem: function (k) { return w.getItem(pfx + k); }, setItem: function (k, v) { w.setItem(pfx + k, v); }, removeItem: function (k) { w.removeItem(pfx + k); } }; })() : ((typeof window != "undefined" && window.localStorage) || globalThis.localStorage); // eigener Speicherbereich je Zweit-Charakter
 if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Magier-Skript bekommen (alter Loader): passendes Skript nachladen
@@ -926,7 +927,7 @@ function start_char_on_server(nm, region, id) { // Nebencharakter-Fenster wie da
     var f = ref ? ref.cloneNode(false) : doc.createElement("iframe");
     if (!ref) { f.style.display = "none"; }
     f.id = rid; f.removeAttribute("src");
-    f.src = "https://adventure.land/character/" + encodeURIComponent(nm) + "/in/" + region + "/" + id + "/?no_html=true&is_bot=1&code=1";
+    f.src = lp_base_url() + "/character/" + encodeURIComponent(nm) + "/in/" + region + "/" + id + "/?no_html=true&is_bot=1&code=1";
     (ref && ref.parentNode ? ref.parentNode : doc.body).appendChild(f);
     return f;
 }
@@ -1069,6 +1070,7 @@ async function town_teleport() { // "town" nutzen und warten, bis wirklich angek
     while (Date.now() - t0 < 9000) { var ts2 = town_spawn(character.map); if (ts2 && distance(character, ts2) < 250 && !is_moving(character)) { await sleep(400); return true; } await sleep(300); }
     return ts ? distance(character, ts) < 400 : false;
 }
+async function wait_bank(ms) { var t0 = Date.now(); while (!character.bank && Date.now() - t0 < (ms || 6000)) await sleep(200); if (!character.bank) game_log("Bank: keine Bankdaten nach " + Math.round((ms || 6000) / 1000) + " s (Karte " + character.map + ")"); return !!character.bank; } // nach dem Kartenwechsel kommen die Bankdaten mit Verzögerung
 async function travel_place(name) { // Orte in der Stadt: bei großer Entfernung teleportieren
     try {
         var ts = town_spawn(character.map);
@@ -2541,7 +2543,7 @@ var bank_cleaning = false;
 async function bank_cleanup() { // muss in der Bank stehen (oder läuft hin)
     if (bank_cleaning) return; bank_cleaning = true;
     try {
-        if (character.map != "bank") { set_message("Bank"); await travel_place("bank"); await sleep(800); }
+        if (character.map != "bank") { set_message("Bank"); await travel_place("bank"); await wait_bank(); }
         var rounds = 0, sold_total = 0;
         while (rounds++ < 6) {
             var bank = character.bank || {}, pulled = 0;
@@ -2561,7 +2563,7 @@ async function bank_cleanup() { // muss in der Bank stehen (oder läuft hin)
             sold += await sell_duplicates();
             sold_total += sold;
             game_log("Bank aufräumen: " + pulled + " geholt, " + sold + " verkauft");
-            await travel_place("bank"); await sleep(800);
+            await travel_place("bank"); await wait_bank();
         }
         game_log("Bank aufgeräumt: " + sold_total + " Items verkauft, frei jetzt " + bank_free_slots() + " Plätze");
         // Schmuck: Dreiergruppen aus Bank + Inventar zusammenziehen und compounden (spart 2 Plätze je Gruppe)
@@ -2595,7 +2597,7 @@ async function bank_compound_jewelry() { // muss in der Bank stehen
         if (!has_compound_triples()) return;
         game_log("Bank: " + pulled + " Schmuckteile geholt, compounde " + groups.join(", "));
         await compound_spares();
-        await travel_place("bank"); await sleep(800);
+        await travel_place("bank"); await wait_bank();
         // Ergebnisse und Reste zurück in die Bank, wenn das Inventar eng wird
         for (var r = character.items.length - 1; r >= 0 && character.esize < INV_TARGET_FREE; r--) { var it = character.items[r]; if (it && bankable_extra(it, r)) { try { await bank_put(r); await sleep(100); } catch (e) {} } }
     }
@@ -2615,7 +2617,7 @@ function bank_packs() { var b = character.bank || {}; return Object.keys(b).filt
 function bank_item_key(it) { return [inv_rank(it), it.name, -(it.level || 0)]; }
 function bank_cmp(a, b) { var ka = bank_item_key(a), kb = bank_item_key(b); for (var i = 0; i < 3; i++) { if (ka[i] < kb[i]) return -1; if (ka[i] > kb[i]) return 1; } return 0; }
 async function bank_sort() {
-    if (character.map != "bank") { set_message("Bank"); await travel_place("bank"); await sleep(800); }
+    if (character.map != "bank") { set_message("Bank"); await travel_place("bank"); await wait_bank(); }
     var packs = bank_packs(); if (!packs.length) { game_log("Bank: keine Daten"); return; }
     var ops = 0, moves = 0;
     // Zielreihenfolge
@@ -2827,7 +2829,7 @@ async function exchange_gifts() {
     exchanging = true; busy = true;
     try {
         // 1. tauschbare Sachen aus der Bank holen
-        set_message("Bank"); await travel_place("bank"); await sleep(800);
+        set_message("Bank"); await travel_place("bank"); await wait_bank();
         await retrieve_for_empty_slots();
         var bank = character.bank || {}, got = 0;
         for (var pack in bank) {
@@ -2935,7 +2937,7 @@ async function spend_tokens_for_main() { // Zweit-Charakter: Set-Teile, die dem 
     var bought = [];
     for (var i = 0; i < miss.length; i++) { var m = miss[i]; if (!m.cost || tokens() < m.cost || character.esize < 2 || locate_item(m.name) >= 0) continue; try { exchange_buy("monstertoken", m.name); await sleep(1500); } catch (e) {} if (locate_item(m.name) >= 0) { bought.push(m.name); game_log("Tokens: " + m.name + " für " + MAIN_NAME + " gekauft (" + m.cost + " Tokens, " + tokens() + " übrig)"); } }
     if (!bought.length) return;
-    try { await travel_place("bank"); await sleep(800); for (var b = 0; b < bought.length; b++) { var bi = locate_item(bought[b]); if (bi >= 0) { await bank_put(bi); await sleep(200); } } game_log("Tokens: " + bought.join(", ") + " in die Bank gelegt – " + MAIN_NAME + " holt es beim nächsten Bankgang"); } catch (e) { game_log("Tokens: Bank-Fehler " + err_txt(e)); }
+    try { await travel_place("bank"); await wait_bank(); for (var b = 0; b < bought.length; b++) { var bi = locate_item(bought[b]); if (bi >= 0) { await bank_put(bi); await sleep(200); } } game_log("Tokens: " + bought.join(", ") + " in die Bank gelegt – " + MAIN_NAME + " holt es beim nächsten Bankgang"); } catch (e) { game_log("Tokens: Bank-Fehler " + err_txt(e)); }
 }
 async function check_monsterhunt() {
     if (event_mode) return; // Event hat Vorrang
@@ -4776,7 +4778,7 @@ async function scan_all_merchants(force, only_slot) {
     var res = null, merchants = [], raw = "";
     // Der Spielclient schickt JSON per POST an /api/<method> (aus parent.api_call abgelesen)
     try {
-        var r = await fetch("https://adventure.land/api/pull_merchants", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json; charset=utf-8" }, body: "{}" });
+        var r = await fetch(lp_base_url() + "/api/pull_merchants", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json; charset=utf-8" }, body: "{}" });
         raw = await r.text(); try { res = JSON.parse(raw); } catch (e) { res = raw; }
         collect_merchants(res, merchants, 0);
     } catch (e) { raw = "fetch-Fehler: " + err_txt(e); }
@@ -5036,7 +5038,7 @@ function bank_backup(name) { // Reservekopie in der Bank (Snapshot): kaufbar >= 
 }
 async function fetch_backup(name) { // Reservekopie aus der Bank holen (beste Stufe), true wenn danach im Inventar
     if (backup_index(name) >= 0) return true; if (!bank_backup(name) || character.esize < 1) return false;
-    try { if (character.map != "bank") { set_message("Bank"); await travel_place("bank"); await sleep(800); } } catch (e) { return false; }
+    try { if (character.map != "bank") { set_message("Bank"); await travel_place("bank"); await wait_bank(); } } catch (e) { return false; }
     var bk = character.bank || {}, min = is_buyable(name) ? BACKUP_LEVEL : 0, best = null;
     for (var pk in bk) if (pk.indexOf("items") == 0 && Array.isArray(bk[pk])) for (var i = 0; i < bk[pk].length; i++) { var it = bk[pk][i]; if (it && it.name == name && (it.level || 0) >= min && (!best || (it.level || 0) > best.lv)) best = { pack: pk, i: i, lv: it.level || 0 }; }
     if (!best) return false;
@@ -5094,7 +5096,7 @@ function equip_auto_allowed() { return !!SET.auto_equip || (upgrading && !auto_m
 async function retrieve_better_from_bank(only_slot) { // läuft zur Bank, wenn dort etwas Besseres liegt
     if (!equip_auto_allowed()) return 0;
     var list = bank_better_for(only_slot); if (!list.length) return 0;
-    if (character.map != "bank") { set_message("Bank"); await travel_place("bank"); await sleep(800); list = bank_better_for(only_slot); }
+    if (character.map != "bank") { set_message("Bank"); await travel_place("bank"); await wait_bank(); list = bank_better_for(only_slot); }
     var got = 0;
     list.sort(function (a, b) { return (a.pack == b.pack) ? b.i - a.i : (a.pack < b.pack ? 1 : -1); });
     for (var k = 0; k < list.length && character.esize > 1; k++) { try { bank_retrieve(list[k].pack, list[k].i); got++; await sleep(500); game_log("Aus der Bank geholt: " + list[k].it.name + "+" + (list[k].it.level || 0) + " (besser für " + list[k].slot + ")"); } catch (e) {} }
@@ -5106,7 +5108,7 @@ async function fetch_backups_from_bank() {
         .filter(function (n, i, a) { return a.indexOf(n) == i && is_buyable(n) && backup_index(n) < 0; });
     var empty_slots = Object.keys(SLOT_TYPES).filter(function (sl) { return sl != "mainhand" && !character.slots[sl]; });
     if (!need.length && !empty_slots.length) return;
-    set_message("Bank: Reserven"); await travel_place("bank"); await sleep(800);
+    set_message("Bank: Reserven"); await travel_place("bank"); await wait_bank();
     await retrieve_for_empty_slots();
     var bank = character.bank || {}; var got = 0;
     for (var pack in bank) {

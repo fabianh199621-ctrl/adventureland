@@ -1,7 +1,8 @@
 // ===== Adventure Land – LogicPlan Händler (F4llenMerch) – Stufe 1 =====
 // Läuft unsichtbar neben dem Magier. Aufgaben: Stand kaufen und öffnen, Loot abholen/verkaufen/einlagern,
 // Startgold vom Magier holen. mluck ist abgeschaltet (braucht Lv 40, Händler levelt praktisch nicht) – USE_MLUCK/LEVEL_MODE. Meldungen gehen per Charakter-Nachricht an den Magier und erscheinen dort als "[Merch] …".
-var MERCH_VERSION = "v353";
+var MERCH_VERSION = "v355";
+function lp_base_url() { try { if (parent.base_url) return String(parent.base_url).replace(/\/+$/, ""); } catch (e) {} return "https://adventure.land"; } // Live-Server oder eigener Server (Mini-PC)
 // Generationswechsel: wird das Skript per N neu eingespielt, beendet sich die alte Schleife von selbst (kein Neu-Einloggen)
 try { window.__lp_gen = (window.__lp_gen || 0) + 1; } catch (e) {}
 var MY_GEN = window.__lp_gen, HAD_OLD = MY_GEN > 1; // Achtung: globale Namen werden beim Neu-Einspielen überschrieben, daher Generation immer lokal (g) festhalten
@@ -499,7 +500,7 @@ async function stand_slots(force) {
     var ks = trade_keys_local(); if (ks.length) { var o = {}; ks.forEach(function (k) { o[k] = character.slots[k] || null; }); stand_live = { t: Date.now(), slots: o, found: true }; return o; }
     if (!force && Date.now() - stand_live.t < 45000 && stand_live.slots) return stand_live.slots;
     try {
-        var r = await fetch("https://adventure.land/api/pull_merchants", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json; charset=utf-8" }, body: "{}" });
+        var r = await fetch(lp_base_url() + "/api/pull_merchants", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json; charset=utf-8" }, body: "{}" });
         var res = await r.json(), chars = [];
         (function walk(x, d) { if (!x || d > 5) return; if (Array.isArray(x)) { x.forEach(function (y) { walk(y, d + 1); }); return; } if (typeof x != "object") return; if (x.name && x.slots) { chars.push(x); return; } for (var k in x) walk(x[k], d + 1); })(res, 0);
         var me = null; chars.forEach(function (c) { if (c.name == character.name) me = c; });
