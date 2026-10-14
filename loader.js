@@ -4,7 +4,7 @@
 var LP_CODE_SLOT = 1; // Nummer (oder Name) des Code-Slots mit diesem Loader
 var BASE = "https://raw.githubusercontent.com/fabianh199621-ctrl/adventureland/main/";
 var LP_ROLE = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : character.ctype == "priest" || /priest/i.test(character.name) ? "priest" : character.ctype == "ranger" || /ranger/i.test(character.name) ? "ranger" : "bot";
-try { parent.LP_CODE_SLOT = LP_CODE_SLOT; } catch (e) {}
+try { parent.LP_CODE_SLOT = LP_CODE_SLOT; parent.LP_BASE = BASE; } catch (e) {} // LP_BASE: Magier lädt Team-Skripte und Updates aus derselben Quelle
 fetch(BASE + "version.txt?t=" + Date.now(), { cache: "no-store" })
     .then(function (r) { if (!r.ok) throw "HTTP " + r.status; return r.text(); })
     .then(function (v) {

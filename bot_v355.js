@@ -17,6 +17,7 @@ if (character.ctype != "mage") { // Händler/Priester haben versehentlich das Ma
     (function () {
         var role = character.ctype == "merchant" || /merch/i.test(character.name) ? "merchant" : character.ctype == "ranger" || /ranger/i.test(character.name) ? "ranger" : "priest";
         var base = "https://raw.githubusercontent.com/fabianh199621-ctrl/adventureland/main/";
+        try { if (parent.LP_BASE) base = parent.LP_BASE; } catch (e) {}
         game_log("bot.js ist nur für den Magier – lade " + role + "_" + BOT_VERSION + ".js");
         fetch(base + role + "_" + BOT_VERSION + ".js", { cache: "no-store" }).then(function (r) { return r.text(); }).then(function (code) { try { eval(code); } catch (e) { game_log("Startfehler " + role + ": " + e); } }).catch(function (e) { game_log(role + " laden fehlgeschlagen: " + e); });
     })();
@@ -261,7 +262,7 @@ var CBURST_MIN_MP = 0.5;
 
 var busy = false, paused = true, upgrading = false, pending_upgrade = null; // Start pausiert
 var bot_running = true, main_timer = null;
-var BOT_BASE = "https://raw.githubusercontent.com/fabianh199621-ctrl/adventureland/main/";
+var BOT_BASE = (function () { try { if (parent.LP_BASE) return parent.LP_BASE; } catch (e) {} return "https://raw.githubusercontent.com/fabianh199621-ctrl/adventureland/main/"; })(); // Quelle aus dem Loader (z. B. lokaler Server), sonst GitHub main
 // alte Instanz (vorheriger Lauf/Reload) beenden
 try { if (parent.__lp_main_timer) clearInterval(parent.__lp_main_timer); if (parent.__lp_panel_timer) { clearInterval(parent.__lp_panel_timer); parent.__lp_panel_timer = null; } } catch (e) {}
 var last_weapon_log = 0;
